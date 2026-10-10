@@ -52,6 +52,54 @@ const deviceModeSchema = z.enum(["slim", "full"]);
 
 const leaseIdentitySchema = z.enum(["reusable", "fresh"]);
 
+/** The classes an enrolled physical device can have (ADR 0022 §1). */
+const physicalClassSchema = z.enum(["phone", "tablet"]);
+
+/**
+ * What a device entry says about its type (ADR 0022 §1): `physical` is always there; a virtual
+ * device has a `mode` and no `class`, a physical one a `class` and no `mode`. The schema is the
+ * one place the wire holds that rule, for the status entry, the list entry and the grant alike.
+ * A grant does not require the class: the record a grant is built from keeps it on its spec, and
+ * the physical lease path maps it onto the grant.
+ */
+function checkDeviceType(
+  device: { readonly physical: boolean; readonly mode?: unknown; readonly class?: unknown },
+  context: z.RefinementCtx,
+  requireClass: boolean,
+): void {
+  if (device.physical) {
+    if (device.mode !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A physical device has no mode",
+        path: ["mode"],
+      });
+    }
+    if (requireClass && device.class === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A physical device has a class",
+        path: ["class"],
+      });
+    }
+    return;
+  }
+  if (device.mode === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A virtual device has a mode",
+      path: ["mode"],
+    });
+  }
+  if (device.class !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A virtual device has no class",
+      path: ["class"],
+    });
+  }
+}
+
 /** The longest image tag a lease request may name. */
 const IMAGE_TAG_MAX = 64;
 
@@ -70,6 +118,8 @@ export const imageTagSchema = z
  * device's `mode` is the one mode a response reports. `imageTag` is shown on a device whose
  * request named one. */
 const deviceSpecSchema = z.object({
+  /** `true` for an enrolled physical device, `false` for a simulator or emulator. */
+  physical: z.boolean(),
   platform: platformSchema,
   model: z.string(),
   osVersion: z.string(),
@@ -79,33 +129,40 @@ const deviceSpecSchema = z.object({
 /** Mirrors `DeviceRecord` (src/core/domain.ts) field for field, except `deferredReclaimLeaseId`,
  * which is internal bookkeeping a response never carries, plus the `status`/`list`
  * decoration's derived `transitionAgeMs` (see `DaemonServer#decorateDevice`). */
-export const deviceRecordSchema = z.object({
-  id: z.string(),
-  driverDeviceId: z.string(),
-  spec: deviceSpecSchema,
-  state: deviceStateSchema,
-  driverData: z.unknown(),
-  createdAt: z.number(),
-  lastLeaseEndedAt: z.number().optional(),
-  foreignStateDetectedAt: z.number().optional(),
-  foreignProvenanceDetectedAt: z.number().optional(),
-  recoveringSince: z.number().optional(),
-  recoveryAttempts: z.number().optional(),
-  quarantinedAt: z.number().optional(),
-  quarantineAttempts: z.number().optional(),
-  quarantineNextRetryAt: z.number().optional(),
-  address: z.string().optional(),
-  mode: deviceModeSchema,
-  leaseIdentity: leaseIdentitySchema.optional(),
-  /** Decoration added by `status.get`/`list.get`; absent for a device not mid-transition. */
-  transitionAgeMs: z.number().optional(),
-  /** Decoration added by `status.get`/`list.get`: `true` for a device whose transition is a
-   * stall by the rule `doctor` reports; absent otherwise. */
-  stalled: z.boolean().optional(),
-  /** Decoration added by `status.get`/`list.get` (ADR 0009 §6): whether the device's pool mode is
-   * the worker's default mode for its platform. Absent on a record the registry holds. */
-  servesDefaultMode: z.boolean().optional(),
-});
+export const deviceRecordSchema = z
+  .object({
+    id: z.string(),
+    driverDeviceId: z.string(),
+    spec: deviceSpecSchema,
+    state: deviceStateSchema,
+    driverData: z.unknown(),
+    createdAt: z.number(),
+    lastLeaseEndedAt: z.number().optional(),
+    foreignStateDetectedAt: z.number().optional(),
+    foreignProvenanceDetectedAt: z.number().optional(),
+    recoveringSince: z.number().optional(),
+    recoveryAttempts: z.number().optional(),
+    quarantinedAt: z.number().optional(),
+    quarantineAttempts: z.number().optional(),
+    quarantineNextRetryAt: z.number().optional(),
+    address: z.string().optional(),
+    /** Always present: see `checkDeviceType`. */
+    physical: z.boolean(),
+    /** Present exactly when `physical` is `false`. */
+    mode: deviceModeSchema.optional(),
+    /** Present exactly when `physical` is `true`. */
+    class: physicalClassSchema.optional(),
+    leaseIdentity: leaseIdentitySchema.optional(),
+    /** Decoration added by `status.get`/`list.get`; absent for a device not mid-transition. */
+    transitionAgeMs: z.number().optional(),
+    /** Decoration added by `status.get`/`list.get`: `true` for a device whose transition is a
+     * stall by the rule `doctor` reports; absent otherwise. */
+    stalled: z.boolean().optional(),
+    /** Decoration added by `status.get`/`list.get` (ADR 0009 §6): whether the device's pool mode is
+     * the worker's default mode for its platform. Absent on a record the registry holds. */
+    servesDefaultMode: z.boolean().optional(),
+  })
+  .superRefine((device, context) => checkDeviceType(device, context, true));
 
 /**
  * The device shape `status.get` returns (ADR §3: `status.get` is `role: "agent"`, with no
@@ -142,40 +199,49 @@ export const deviceRecordSchema = z.object({
  * the lease holder, who gets it on the grant). `mode` stays: which kind of device it is matters
  * to anyone reading the fleet.
  */
-export const statusDeviceSchema = z.object({
-  id: z.string(),
-  spec: deviceSpecSchema,
-  state: deviceStateSchema,
-  /** The device mode (see `DeviceRecord.mode`) -- not the daemon's own `worker`/`gateway` mode. */
-  mode: deviceModeSchema,
-  /**
-   * ADR 0009 §6: whether the device's pool mode (its spec's mode, full when it names none) is the
-   * worker's default mode for the device's platform -- the pool a request naming no mode draws
-   * from. The gateway reads it to tell a warm hit for such a request. Not `mode`: `mode` is what
-   * the device actually is, this is what a request with no mode would get.
-   */
-  servesDefaultMode: z.boolean(),
-  foreignStateDetectedAt: z.number().optional(),
-  foreignProvenanceDetectedAt: z.number().optional(),
-  quarantineAttempts: z.number().optional(),
-  quarantineNextRetryAt: z.number().optional(),
-  /** Decoration added by `status.get`; absent for a device not mid-transition. */
-  transitionAgeMs: z.number().optional(),
-  /**
-   * Decoration added by `status.get`: `true` for a device stuck `provisioning` or `reclaiming`
-   * past its threshold, by the rule `doctor`'s `stalled-transition` finding uses; absent for
-   * every other device. A worker view copies it, so a gateway reports a worker's stall as the
-   * worker does.
-   */
-  stalled: z.boolean().optional(),
-  /**
-   * ADR 0005 §20: which worker this device lives on. Additive and gateway-only -- a worker
-   * answers `status.get` about its own devices and has no second machine to name, so it never
-   * sets this; a gateway sets it on every device in the aggregate, because "device dev_7" is
-   * ambiguous across a fleet in a way it never is on one host.
-   */
-  workerId: z.string().optional(),
-});
+export const statusDeviceSchema = z
+  .object({
+    id: z.string(),
+    spec: deviceSpecSchema,
+    state: deviceStateSchema,
+    /** Always present: see `checkDeviceType`. */
+    physical: z.boolean(),
+    /**
+     * The device mode (see `DeviceRecord.mode`) -- not the daemon's own `worker`/`gateway` mode.
+     * Present exactly when `physical` is `false`.
+     */
+    mode: deviceModeSchema.optional(),
+    /** Present exactly when `physical` is `true`. */
+    class: physicalClassSchema.optional(),
+    /**
+     * ADR 0009 §6: whether the device's pool mode (its spec's mode, full when it names none) is the
+     * worker's default mode for the device's platform -- the pool a request naming no mode draws
+     * from. The gateway reads it to tell a warm hit for such a request. Not `mode`: `mode` is what
+     * the device actually is, this is what a request with no mode would get.
+     */
+    servesDefaultMode: z.boolean(),
+    foreignStateDetectedAt: z.number().optional(),
+    foreignProvenanceDetectedAt: z.number().optional(),
+    quarantineAttempts: z.number().optional(),
+    quarantineNextRetryAt: z.number().optional(),
+    /** Decoration added by `status.get`; absent for a device not mid-transition. */
+    transitionAgeMs: z.number().optional(),
+    /**
+     * Decoration added by `status.get`: `true` for a device stuck `provisioning` or `reclaiming`
+     * past its threshold, by the rule `doctor`'s `stalled-transition` finding uses; absent for
+     * every other device. A worker view copies it, so a gateway reports a worker's stall as the
+     * worker does.
+     */
+    stalled: z.boolean().optional(),
+    /**
+     * ADR 0005 §20: which worker this device lives on. Additive and gateway-only -- a worker
+     * answers `status.get` about its own devices and has no second machine to name, so it never
+     * sets this; a gateway sets it on every device in the aggregate, because "device dev_7" is
+     * ambiguous across a fleet in a way it never is on one host.
+     */
+    workerId: z.string().optional(),
+  })
+  .superRefine((device, context) => checkDeviceType(device, context, true));
 
 /**
  * The device a `lease.request`/`lease.renew` grant carries -- deliberately narrower than
@@ -195,22 +261,28 @@ export const statusDeviceSchema = z.object({
  * record. `status.get` (agent-role, ADR §3) is narrower still -- see `statusDeviceSchema` below,
  * which is what it actually returns.
  */
-export const grantedDeviceSchema = z.object({
-  id: z.string(),
-  driverDeviceId: z.string(),
-  spec: deviceSpecSchema,
-  /**
-   * The driver-reported address (see `DriverDevice.address`), current as of this device's
-   * last `ready` transition. Undefined for a device still `provisioning` (never made ready
-   * yet) and, as an upgrade path, for a record written by a pre-address daemon -- `state.json`
-   * from before this field existed loads without one rather than failing to start. It becomes
-   * defined the next time the device is made ready (`bootForLease`/`readyProvisionedForLease`);
-   * nothing here ever guesses at a value it wasn't told.
-   */
-  address: z.string().optional(),
-  /** The mode the device actually has (see `DeviceRecord.mode`). */
-  mode: deviceModeSchema,
-});
+export const grantedDeviceSchema = z
+  .object({
+    id: z.string(),
+    driverDeviceId: z.string(),
+    spec: deviceSpecSchema,
+    /**
+     * The driver-reported address (see `DriverDevice.address`), current as of this device's
+     * last `ready` transition. Undefined for a device still `provisioning` (never made ready
+     * yet) and, as an upgrade path, for a record written by a pre-address daemon -- `state.json`
+     * from before this field existed loads without one rather than failing to start. It becomes
+     * defined the next time the device is made ready (`bootForLease`/`readyProvisionedForLease`);
+     * nothing here ever guesses at a value it wasn't told.
+     */
+    address: z.string().optional(),
+    /** Always present: see `checkDeviceType`. */
+    physical: z.boolean(),
+    /** The mode the device actually has (see `DeviceRecord.mode`); absent exactly when `physical`. */
+    mode: deviceModeSchema.optional(),
+    /** Present exactly when `physical` is `true`. */
+    class: physicalClassSchema.optional(),
+  })
+  .superRefine((device, context) => checkDeviceType(device, context, false));
 
 /**
  * Mirrors `LeaseRecord` (src/core/domain.ts) field for field -- there is no decoration on top

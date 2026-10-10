@@ -43,8 +43,11 @@ export interface LeasePayload {
   readonly expiresAt: string;
   readonly ttlMs: number;
   readonly dataPlane: null;
-  /** The mode the granted device actually has -- see `DeviceRecord.mode`. */
-  readonly mode: "slim" | "full";
+  /**
+   * The mode the granted device actually has -- see `DeviceRecord.mode`. Absent for a physical
+   * device, which has none.
+   */
+  readonly mode?: "slim" | "full";
   /** The image tag the device was created from, on a device whose request named one. */
   readonly imageTag?: string;
   /** The worker a gateway-issued lease lives on, as its lease record names it. Absent from a
@@ -83,7 +86,7 @@ export function buildLeasePayload(
     expiresAt: new Date(lease.ttlDeadline).toISOString(),
     ttlMs: lease.ttlMs,
     dataPlane: null,
-    mode: device.mode,
+    ...(device.mode === undefined ? {} : { mode: device.mode }),
     ...(device.spec.imageTag === undefined ? {} : { imageTag: device.spec.imageTag }),
     // A gateway's lease record names its worker and a worker's own never does. `workerId` is
     // derived from `worker` rather than read off the record: a grant's record has no
@@ -402,7 +405,8 @@ export interface HttpLeaseDevice {
     readonly osVersion: string;
     readonly imageTag?: string | undefined;
   };
-  readonly mode: "slim" | "full";
+  /** Absent only for a physical device, which has no mode. */
+  readonly mode?: "slim" | "full" | undefined;
 }
 
 interface HttpLeaseRecord {

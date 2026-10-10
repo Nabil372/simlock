@@ -7,7 +7,12 @@ import { assess } from "./serviceability.js";
 type CatalogEntry = Parameters<typeof catalogFixture>[0][number];
 
 const IOS: CatalogEntry = { models: ["iPhone 17"], platform: "ios", runtimes: ["26.0"] };
-const REQUEST = { model: "iPhone 17", osVersion: "26.0", platform: "ios" as const };
+const REQUEST = {
+  physical: false,
+  model: "iPhone 17",
+  osVersion: "26.0",
+  platform: "ios" as const,
+};
 
 /** A worker that takes requests, with one catalog entry. */
 function view(id: string, entry: CatalogEntry = IOS, overrides: Partial<WorkerView> = {}) {

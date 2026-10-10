@@ -34,6 +34,33 @@ const CONFIG = {
 } as unknown as NonNullable<Parameters<typeof workerViewFields>[0]["config"]>;
 
 describe("workerViewFields", () => {
+  it("keeps physical and class on a running worker's physical device, and refuses a device that breaks the type rule", () => {
+    const device = {
+      class: "phone",
+      id: "dev_p",
+      physical: true,
+      servesDefaultMode: false,
+      spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+      state: "ready",
+    };
+    const reads = (devices: unknown[]) =>
+      ({
+        devices,
+        status: {
+          capacity: CAPACITY,
+          daemon: { health: "running", mode: "worker" },
+          host: HOST,
+          leases: [],
+          queueDepth: 0,
+        },
+      }) as unknown as Parameters<typeof workerViewFields>[0];
+
+    expect(workerViewFields(reads([device])).devices).toEqual([device]);
+    expect(() => workerViewFields(reads([{ ...device, mode: "full" }]))).toThrow();
+    expect(() => workerViewFields(reads([{ ...device, class: undefined }]))).toThrow();
+    expect(() => workerViewFields(reads([{ ...device, physical: undefined }]))).toThrow();
+  });
+
   it("builds a starting worker's view from its health and host alone, with every other field absent", () => {
     const view = workerViewFields({
       status: { daemon: { health: "starting", mode: "worker" }, host: HOST },

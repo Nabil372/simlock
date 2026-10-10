@@ -75,12 +75,13 @@ function view(now: number, targeted: readonly string[] = []): RegistryView {
     config,
     devices: [
       {
+        physical: false,
         createdAt: 0,
         driverData: {},
         driverDeviceId: "driver-1",
         id: "dev_1",
         lastLeaseEndedAt: 0,
-        spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+        spec: { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" },
         mode: "full",
         state: "ready",
       },

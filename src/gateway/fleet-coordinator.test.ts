@@ -178,7 +178,12 @@ async function tick(times = 16): Promise<void> {
   for (let iteration = 0; iteration < times; iteration += 1) await Promise.resolve();
 }
 
-const REQUEST = { model: "iPhone 17", osVersion: "26.0", platform: "ios" as const };
+const REQUEST = {
+  physical: false,
+  model: "iPhone 17",
+  osVersion: "26.0",
+  platform: "ios" as const,
+};
 
 /** Capacity with no free iOS slot: a worker that can serve an iPhone 17 request and is busy. */
 function saturatedIos(): ReturnType<typeof statusFixture>["capacity"] {
@@ -3452,7 +3457,15 @@ describe("FleetLeaseCoordinator routes a class or range request (ADR 0015 §8)",
     connectWith(workers, "wrk_a", pixels);
     connectWith(workers, "wrk_b", pixels, {
       devices: [
-        { ...ready, spec: { model: "Pixel 8", osVersion: "35", platform: "android" as const } },
+        {
+          ...ready,
+          spec: {
+            physical: false,
+            model: "Pixel 8",
+            osVersion: "35",
+            platform: "android" as const,
+          },
+        },
       ],
     });
 

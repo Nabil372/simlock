@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { EventBus } from "../bus/index.js";
 import { FakeClock, MemoryFilesystem } from "../ports/index.js";
 import {
-  type DeviceSpec,
+  type VirtualSpec,
   Registry,
   RegistryEventError,
   UnknownDeviceError,
@@ -11,7 +11,12 @@ import {
 } from "./index.js";
 
 const statePath = "/home/agent/.simlock/state.json";
-const spec: DeviceSpec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" };
+const spec: VirtualSpec = {
+  physical: false,
+  model: "iPhone 16",
+  osVersion: "26.5",
+  platform: "ios",
+};
 
 class ObservingFilesystem extends MemoryFilesystem {
   readonly operations: string[] = [];
@@ -118,7 +123,12 @@ describe("Registry", () => {
       statePath,
     });
 
-    expect(registry.snapshot).toEqual({ components: [], devices: [], leases: [] });
+    expect(registry.snapshot).toEqual({
+      components: [],
+      devices: [],
+      leases: [],
+      virtualDevices: [],
+    });
   });
 
   it("atomically persists a registered device before emitting device.provisioned", async () => {
@@ -145,6 +155,7 @@ describe("Registry", () => {
     await expect(filesystem.readFile(statePath)).resolves.toMatch(/"id":"dev_test"/);
     expect(registry.snapshot.devices).toEqual([
       {
+        physical: false,
         createdAt: 1_000,
         driverData: { driverOnly: "value" },
         driverDeviceId: "driver_test",
@@ -218,6 +229,7 @@ describe("Registry", () => {
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
     const legacy = (id: string, platform: "ios" | "android", state: string) => ({
+      physical: false,
       createdAt: 500,
       driverData: {},
       driverDeviceId: `driver_${id}`,
@@ -307,7 +319,7 @@ describe("Registry", () => {
       driverData: {},
       driverDeviceId: "driver_android",
       provisionDuration: 0,
-      spec: { model: "Pixel 9", osVersion: "36", platform: "android" },
+      spec: { physical: false, model: "Pixel 9", osVersion: "36", platform: "android" },
     });
 
     expect([ios.leaseIdentity, android.leaseIdentity]).toEqual(["fresh", "reusable"]);
@@ -799,6 +811,7 @@ describe("Registry", () => {
     const recovered = await registry.recoverFromQuarantine(device.id, "ready");
 
     expect(recovered).toEqual({
+      physical: false,
       createdAt: 1_000,
       driverData: {},
       driverDeviceId: "driver_test",
@@ -1233,7 +1246,8 @@ describe("Registry", () => {
         const written = JSON.parse(await filesystem.readFile(statePath)) as {
           devices: { id: string; spec: Record<string, unknown> }[];
         };
-        expect(written.devices.find((device) => device.id === "dev_stored")?.spec).toEqual(spec);
+        const { physical: _physical, ...stored } = spec;
+        expect(written.devices.find((device) => device.id === "dev_stored")?.spec).toEqual(stored);
       },
     );
 
@@ -1503,6 +1517,7 @@ describe("Registry", () => {
 
     expect(alone).toEqual(viaLease);
     expect(viaLease).toEqual({
+      physical: false,
       createdAt: 1_000,
       driverData: {},
       driverDeviceId: "driver_test",
@@ -1600,6 +1615,7 @@ describe("Registry", () => {
       ttlMs: 60_000,
     });
     const device = (id: string) => ({
+      physical: false,
       createdAt: 1_000,
       driverData: {},
       driverDeviceId: `driver_${id}`,
@@ -1835,6 +1851,7 @@ describe("Registry", () => {
       ttlMs: 60_000,
     };
     const device = {
+      physical: false,
       createdAt: 1_000,
       driverData: {},
       driverDeviceId: "driver_dev_1",
@@ -2254,5 +2271,305 @@ describe("Registry", () => {
 
     expect(announced).toBe(false);
     expect(filesystem.operations).toEqual([]);
+  });
+});
+
+describe("Registry: physical devices (ADR 0022 §1)", () => {
+  const virtualRecord = {
+    createdAt: 500,
+    driverData: {},
+    driverDeviceId: "driver_virtual",
+    id: "dev_virtual",
+    mode: "full",
+    spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+    state: "ready",
+  };
+  const physicalSpec = {
+    class: "phone",
+    model: "iPhone 15 Pro",
+    osVersion: "18.4",
+    physical: true,
+    platform: "ios",
+  };
+  const physicalRecord = {
+    address: "00008110-001A2B3C4D5E",
+    createdAt: 600,
+    driverData: { note: "kept" },
+    driverDeviceId: "00008110-001A2B3C4D5E",
+    enrolledApps: ["com.example.one", "com.example.two"],
+    id: "dev_physical",
+    physical: true,
+    spec: physicalSpec,
+    state: "ready",
+  };
+  const lease = {
+    deviceId: "dev_physical",
+    grantedAt: 700,
+    id: "lse_physical",
+    idChosenByRequester: false,
+    lastRenewedAt: 700,
+    ownerId: "agent",
+    requesterId: "agent",
+    ttlDeadline: 90_000,
+    ttlMs: 60_000,
+  };
+
+  async function stateFile(state: Record<string, unknown>) {
+    const clock = new FakeClock(1_000);
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    await filesystem.writeFileAtomic(statePath, JSON.stringify({ leases: [], ...state }));
+    const load = () =>
+      Registry.load({
+        clock,
+        eventBus: new EventBus(clock),
+        filesystem,
+        idGenerator: { generate: () => "new" },
+        statePath,
+      });
+    const written = async () =>
+      JSON.parse(await filesystem.readFile(statePath)) as Record<string, Record<string, unknown>[]>;
+    return { filesystem, load, written };
+  }
+
+  const invalid = "Invalid device record in registry state";
+
+  it("loads a record in devices with no physical as virtual, on the record and its spec, and writes it back with no physical key on either", async () => {
+    const { load, written } = await stateFile({ devices: [virtualRecord] });
+    const registry = await load();
+
+    expect(registry.snapshot.devices[0]).toMatchObject({
+      physical: false,
+      spec: { physical: false },
+    });
+    await registry.markForeignStateDetected("dev_virtual", 5);
+
+    const [stored] = (await written()).devices ?? [];
+    expect(stored).toMatchObject({ foreignStateDetectedAt: 5, id: "dev_virtual" });
+    expect(stored).not.toHaveProperty("physical");
+    expect(stored?.spec).not.toHaveProperty("physical");
+  });
+
+  it.each([
+    ["the record says physical true", { physical: true }],
+    ["the record says physical as a string", { physical: "false" }],
+    ["its spec says physical true", { spec: { ...virtualRecord.spec, physical: true } }],
+    ["its spec says physical as a string", { spec: { ...virtualRecord.spec, physical: "no" } }],
+    ["its spec carries a class", { spec: { ...virtualRecord.spec, class: "phone" } }],
+  ])(
+    "fails the load when a record in devices breaks the virtual rule: %s",
+    async (_why, change) => {
+      const { load } = await stateFile({ devices: [{ ...virtualRecord, ...change }] });
+
+      await expect(load()).rejects.toThrow(invalid);
+    },
+  );
+
+  it("keeps a physical record's class, enrolled apps and address through a save and a load", async () => {
+    const { load, written } = await stateFile({
+      devices: [],
+      leases: [lease],
+      physicalDevices: [physicalRecord],
+    });
+    const registry = await load();
+    await registry.markForeignStateDetected("dev_physical", 5);
+
+    expect((await written()).physicalDevices).toEqual([
+      { ...physicalRecord, foreignStateDetectedAt: 5 },
+    ]);
+    expect((await load()).snapshot.devices).toEqual([
+      expect.objectContaining({
+        address: "00008110-001A2B3C4D5E",
+        enrolledApps: ["com.example.one", "com.example.two"],
+        physical: true,
+        spec: physicalSpec,
+        state: "ready",
+      }),
+    ]);
+  });
+
+  it.each([
+    ["physical is missing on the record", { physical: undefined }],
+    ["physical is false on the record", { physical: false }],
+    ["physical is missing on the spec", { spec: { ...physicalSpec, physical: undefined } }],
+    ["physical is false on the spec", { spec: { ...physicalSpec, physical: false } }],
+    ["its class is missing", { spec: { ...physicalSpec, class: undefined } }],
+    ["its class is watch", { spec: { ...physicalSpec, class: "watch" } }],
+    ["its state is shutdown", { state: "shutdown" }],
+    ["its state is provisioning", { state: "provisioning" }],
+    ["its spec has a mode", { spec: { ...physicalSpec, mode: "slim" } }],
+    ["its spec has an imageTag", { spec: { ...physicalSpec, imageTag: "default" } }],
+    ["the record has a mode", { mode: "full" }],
+    ["the record has a leaseIdentity", { leaseIdentity: "reusable" }],
+    ["enrolledApps is missing", { enrolledApps: undefined }],
+    ["enrolledApps is a string", { enrolledApps: "com.example.one" }],
+    ["enrolledApps holds a number", { enrolledApps: ["com.example.one", 7] }],
+  ])(
+    "fails the load when a record in physicalDevices breaks the physical rule: %s",
+    async (_why, change) => {
+      const { load } = await stateFile({
+        devices: [],
+        physicalDevices: [{ ...physicalRecord, ...change }],
+      });
+
+      await expect(load()).rejects.toThrow(invalid);
+    },
+  );
+
+  it("loads a file with no physicalDevices with no physical record, and fails one whose physicalDevices is a string", async () => {
+    const without = await stateFile({ devices: [virtualRecord] });
+    expect((await without.load()).snapshot.devices.map((device) => device.physical)).toEqual([
+      false,
+    ]);
+
+    const broken = await stateFile({ devices: [], physicalDevices: "none" });
+    await expect(broken.load()).rejects.toThrow("Invalid registry state");
+  });
+
+  it("writes a virtual and a physical record to separate lists, so a reader of devices alone, as an older Simlock, finds no physical record", async () => {
+    const { load, written } = await stateFile({
+      devices: [virtualRecord],
+      physicalDevices: [physicalRecord],
+    });
+    const registry = await load();
+    await registry.markForeignStateDetected("dev_virtual", 5);
+
+    const file = await written();
+    expect(file.devices?.map((device) => device.id)).toEqual(["dev_virtual"]);
+    expect(file.physicalDevices?.map((device) => device.id)).toEqual(["dev_physical"]);
+    expect(file.devices?.some((device) => device.physical === true)).toBe(false);
+  });
+
+  it("keeps a top-level key it does not know, and does not keep physicalDevices twice", async () => {
+    const { load, written } = await stateFile({
+      devices: [],
+      futureKey: { kept: true },
+      physicalDevices: [physicalRecord],
+    });
+    const registry = await load();
+    await registry.markForeignStateDetected("dev_physical", 5);
+
+    const file = await written();
+    expect(file.futureKey).toEqual({ kept: true });
+    expect(file.physicalDevices).toHaveLength(1);
+  });
+
+  it("lists every virtual record, and no physical one, in snapshot.virtualDevices, in the order of snapshot.devices", async () => {
+    const { load } = await stateFile({
+      devices: [virtualRecord, { ...virtualRecord, id: "dev_virtual_2" }],
+      physicalDevices: [physicalRecord],
+    });
+    const registry = await load();
+
+    expect(registry.snapshot.devices.map((device) => device.id)).toEqual([
+      "dev_virtual",
+      "dev_virtual_2",
+      "dev_physical",
+    ]);
+    expect(registry.snapshot.virtualDevices.map((device) => device.id)).toEqual([
+      "dev_virtual",
+      "dev_virtual_2",
+    ]);
+  });
+
+  it("lists a virtual device registered after a physical one before it, as the file's two lists are read", async () => {
+    const { load } = await stateFile({ devices: [], physicalDevices: [physicalRecord] });
+    const registry = await load();
+    await registry.registerDevice({
+      driverData: {},
+      driverDeviceId: "driver_new",
+      provisionDuration: 0,
+      spec,
+    });
+
+    expect(registry.snapshot.devices.map((device) => device.physical)).toEqual([false, true]);
+  });
+
+  it("refuses to mark a physical device missing, whether the call is markDeviceMissing or endLeaseAndMarkDeviceMissing, and writes nothing", async () => {
+    const { filesystem, load } = await stateFile({
+      devices: [],
+      leases: [lease],
+      physicalDevices: [{ ...physicalRecord, state: "leased" }],
+    });
+    const registry = await load();
+    const before = await filesystem.readFile(statePath);
+
+    await expect(registry.markDeviceMissing("dev_physical", "doctor")).rejects.toThrow(
+      RegistryEventError,
+    );
+    await expect(
+      registry.endLeaseAndMarkDeviceMissing("lse_physical", "startup", () => undefined),
+    ).rejects.toThrow("Cannot mark a physical device missing");
+
+    expect(await filesystem.readFile(statePath)).toBe(before);
+    expect(registry.snapshot.leases.map((held) => held.id)).toEqual(["lse_physical"]);
+  });
+
+  describe("a stored grant's device", () => {
+    const grantOf = (device: Record<string, unknown>) => ({
+      createdAt: 1_000,
+      grant: { device, environment: {}, lease, timing: {} },
+      id: "req_1",
+      ownerId: "agent",
+      request: { platform: "ios" },
+      requesterId: "agent",
+      settledAt: 1_000,
+      state: "granted",
+    });
+
+    it("loads a grant written before physical devices existed as a grant of a virtual device, on its device and its spec", async () => {
+      const { load } = await stateFile({
+        devices: [{ ...virtualRecord, state: "leased" }],
+        leaseRequests: [grantOf({ ...virtualRecord, state: "leased" })],
+      });
+
+      const device = (await load()).leaseRequests()[0]?.grant?.device;
+
+      expect(device).toMatchObject({ mode: "full", physical: false, spec: { physical: false } });
+    });
+
+    it("keeps a grant of a physical device as it is, with no mode", async () => {
+      const { load } = await stateFile({
+        devices: [],
+        leaseRequests: [grantOf({ ...physicalRecord, state: "leased" })],
+        physicalDevices: [{ ...physicalRecord, state: "leased" }],
+      });
+
+      const device = (await load()).leaseRequests()[0]?.grant?.device;
+
+      expect(device).toMatchObject({ physical: true, spec: { class: "phone", physical: true } });
+      expect(device).not.toHaveProperty("mode");
+    });
+
+    it("drops a stored grant that gives a physical device a mode, as it drops one with an unknown mode", async () => {
+      const { load } = await stateFile({
+        devices: [],
+        leaseRequests: [grantOf({ ...physicalRecord, mode: "full", state: "leased" })],
+        physicalDevices: [{ ...physicalRecord, state: "leased" }],
+      });
+
+      expect((await load()).leaseRequests()).toEqual([]);
+    });
+  });
+
+  it("moves a physical device to reclaiming when its lease is released and stamps lastLeaseEndedAt with the clock's time", async () => {
+    const { load } = await stateFile({
+      devices: [],
+      leases: [lease],
+      physicalDevices: [{ ...physicalRecord, state: "leased" }],
+    });
+    const registry = await load();
+
+    const released = await registry.beginRelease("lse_physical");
+
+    expect(released.device).toMatchObject({
+      lastLeaseEndedAt: 1_000,
+      physical: true,
+      state: "reclaiming",
+    });
+    expect(registry.snapshot.devices[0]).toMatchObject({
+      lastLeaseEndedAt: 1_000,
+      state: "reclaiming",
+    });
   });
 });

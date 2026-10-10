@@ -46,9 +46,10 @@ describe("leaseGrantSchema's device projection", () => {
    * payload a real `LeaseGrant` would carry into `#parseOutput`. */
   function fullCoreShapedDevice(): Record<string, unknown> {
     return {
+      physical: false,
       id: "device-1",
       driverDeviceId: "SIM-1",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
       state: "quarantined",
       driverData: { udid: "SIM-1", secretDriverInternals: true },
       createdAt: 0,
@@ -94,9 +95,10 @@ describe("leaseGrantSchema's device projection", () => {
       expect(grant.device).not.toHaveProperty(field);
     }
     expect(grant.device).toEqual({
+      physical: false,
       id: "device-1",
       driverDeviceId: "SIM-1",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
       address: "127.0.0.1:1234",
       mode: "slim",
     });
@@ -108,16 +110,18 @@ describe("leaseGrantSchema's device projection", () => {
 
   it("keeps id, driverDeviceId, spec, and mode, with address optional", () => {
     const parsed = grantedDeviceSchema.parse({
+      physical: false,
       id: "device-1",
       driverDeviceId: "SIM-1",
       mode: "full",
-      spec: { platform: "android", model: "Pixel 8", osVersion: "34" },
+      spec: { physical: false, platform: "android", model: "Pixel 8", osVersion: "34" },
     });
     expect(parsed).toEqual({
+      physical: false,
       id: "device-1",
       driverDeviceId: "SIM-1",
       mode: "full",
-      spec: { platform: "android", model: "Pixel 8", osVersion: "34" },
+      spec: { physical: false, platform: "android", model: "Pixel 8", osVersion: "34" },
     });
   });
 
@@ -125,7 +129,7 @@ describe("leaseGrantSchema's device projection", () => {
     const device = {
       id: "device-1",
       driverDeviceId: "SIM-1",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
     };
     expect(() => grantedDeviceSchema.parse(device)).toThrow();
     expect(() => grantedDeviceSchema.parse({ ...device, mode: "reduced" })).toThrow();
@@ -146,9 +150,10 @@ describe("statusDeviceSchema's device projection", () => {
    * payload `DaemonDispatcher#statusGet`'s decoration would carry into `#parseOutput`. */
   function fullCoreShapedDevice(): Record<string, unknown> {
     return {
+      physical: false,
       id: "device-1",
       driverDeviceId: "SIM-1",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
       state: "quarantined",
       driverData: { udid: "SIM-1", secretDriverInternals: true },
       createdAt: 0,
@@ -185,8 +190,9 @@ describe("statusDeviceSchema's device projection", () => {
     }
 
     expect(device).toEqual({
+      physical: false,
       id: "device-1",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
       state: "quarantined",
       mode: "slim",
       servesDefaultMode: false,
@@ -206,7 +212,8 @@ describe("statusDeviceSchema's device projection", () => {
     const device = {
       id: "device-1",
       mode: "full",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      physical: false,
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
       state: "ready",
     };
     expect(() => statusDeviceSchema.parse(device)).toThrow();
@@ -219,7 +226,8 @@ describe("statusDeviceSchema's device projection", () => {
   it("rejects a status device without a mode, or with a mode other than slim or full", () => {
     const device = {
       id: "device-1",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      physical: false,
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
       state: "ready",
     };
     expect(() => statusDeviceSchema.parse(device)).toThrow();
@@ -230,7 +238,13 @@ describe("statusDeviceSchema's device projection", () => {
     const device = {
       ...fullCoreShapedDevice(),
       mode: "full",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5", mode: "slim" },
+      spec: {
+        physical: false,
+        platform: "ios",
+        model: "iPhone 17 Pro",
+        osVersion: "26.5",
+        mode: "slim",
+      },
     };
 
     expect(grantedDeviceSchema.parse(device).spec).not.toHaveProperty("mode");
@@ -242,6 +256,7 @@ describe("statusDeviceSchema's device projection", () => {
     const device = {
       ...fullCoreShapedDevice(),
       spec: {
+        physical: false,
         platform: "android",
         model: "Pixel 8",
         osVersion: "34",
@@ -256,9 +271,10 @@ describe("statusDeviceSchema's device projection", () => {
 
   it("rejects a list.get device record without a mode, or with a mode other than slim or full", () => {
     const record = {
+      physical: false,
       id: "device-1",
       driverDeviceId: "SIM-1",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
       state: "ready",
       driverData: {},
       createdAt: 0,
@@ -266,6 +282,100 @@ describe("statusDeviceSchema's device projection", () => {
     expect(deviceRecordSchema.parse({ ...record, mode: "full" })).toMatchObject({ mode: "full" });
     expect(() => deviceRecordSchema.parse(record)).toThrow();
     expect(() => deviceRecordSchema.parse({ ...record, mode: "reduced" })).toThrow();
+  });
+});
+
+describe("a device's type on the wire (ADR 0022 §1)", () => {
+  const virtualSpec = {
+    model: "iPhone 17 Pro",
+    osVersion: "26.5",
+    physical: false,
+    platform: "ios",
+  };
+  const physicalSpec = {
+    model: "iPhone 15 Pro",
+    osVersion: "18.4",
+    physical: true,
+    platform: "ios",
+  };
+  const virtual = {
+    createdAt: 0,
+    driverData: {},
+    driverDeviceId: "SIM-1",
+    id: "dev_v",
+    mode: "full",
+    physical: false,
+    servesDefaultMode: true,
+    spec: virtualSpec,
+    state: "ready",
+  };
+  const physical = {
+    createdAt: 0,
+    driverData: {},
+    driverDeviceId: "00008110-001A2B3C4D5E",
+    class: "phone",
+    id: "dev_p",
+    physical: true,
+    servesDefaultMode: false,
+    spec: physicalSpec,
+    state: "ready",
+  };
+
+  it.each([
+    ["statusDeviceSchema", statusDeviceSchema],
+    ["deviceRecordSchema", deviceRecordSchema],
+  ] as const)(
+    "%s accepts a physical device with a class and no mode, and a virtual one with a mode",
+    (_name, schema) => {
+      expect(schema.parse(physical)).toMatchObject({ class: "phone", physical: true });
+      expect(schema.parse(physical)).not.toHaveProperty("mode");
+      expect(schema.parse(virtual)).toMatchObject({ mode: "full", physical: false });
+      expect(schema.parse(virtual)).not.toHaveProperty("class");
+    },
+  );
+
+  it.each([
+    ["statusDeviceSchema", statusDeviceSchema],
+    ["deviceRecordSchema", deviceRecordSchema],
+  ] as const)("%s refuses what breaks the rule", (_name, schema) => {
+    const { physical: _device, ...withoutPhysical } = virtual;
+    const { physical: _spec, ...specWithoutPhysical } = virtualSpec;
+    const { mode: _mode, ...withoutMode } = virtual;
+    const { class: _class, ...withoutClass } = physical;
+
+    expect(() => schema.parse(withoutPhysical), "a device without physical").toThrow();
+    expect(
+      () => schema.parse({ ...virtual, spec: specWithoutPhysical }),
+      "a spec without physical",
+    ).toThrow();
+    expect(() => schema.parse(withoutMode), "a virtual device without a mode").toThrow();
+    expect(
+      () => schema.parse({ ...physical, mode: "full" }),
+      "a physical device with a mode",
+    ).toThrow();
+    expect(() => schema.parse(withoutClass), "a physical device without a class").toThrow();
+    expect(
+      () => schema.parse({ ...virtual, class: "phone" }),
+      "a virtual device with a class",
+    ).toThrow();
+    expect(
+      () => schema.parse({ ...physical, class: "watch" }),
+      "a class that cannot be enrolled",
+    ).toThrow();
+  });
+
+  it("grantedDeviceSchema accepts a physical device with no mode, keeps physical and class, and refuses a device without physical or a virtual one without a mode", () => {
+    const granted = grantedDeviceSchema.parse(physical);
+
+    expect(granted).toMatchObject({ class: "phone", physical: true });
+    expect(granted).not.toHaveProperty("mode");
+    expect(grantedDeviceSchema.parse(virtual)).toMatchObject({ mode: "full", physical: false });
+    const { physical: _device, ...withoutPhysical } = virtual;
+    const { mode: _mode, ...withoutMode } = virtual;
+    expect(() => grantedDeviceSchema.parse(withoutPhysical)).toThrow();
+    expect(() => grantedDeviceSchema.parse(withoutMode)).toThrow();
+    expect(() => grantedDeviceSchema.parse({ ...physical, mode: "full" })).toThrow();
+    expect(() => grantedDeviceSchema.parse({ ...virtual, class: "phone" })).toThrow();
   });
 });
 
@@ -389,10 +499,11 @@ describe("leaseRequestRecordSchema", () => {
       state: "open",
     };
     const device = {
+      physical: false,
       driverDeviceId: "emulator-5554",
       id: "dev_1",
       mode: "full",
-      spec: { imageTag, model: "Pixel 8", osVersion: "34", platform: "android" },
+      spec: { physical: false, imageTag, model: "Pixel 8", osVersion: "34", platform: "android" },
     };
 
     expect(leaseRequestRecordSchema.safeParse(record).success).toBe(false);

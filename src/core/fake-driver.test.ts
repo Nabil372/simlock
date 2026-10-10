@@ -17,7 +17,12 @@ describe("FakeDriver", () => {
     const driver = new FakeDriver({ clock: new FakeClock(), platform: "android" });
     const crash = new DriverCrashError("emulator exited");
     driver.failOn("provision", 2, crash);
-    const spec = { model: "Pixel 10", osVersion: "36", platform: "android" } as const;
+    const spec = {
+      physical: false,
+      model: "Pixel 10",
+      osVersion: "36",
+      platform: "android",
+    } as const;
 
     await expect(driver.provision(spec)).resolves.toMatchObject({ deviceId: "fake-android-1" });
     await expect(driver.provision(spec)).rejects.toBe(crash);
@@ -29,7 +34,12 @@ describe("FakeDriver", () => {
       estimateMs: { boot: 20, provision: 10, reclaim: 30 },
       platform: "ios",
     });
-    const spec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+    const spec = {
+      physical: false,
+      model: "iPhone 16",
+      osVersion: "26.5",
+      platform: "ios",
+    } as const;
 
     expect(driver.estimate({ operation: "provision" }, spec)).toBe(10);
     expect(driver.estimate({ operation: "boot" }, spec)).toBe(20);
@@ -84,6 +94,7 @@ describe("FakeDriver", () => {
         slimmableOsVersions: ["26.5"],
       });
       const device = await driver.provision({
+        physical: false,
         model: "iPhone 16",
         osVersion: "26.5",
         platform: "ios",
@@ -115,9 +126,10 @@ describe("FakeDriver", () => {
     ).resolves.toMatchObject({ outcome: "installed", version: "27" });
     await expect(
       driver.resolveSpec({ model: "iPhone 16", osVersion: "27", platform: "ios" }),
-    ).resolves.toEqual({ model: "iPhone 16", osVersion: "27", platform: "ios" });
+    ).resolves.toEqual({ physical: false, model: "iPhone 16", osVersion: "27", platform: "ios" });
 
     const device = await driver.provision({
+      physical: false,
       model: "iPhone 16",
       osVersion: "27",
       platform: "ios",

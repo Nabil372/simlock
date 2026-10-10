@@ -15,6 +15,7 @@ import {
   type HostFacts,
   isStalledTransition,
   type Nuke,
+  type PhysicalClass,
   type Registry,
   type StallInput,
   effectiveAllowDownload,
@@ -352,7 +353,7 @@ export class Dispatcher {
     if (daemon.health === "starting") return { daemon, host };
     const snapshot = this.options.registry.snapshot;
     return {
-      capacity: buildCapacityFigures(snapshot.devices, this.options.capacity),
+      capacity: buildCapacityFigures(snapshot.virtualDevices, this.options.capacity),
       devices: snapshot.devices.map((device) => this.#decorateDevice(device)),
       daemon,
       host,
@@ -836,22 +837,27 @@ export class Dispatcher {
   }
 
   /**
-   * A device as `status.get` and `list.get` report it: with `transitionAgeMs` while it is
-   * mid-transition, `servesDefaultMode` always (ADR 0009 §6), and `stalled: true` once that transition is a stall by the rule `doctor`
+   * A device as `status.get` and `list.get` report it: `class` on a physical one (`physical` is
+   * on every record), `transitionAgeMs` while it is mid-transition, `servesDefaultMode` always
+   * (ADR 0009 §6), and `stalled: true` once that transition is a stall by the rule `doctor`
    * reports (`isStalledTransition`). A device that is not stalled carries no `stalled` at all.
    */
   #decorateDevice(device: DeviceRecord): DeviceRecord & {
+    readonly class?: PhysicalClass;
     readonly servesDefaultMode: boolean;
     readonly transitionAgeMs?: number;
     readonly stalled?: true;
   } {
-    const servesDefaultMode = this.options.deviceModes.servesDefaultMode(device.spec);
+    const decorated = {
+      ...device,
+      ...(device.physical ? { class: device.spec.class } : {}),
+      servesDefaultMode: this.options.deviceModes.servesDefaultMode(device.spec),
+    };
     const enteredAt = transitionEnteredAt(device);
-    if (enteredAt === undefined) return { ...device, servesDefaultMode };
+    if (enteredAt === undefined) return decorated;
     const now = this.options.clock.now();
     return {
-      ...device,
-      servesDefaultMode,
+      ...decorated,
       transitionAgeMs: now - enteredAt,
       ...(this.#isStalled(device, now) ? { stalled: true as const } : {}),
     };

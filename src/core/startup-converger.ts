@@ -1,27 +1,27 @@
-import { type DeviceRecord, type LeaseRecord, mayBeGranted } from "./domain.js";
+import { type DeviceRecord, type LeaseRecord, mayBeGranted, type VirtualDevice } from "./domain.js";
 import type { SerializedDecision } from "./serialized-decision.js";
 import type { StartupRead } from "./startup-read.js";
 
 export interface StartupRegistry {
   readonly snapshot: {
-    readonly devices: readonly DeviceRecord[];
+    readonly virtualDevices: readonly VirtualDevice[];
     readonly leases: readonly LeaseRecord[];
   };
 }
 
 /** Safely completes a reclaim operation interrupted by daemon shutdown. */
 export interface InterruptedReclaimRecovery {
-  recoverInterruptedReclaim(device: DeviceRecord): Promise<void>;
+  recoverInterruptedReclaim(device: VirtualDevice): Promise<void>;
 }
 
 /** Deletes a spent fresh device the previous process shut down but did not delete. */
 export interface SpentDeviceDeletion {
-  deleteSpent(device: DeviceRecord): Promise<void>;
+  deleteSpent(device: VirtualDevice): Promise<void>;
 }
 
 /** Re-arms retry timers for devices still `quarantined` at startup, from persisted state. */
 export interface QuarantineRestorer {
-  restore(include: (device: DeviceRecord) => boolean): void;
+  restore(include: (device: VirtualDevice) => boolean): void;
 }
 
 /** Read-only operation claim view used to avoid an in-flight device operation. */
@@ -93,13 +93,14 @@ export class StartupConverger {
   }
 
   /**
-   * Devices in `state` that startup may act on: their platform was read, no lease holds
-   * them, and no in-process operation has claimed them. Read inside a decision section.
+   * Devices in `state` that startup may act on: virtual (a physical record is never booted,
+   * shut down or destroyed), their platform was read, no lease holds them, and no in-process
+   * operation has claimed them. Read inside a decision section.
    */
-  #actionableDevices(state: DeviceRecord["state"], read: StartupRead): DeviceRecord[] {
+  #actionableDevices(state: DeviceRecord["state"], read: StartupRead): VirtualDevice[] {
     const snapshot = this.options.registry.snapshot;
     const leasedDeviceIds = new Set(snapshot.leases.map((lease) => lease.deviceId));
-    return snapshot.devices.filter(
+    return snapshot.virtualDevices.filter(
       (device) =>
         device.state === state &&
         read.isReadable(device.spec.platform) &&

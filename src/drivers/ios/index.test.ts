@@ -117,7 +117,7 @@ const listFixtureAfterDownload = JSON.stringify({
     },
   ],
 });
-const spec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+const spec = { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
 const driverData = {
   deviceTypeId: "com.apple.CoreSimulator.SimDeviceType.iPhone-16",
   name: "simlock-device-1",
@@ -199,8 +199,12 @@ describe("IosSimctlDriver", () => {
     const driver = await createDriver(runner);
 
     await expect(
-      driver.resolveSpec({ model: "iPhone 16", osVersion: "18.4", platform: "ios" }),
-    ).resolves.toEqual({ model: "iPhone 16", osVersion: "18.4", platform: "ios" });
+      driver.resolveSpec({
+        model: "iPhone 16",
+        osVersion: "18.4",
+        platform: "ios",
+      }),
+    ).resolves.toEqual({ physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" });
     expect(runner.calls).toEqual([{ ...listInvocation, options: { timeoutMs: 30_000 } }]);
   });
 
@@ -233,7 +237,11 @@ describe("IosSimctlDriver", () => {
     const driver = await createDriver(scriptedListRunner());
 
     await expect(
-      driver.resolveSpec({ model: "iphone 16", osVersion: "26.5", platform: "ios" }),
+      driver.resolveSpec({
+        model: "iphone 16",
+        osVersion: "26.5",
+        platform: "ios",
+      }),
     ).resolves.toEqual(spec);
   });
 
@@ -343,6 +351,7 @@ describe("IosSimctlDriver", () => {
 
     // iOS 26.5 is newer and installed, but only iOS 18.4 still lists iPhone Xs as supported.
     await expect(driver.resolveSpec({ model: "iPhone Xs", platform: "ios" })).resolves.toEqual({
+      physical: false,
       model: "iPhone Xs",
       osVersion: "18.4",
       platform: "ios",
@@ -657,7 +666,7 @@ describe("IosSimctlDriver", () => {
     it.each([
       [
         "an exact version",
-        { model: "iPhone 7", osVersion: "13.0", platform: "ios" as const },
+        { physical: false, model: "iPhone 7", osVersion: "13.0", platform: "ios" as const },
         "13.0",
       ],
       ["no version", { model: "iPhone 7", platform: "ios" as const }, "15"],
@@ -810,7 +819,11 @@ describe("IosSimctlDriver", () => {
     const filesystem = new MemoryFilesystem();
     const driver = await createDriver(runner, new FakeClock(), filesystem);
     await plantManagedDevice(filesystem);
-    await driver.resolveSpec({ model: "iPhone 16", osVersion: "26.5", platform: "ios" });
+    await driver.resolveSpec({
+      model: "iPhone 16",
+      osVersion: "26.5",
+      platform: "ios",
+    });
 
     await expect(driver.provision(spec)).resolves.toEqual({
       address: driverData.udid,
@@ -849,7 +862,11 @@ describe("IosSimctlDriver", () => {
     const filesystem = new MemoryFilesystem();
     await plantManagedDevice(filesystem);
     const driver = await createDriver(runner, new FakeClock(), filesystem);
-    await driver.resolveSpec({ model: "iPhone 16", osVersion: "26.5", platform: "ios" });
+    await driver.resolveSpec({
+      model: "iPhone 16",
+      osVersion: "26.5",
+      platform: "ios",
+    });
 
     await expect(driver.provision({ ...spec, mode: "slim" })).resolves.toEqual({
       address: driverData.udid,
@@ -870,7 +887,11 @@ describe("IosSimctlDriver", () => {
       },
     ]);
     const driver = await createDriver(runner);
-    await driver.resolveSpec({ model: "iPhone 16", osVersion: "26.5", platform: "ios" });
+    await driver.resolveSpec({
+      model: "iPhone 16",
+      osVersion: "26.5",
+      platform: "ios",
+    });
 
     await expect(driver.provision(spec)).rejects.toEqual(
       expect.objectContaining({
@@ -889,11 +910,7 @@ describe("IosSimctlDriver", () => {
 
     await expect(
       driver.makeReady(
-        {
-          address: driverData.udid,
-          deviceId: driverData.udid,
-          driverData,
-        },
+        { address: driverData.udid, deviceId: driverData.udid, driverData },
         prepareFull,
       ),
     ).resolves.toEqual({
@@ -918,11 +935,7 @@ describe("IosSimctlDriver", () => {
     ]);
     const driver = await createDriver(runner, clock);
     const ready = driver.makeReady(
-      {
-        address: driverData.udid,
-        deviceId: driverData.udid,
-        driverData,
-      },
+      { address: driverData.udid, deviceId: driverData.udid, driverData },
       prepareFull,
     );
     // Handled up front so a failure below reports itself rather than surfacing as an
@@ -984,7 +997,11 @@ describe("IosSimctlDriver", () => {
     const filesystem = new MemoryFilesystem();
     const driver = await createTokenDriver(runner, filesystem);
     await plantManagedDevice(filesystem);
-    await driver.resolveSpec({ model: "iPhone 16", osVersion: "26.5", platform: "ios" });
+    await driver.resolveSpec({
+      model: "iPhone 16",
+      osVersion: "26.5",
+      platform: "ios",
+    });
     await driver.provision(spec);
 
     const provisionedDurable = await readToken(filesystem, durableMarkPath);
@@ -1009,7 +1026,11 @@ describe("IosSimctlDriver", () => {
     ]);
     const driver = await createDriver(runner);
 
-    await driver.destroy({ address: driverData.udid, deviceId: driverData.udid, driverData });
+    await driver.destroy({
+      address: driverData.udid,
+      deviceId: driverData.udid,
+      driverData,
+    });
 
     expect(runner.calls.map((call) => call.args)).toEqual([
       simctlArgs("shutdown", driverData.udid),
@@ -1151,9 +1172,18 @@ describe("IosSimctlDriver", () => {
       let refused = 0;
       for (const model of models) {
         for (const osVersion of installed) {
-          const resolution = driver.resolveSpec({ model, osVersion, platform: "ios" });
+          const resolution = driver.resolveSpec({
+            model,
+            osVersion,
+            platform: "ios",
+          });
           if (catalog.modelRuntimes[model]?.includes(osVersion) === true) {
-            await expect(resolution).resolves.toEqual({ model, osVersion, platform: "ios" });
+            await expect(resolution).resolves.toEqual({
+              physical: false,
+              model,
+              osVersion,
+              platform: "ios",
+            });
             accepted += 1;
           } else {
             // Every runtime here is installed, so the refusal is the range or the pairing
@@ -1173,8 +1203,17 @@ describe("IosSimctlDriver", () => {
 
       // The first 26.0 build does not support the iPad mini; the second does.
       await expect(
-        driver.resolveSpec({ model: "iPad mini", osVersion: "26.0", platform: "ios" }),
-      ).resolves.toEqual({ model: "iPad mini", osVersion: "26.0", platform: "ios" });
+        driver.resolveSpec({
+          model: "iPad mini",
+          osVersion: "26.0",
+          platform: "ios",
+        }),
+      ).resolves.toEqual({
+        physical: false,
+        model: "iPad mini",
+        osVersion: "26.0",
+        platform: "ios",
+      });
     });
 
     it("pairs two device types that differ only in letter case through the first, as resolveSpec matches them", async () => {
@@ -1200,8 +1239,17 @@ describe("IosSimctlDriver", () => {
       expect(catalog.models).toEqual(["iPhone 16", "iphone 16"]);
       expect(catalog.modelRuntimes).toEqual({ "iPhone 16": ["26.0"], "iphone 16": ["26.0"] });
       await expect(
-        driver.resolveSpec({ model: "iphone 16", osVersion: "26.0", platform: "ios" }),
-      ).resolves.toEqual({ model: "iPhone 16", osVersion: "26.0", platform: "ios" });
+        driver.resolveSpec({
+          model: "iphone 16",
+          osVersion: "26.0",
+          platform: "ios",
+        }),
+      ).resolves.toEqual({
+        physical: false,
+        model: "iPhone 16",
+        osVersion: "26.0",
+        platform: "ios",
+      });
     });
   });
 
@@ -1743,11 +1791,7 @@ describe("IosSimctlDriver", () => {
       // before slim mode shipped holds, so this also proves such data still loads.
       await expect(
         (await createDriver(runner)).makeReady(
-          {
-            address: driverData.udid,
-            deviceId: driverData.udid,
-            driverData,
-          },
+          { address: driverData.udid, deviceId: driverData.udid, driverData },
           prepareFull,
         ),
       ).resolves.toEqual({
@@ -1879,11 +1923,7 @@ describe("IosSimctlDriver", () => {
       );
 
       const result = await driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: slim18_5,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
         prepareSlim,
       );
 
@@ -1948,11 +1988,7 @@ describe("IosSimctlDriver", () => {
       });
 
       const ready = driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: slim18_5,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
         prepareSlim,
       );
 
@@ -2022,11 +2058,7 @@ describe("IosSimctlDriver", () => {
       });
 
       const ready = driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: slim18_5,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
         prepareSlim,
       );
 
@@ -2149,11 +2181,7 @@ describe("IosSimctlDriver", () => {
       const driver = await createSlimDriver(runner, filesystem, slimOptions(), onSlimmed);
 
       const result = await driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: staleData,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: staleData },
         prepareSlim,
       );
 
@@ -2220,11 +2248,7 @@ describe("IosSimctlDriver", () => {
       );
 
       const result = await driver.makeReady(
-        {
-          address: slim18_4.udid,
-          deviceId: slim18_4.udid,
-          driverData: slim18_4,
-        },
+        { address: slim18_4.udid, deviceId: slim18_4.udid, driverData: slim18_4 },
         prepareSlim,
       );
 
@@ -2257,11 +2281,7 @@ describe("IosSimctlDriver", () => {
       );
 
       await driver.makeReady(
-        {
-          address: slim17_5.udid,
-          deviceId: slim17_5.udid,
-          driverData: slim17_5,
-        },
+        { address: slim17_5.udid, deviceId: slim17_5.udid, driverData: slim17_5 },
         prepareSlim,
       );
 
@@ -2323,11 +2343,7 @@ describe("IosSimctlDriver", () => {
       const driver = await createSlimDriver(runner, filesystem, slimOptions(), onSlimmed);
 
       await driver.makeReady(
-        {
-          address: slim26_0.udid,
-          deviceId: slim26_0.udid,
-          driverData: slim26_0,
-        },
+        { address: slim26_0.udid, deviceId: slim26_0.udid, driverData: slim26_0 },
         prepareSlim,
       );
 
@@ -2380,11 +2396,7 @@ describe("IosSimctlDriver", () => {
       );
 
       const result = await driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: slim18_5,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
         prepareSlim,
       );
 
@@ -2526,11 +2538,7 @@ describe("IosSimctlDriver", () => {
       });
 
       const ready = driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: slim18_5,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
         prepareSlim,
       );
 
@@ -2590,11 +2598,7 @@ describe("IosSimctlDriver", () => {
       );
 
       const result = await driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: slim18_5,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
         prepareSlim,
       );
 
@@ -2688,7 +2692,11 @@ describe("IosSimctlDriver", () => {
         );
 
         const result = await driver.makeReady(
-          { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
+          {
+            address: slim18_5.udid,
+            deviceId: slim18_5.udid,
+            driverData: slim18_5,
+          },
           prepareFull,
         );
 
@@ -2758,11 +2766,7 @@ describe("IosSimctlDriver", () => {
       );
 
       const result = await driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: slim18_5,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
         { mode: "slim", purpose: "recover" },
       );
 
@@ -2816,11 +2820,7 @@ describe("IosSimctlDriver", () => {
       });
 
       const ready = driver.makeReady(
-        {
-          address: slim18_5.udid,
-          deviceId: slim18_5.udid,
-          driverData: slim18_5,
-        },
+        { address: slim18_5.udid, deviceId: slim18_5.udid, driverData: slim18_5 },
         prepareSlim,
       );
 
@@ -2879,7 +2879,7 @@ describe("IosSimctlDriver", () => {
 
         await expect(
           driver.resolveSpec({ ...iphone16, mode: "slim", osVersion: "18.4" }),
-        ).resolves.toEqual({ ...iphone16, osVersion: "18.4" });
+        ).resolves.toEqual({ ...iphone16, osVersion: "18.4", physical: false });
       });
 
       it("gives two requests with different modes for one model and runtime different specs", async () => {
@@ -2896,8 +2896,8 @@ describe("IosSimctlDriver", () => {
         const slim = await driver.resolveSpec({ ...iphone16, mode: "slim", osVersion: "26.5" });
         const full = await driver.resolveSpec({ ...iphone16, mode: "full", osVersion: "26.5" });
 
-        expect(slim).toEqual({ ...iphone16, mode: "slim", osVersion: "26.5" });
-        expect(full).toEqual({ ...iphone16, osVersion: "26.5" });
+        expect(slim).toEqual({ ...iphone16, mode: "slim", osVersion: "26.5", physical: false });
+        expect(full).toEqual({ ...iphone16, osVersion: "26.5", physical: false });
       });
 
       it("returns a full spec for a slim request when slim is not configured", async () => {
@@ -2905,7 +2905,7 @@ describe("IosSimctlDriver", () => {
 
         await expect(
           driver.resolveSpec({ ...iphone16, mode: "slim", osVersion: "26.5" }),
-        ).resolves.toEqual({ ...iphone16, osVersion: "26.5" });
+        ).resolves.toEqual({ ...iphone16, osVersion: "26.5", physical: false });
       });
     });
 

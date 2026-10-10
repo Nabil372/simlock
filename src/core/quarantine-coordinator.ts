@@ -1,7 +1,7 @@
 import type { EventBus } from "../bus/index.js";
 import { type Clock, type Logger, NoopLogger, type TimerHandle } from "../ports/index.js";
-import { type DeviceRecord, mayBeGranted, type Platform } from "./domain.js";
-import type { Driver, DriverDevice } from "./driver.js";
+import { type DeviceRecord, mayBeGranted, type Platform, type VirtualDevice } from "./domain.js";
+import type { Driver, VirtualDriverDevice } from "./driver.js";
 import type { SerializedDecision } from "./serialized-decision.js";
 import { stableError } from "./stable-error.js";
 
@@ -10,7 +10,7 @@ export interface QuarantineDriverCatalog {
 }
 
 export interface QuarantineRegistry {
-  readonly snapshot: { readonly devices: readonly DeviceRecord[] };
+  readonly snapshot: { readonly virtualDevices: readonly VirtualDevice[] };
   enterQuarantine(deviceId: string, nextRetryAt: number): Promise<DeviceRecord>;
   recordQuarantineRetryFailure(
     deviceId: string,
@@ -88,8 +88,11 @@ export class QuarantineCoordinator {
   // fallow-ignore-next-line unused-class-member -- called through ReclaimCoordinator's quarantine port.
   async enter(failure: QuarantinePurgeFailure): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
-    await this.options.decisions.run(async () => {
-      await this.options.registry.enterQuarantine(failure.deviceId, nextRetryAt);
+    const device = await this.options.decisions.run(async () => {
+      const quarantined = await this.options.registry.enterQuarantine(
+        failure.deviceId,
+        nextRetryAt,
+      );
       this.options.eventBus.emit(
         "device.purge-failed",
         {
@@ -106,8 +109,9 @@ export class QuarantineCoordinator {
         { deviceId: failure.deviceId, maxRetries: this.options.config.maxRetries, nextRetryAt },
         "quarantine-coordinator",
       );
+      return quarantined;
     });
-    this.#arm(failure.deviceId, nextRetryAt);
+    this.#armUnlessPhysical(device, nextRetryAt);
   }
 
   /**
@@ -121,15 +125,16 @@ export class QuarantineCoordinator {
    */
   async enterFromStalledTransition(deviceId: string): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
-    await this.options.decisions.run(async () => {
-      await this.options.registry.enterQuarantine(deviceId, nextRetryAt);
+    const device = await this.options.decisions.run(async () => {
+      const quarantined = await this.options.registry.enterQuarantine(deviceId, nextRetryAt);
       this.options.eventBus.emit(
         "device.quarantined",
         { deviceId, maxRetries: this.options.config.maxRetries, nextRetryAt },
         "quarantine-coordinator",
       );
+      return quarantined;
     });
-    this.#arm(deviceId, nextRetryAt);
+    this.#armUnlessPhysical(device, nextRetryAt);
   }
 
   /**
@@ -139,8 +144,8 @@ export class QuarantineCoordinator {
    * a daemon start must not act on: a retry that is due drives the driver at once, and startup
    * does not drive a platform it could not read (ADR 0019 §1 step 5).
    */
-  restore(include: (device: DeviceRecord) => boolean = () => true): void {
-    for (const device of this.options.registry.snapshot.devices) {
+  restore(include: (device: VirtualDevice) => boolean = () => true): void {
+    for (const device of this.options.registry.snapshot.virtualDevices) {
       if (device.state !== "quarantined" || !include(device)) continue;
       this.#arm(device.id, device.quarantineNextRetryAt ?? this.options.clock.now());
     }
@@ -150,6 +155,15 @@ export class QuarantineCoordinator {
     this.#disposed = true;
     for (const timer of this.#timers.values()) this.options.clock.cancel(timer);
     this.#timers.clear();
+  }
+
+  /**
+   * A physical device is quarantined with no retry armed: its record and its event still carry
+   * `nextRetryAt`, but no timer acts on it until the physical reclaim adds the retry.
+   */
+  #armUnlessPhysical(device: DeviceRecord, nextRetryAt: number): void {
+    if (device.physical) return;
+    this.#arm(device.id, nextRetryAt);
   }
 
   #arm(deviceId: string, nextRetryAt: number): void {
@@ -178,7 +192,7 @@ export class QuarantineCoordinator {
     // abandoned), so a re-read that finds it gone or moved on means a stale
     // timer fired after the fact -- nothing to do.
     const device = await this.options.decisions.run(() =>
-      this.options.registry.snapshot.devices.find(
+      this.options.registry.snapshot.virtualDevices.find(
         (candidate) => candidate.id === deviceId && candidate.state === "quarantined",
       ),
     );
@@ -215,7 +229,7 @@ export class QuarantineCoordinator {
    * back in the pool for a second one. It retries the delete instead, and success is
    * `device.deleted`, not `device.quarantine-recovered`: nothing rejoined the pool.
    */
-  async #retryDelete(driver: Driver, device: DeviceRecord, attempts: number): Promise<void> {
+  async #retryDelete(driver: Driver, device: VirtualDevice, attempts: number): Promise<void> {
     try {
       await driver.destroy(toDriverDevice(device));
     } catch (error: unknown) {
@@ -231,7 +245,7 @@ export class QuarantineCoordinator {
 
   #logRetryFailure(
     message: string,
-    device: DeviceRecord,
+    device: VirtualDevice,
     step: string,
     attempts: number,
     error: unknown,
@@ -239,7 +253,7 @@ export class QuarantineCoordinator {
     this.#logger.warn(message, { deviceId: device.id, step, attempts, error: stableError(error) });
   }
 
-  async #retryFailed(device: DeviceRecord, attempts: number): Promise<void> {
+  async #retryFailed(device: VirtualDevice, attempts: number): Promise<void> {
     if (attempts >= this.options.config.maxRetries) {
       await this.#giveUp(device, attempts);
       return;
@@ -251,7 +265,7 @@ export class QuarantineCoordinator {
     this.#arm(device.id, nextRetryAt);
   }
 
-  async #giveUp(device: DeviceRecord, attempts: number): Promise<void> {
+  async #giveUp(device: VirtualDevice, attempts: number): Promise<void> {
     const driver = this.options.drivers.get(device.spec.platform);
     try {
       await driver.destroy(toDriverDevice(device));
@@ -296,10 +310,11 @@ function backoffDelay(config: QuarantineRetryConfig, attemptsSoFar: number): num
  * from `driverData` -- so a quarantined device that has no address yet is not a lie a driver
  * could act on.
  */
-function toDriverDevice(device: DeviceRecord): DriverDevice {
+function toDriverDevice(device: VirtualDevice): VirtualDriverDevice {
   return {
     address: device.address ?? "",
     deviceId: device.driverDeviceId,
     driverData: device.driverData,
+    physical: false,
   };
 }

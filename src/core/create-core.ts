@@ -199,7 +199,7 @@ export function createCore(options: CoreOptions): Core {
     createCapacityStrategy(options.config.capacity, options.systemStats),
     () => capacityObserver.changed(),
   );
-  const devices = () => capacityDevices(registry.snapshot.devices);
+  const devices = () => capacityDevices(registry.snapshot.virtualDevices);
   const capacityReader: CapacityReader = {
     get runningCapacity() {
       return capacity.runningCapacity(devices());
@@ -212,7 +212,7 @@ export function createCore(options: CoreOptions): Core {
   };
   const capacityObserver: CapacityObserver = new CapacityObserver({
     eventBus: options.eventBus,
-    figures: () => buildCapacityFigures(registry.snapshot.devices, capacityReader),
+    figures: () => buildCapacityFigures(registry.snapshot.virtualDevices, capacityReader),
   });
   registry.onCommit(() => capacityObserver.changed());
   const claims = new DeviceOperationClaims();

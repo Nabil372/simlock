@@ -33,7 +33,8 @@ export interface LeaseDetails {
   readonly deviceId: string;
   readonly createdAt: string;
   readonly expiresAt: string;
-  readonly mode: string;
+  /** Absent for a lease on a physical device, which has no mode. */
+  readonly mode?: string;
   readonly imageTag?: string;
   readonly workerId?: string;
   readonly worker?: { readonly id: string; readonly label?: string };

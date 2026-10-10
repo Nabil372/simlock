@@ -20,12 +20,18 @@ import { LeaseReleaseCoordinator } from "./lease-release-coordinator.js";
 
 const STATE_PATH = "/home/agent/.simlock/state.json";
 
-async function createHarness(options: { readonly ids?: readonly string[] } = {}) {
+async function createHarness(
+  options: { readonly ids?: readonly string[]; readonly state?: object } = {},
+) {
   const clock = new FakeClock(1_000);
   const eventBus = new EventBus(clock);
   const ids = [...(options.ids ?? [])];
   let nextId = 0;
   const filesystem = new MemoryFilesystem();
+  if (options.state !== undefined) {
+    await filesystem.mkdirp("/home/agent/.simlock");
+    await filesystem.writeFileAtomic(STATE_PATH, JSON.stringify(options.state));
+  }
   const registry = await Registry.load({
     clock,
     eventBus,
@@ -80,7 +86,7 @@ async function leaseOn(
     driverData: {},
     driverDeviceId,
     provisionDuration: 0,
-    spec: { model: "Phone", osVersion: "1", platform },
+    spec: { physical: false, model: "Phone", osVersion: "1", platform },
   });
   await harness.registry.transitionDevice(device.id, "ready", {
     event: "device.ready",
@@ -119,6 +125,53 @@ function eventNames(harness: Harness): string[] {
 }
 
 describe("LeaseReconciler", () => {
+  it("skips the lease of a physical device, whatever the read says of its ID or its deadline, and keeps the lease and the device as they are", async () => {
+    const lease = {
+      deviceId: "dev_phys",
+      grantedAt: 1,
+      id: "lse_phys",
+      idChosenByRequester: false,
+      lastRenewedAt: 1,
+      ownerId: "agent",
+      requesterId: "agent",
+      ttlDeadline: 500,
+      ttlMs: 60_000,
+    };
+    const harness = await createHarness({
+      state: {
+        devices: [],
+        leases: [lease],
+        physicalDevices: [
+          {
+            createdAt: 1,
+            driverData: {},
+            driverDeviceId: "00008110-001A2B3C4D5E",
+            enrolledApps: [],
+            id: "dev_phys",
+            physical: true,
+            spec: {
+              class: "phone",
+              model: "iPhone 15 Pro",
+              osVersion: "18.4",
+              physical: true,
+              platform: "ios",
+            },
+            state: "leased",
+          },
+        ],
+      },
+    });
+
+    // The deadline has passed and the platform's root lists nothing of this device.
+    await harness.reconciler.run(read({ ios: reality() }));
+    await harness.reconciler.run(read({}));
+
+    expect(harness.registry.snapshot.leases.map((kept) => kept.id)).toEqual(["lse_phys"]);
+    expect(harness.registry.snapshot.devices[0]?.state).toBe("leased");
+    expect(eventNames(harness)).toEqual([]);
+    expect(harness.reclaims).toEqual([]);
+  });
+
   it("keeps the lease of a device the read says is running, and touches nothing", async () => {
     const harness = await createHarness();
     const lease = await leaseOn(harness, "ios", "d1", 5_000);

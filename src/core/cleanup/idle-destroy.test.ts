@@ -84,12 +84,13 @@ function view(
     config,
     devices: overrides.devices ?? [
       {
+        physical: false as const,
         createdAt: 0,
         driverData: {},
         driverDeviceId: "driver-1",
         id: "dev_1",
         lastLeaseEndedAt: 0,
-        spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+        spec: { physical: false as const, model: "iPhone 16", osVersion: "26.5", platform: "ios" },
         mode: "full",
         state: "shutdown",
       },
@@ -164,6 +165,7 @@ describe("idleDestroyRule", () => {
 
   describe("a device that never served a lease", () => {
     const never = (id: string, overrides: Partial<RegistryView["devices"][number]> = {}) => ({
+      physical: false as const,
       createdAt: 0,
       driverData: {},
       driverDeviceId: `driver-${id}`,
@@ -171,7 +173,12 @@ describe("idleDestroyRule", () => {
       mode: "full" as const,
       readyAt: 1_000,
       shutdownAt: 5_000,
-      spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" as const },
+      spec: {
+        physical: false as const,
+        model: "iPhone 16",
+        osVersion: "26.5",
+        platform: "ios" as const,
+      },
       state: "shutdown" as const,
       ...overrides,
     });

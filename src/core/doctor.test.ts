@@ -31,7 +31,7 @@ describe("Doctor", () => {
       driverData: { fakeDeviceId: "missing" },
       driverDeviceId: "missing",
       provisionDuration: 0,
-      spec: { model: "Phone", osVersion: "1", platform: "ios" },
+      spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
     });
     await registry.transitionDevice(registered.id, "ready", {
       event: "device.ready",
@@ -90,11 +90,12 @@ describe("Doctor", () => {
       JSON.stringify({
         devices: [
           {
+            physical: false,
             createdAt: 1,
             driverData: { fakeDeviceId: "simlock-stale" },
             driverDeviceId: "simlock-stale",
             id: "dev_1",
-            spec: { model: "Phone", osVersion: "1", platform: "ios" },
+            spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
             state: "leased",
           },
         ],
@@ -150,7 +151,7 @@ describe("Doctor", () => {
       driverData: { fakeDeviceId: "simlock-drift" },
       driverDeviceId: "simlock-drift",
       provisionDuration: 0,
-      spec: { model: "Phone", osVersion: "1", platform: "ios" },
+      spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
     });
     await registry.transitionDevice(device.id, "ready", {
       event: "device.ready",
@@ -215,7 +216,7 @@ describe("Doctor", () => {
         driverData: {},
         driverDeviceId: "simlock-marked",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       await registry.transitionDevice(device.id, "ready", {
         event: "device.ready",
@@ -279,7 +280,7 @@ describe("Doctor", () => {
       driverData: {},
       driverDeviceId: "simlock-reclaiming",
       provisionDuration: 0,
-      spec: { model: "Phone", osVersion: "1", platform: "ios" },
+      spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
     });
     await registry.transitionDevice(device.id, "ready", {
       event: "device.ready",
@@ -334,7 +335,7 @@ describe("Doctor", () => {
       driverData: { fakeDeviceId: "missing" },
       driverDeviceId: "missing",
       provisionDuration: 0,
-      spec: { model: "Phone", osVersion: "1", platform: "ios" },
+      spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
     });
     await registry.transitionDevice(missing.id, "ready", {
       event: "device.ready",
@@ -395,7 +396,7 @@ describe("Doctor", () => {
       driverData: { fakeDeviceId: "live" },
       driverDeviceId: "live",
       provisionDuration: 0,
-      spec: { model: "Phone", osVersion: "1", platform: "ios" },
+      spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
     });
     await registry.transitionDevice(device.id, "ready", {
       event: "device.ready",
@@ -675,7 +676,7 @@ describe("Doctor", () => {
       driverData: {},
       driverDeviceId: "simlock-provisioning",
       provisionDuration: 0,
-      spec: { model: "Phone", osVersion: "1", platform: "ios" },
+      spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
     });
     const reclaiming = await readyDevice(registry, "simlock-reclaiming", "ios");
     const lease = await registry.createLease({
@@ -732,7 +733,7 @@ describe("Doctor", () => {
         driverData: {},
         driverDeviceId: "simlock-stuck",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       const stalled = (now: number) =>
         isStalledTransition({
@@ -807,7 +808,7 @@ describe("Doctor", () => {
         driverData: {},
         driverDeviceId: "simlock-stuck",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       const leased = await readyDevice(registry, "simlock-erasing", "ios");
       const lease = await registry.createLease({
@@ -873,7 +874,7 @@ describe("Doctor", () => {
         driverData: {},
         driverDeviceId: "simlock-stuck",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       // threshold = (provision 1_000 + boot 2_000) * thresholdMultiplier 3 = 9_000
       clock.advance(9_001);
@@ -921,7 +922,7 @@ describe("Doctor", () => {
         driverData: {},
         driverDeviceId: "simlock-claimed",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       const claims = new DeviceOperationClaims();
       const claim = claims.tryClaim(device.id, "reclaim");
@@ -979,7 +980,7 @@ describe("Doctor", () => {
         driverData: {},
         driverDeviceId: "simlock-slow",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       clock.advance(8_000);
 
@@ -1113,7 +1114,7 @@ describe("Doctor", () => {
         driverData: {},
         driverDeviceId: "simlock-stuck",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       clock.advance(9_001);
 
@@ -1152,7 +1153,7 @@ describe("Doctor", () => {
         driverData: {},
         driverDeviceId: "simlock-stuck",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       // Reality still shows the device (never actually booted) so the fix pass isn't
       // also chasing an unrelated registry-device-missing finding on the same device.
@@ -1208,12 +1209,13 @@ describe("Doctor", () => {
         JSON.stringify({
           devices: [
             {
+              physical: false,
               createdAt: 1,
               driverData: {},
               driverDeviceId: "simlock-stuck",
               id: "dev_1",
               lastLeaseEndedAt: 1,
-              spec: { model: "Phone", osVersion: "1", platform: "ios" },
+              spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
               state: "reclaiming",
             },
           ],
@@ -1316,7 +1318,7 @@ describe("Doctor", () => {
       driverData: {},
       driverDeviceId: "simlock-spent",
       provisionDuration: 0,
-      spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+      spec: { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" },
     });
     await registry.transitionDevice(spent.id, "ready", {
       event: "device.ready",
@@ -1502,7 +1504,7 @@ describe("Doctor", () => {
         driverData: { fakeDeviceId: "gone" },
         driverDeviceId: "gone",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       await registry.transitionDevice(registered.id, "ready", {
         event: "device.ready",
@@ -1673,7 +1675,7 @@ describe("Doctor", () => {
         driverData: { fakeDeviceId: "missing" },
         driverDeviceId: "missing",
         provisionDuration: 0,
-        spec: { model: "Phone", osVersion: "1", platform: "ios" },
+        spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
       await registry.transitionDevice(registered.id, "ready", {
         event: "device.ready",
@@ -2239,7 +2241,12 @@ function loadRegistry(clock: FakeClock, eventBus: EventBus): Promise<Registry> {
 }
 
 function driverDevice(deviceId: string) {
-  return { address: `${deviceId}-address`, deviceId, driverData: { fakeDeviceId: deviceId } };
+  return {
+    physical: false,
+    address: `${deviceId}-address`,
+    deviceId,
+    driverData: { fakeDeviceId: deviceId },
+  };
 }
 
 function observed(deviceId: string, runState: "running" | "stopped") {
@@ -2261,7 +2268,7 @@ async function readyIosDevice() {
     driverData: { fakeDeviceId: "device-1" },
     driverDeviceId: "device-1",
     provisionDuration: 0,
-    spec: { model: "Phone", osVersion: "1", platform: "ios" },
+    spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
   });
   await registry.transitionDevice(registered.id, "ready", {
     event: "device.ready",
@@ -2289,7 +2296,7 @@ async function readyDevice(
     driverData: {},
     driverDeviceId,
     provisionDuration: 0,
-    spec: { model: "Phone", osVersion: "1", platform },
+    spec: { physical: false, model: "Phone", osVersion: "1", platform },
   });
   await registry.transitionDevice(device.id, "ready", {
     event: "device.ready",
@@ -2313,6 +2320,150 @@ async function shutdownDevice(
   });
   return registry.snapshot.devices.find((candidate) => candidate.id === device.id)!;
 }
+
+describe("Doctor and physical devices (ADR 0022 §4)", () => {
+  const physical = (state: "ready" | "leased" | "reclaiming", extra: object = {}) => ({
+    createdAt: 1,
+    driverData: {},
+    driverDeviceId: `00008110-${state}`,
+    enrolledApps: [],
+    id: `dev_${state}`,
+    physical: true,
+    spec: {
+      class: "phone",
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      physical: true,
+      platform: "ios",
+    },
+    state,
+    ...extra,
+  });
+
+  async function physicalHarness(records: readonly object[], leases: readonly object[] = []) {
+    const clock = new FakeClock(100_000);
+    const eventBus = new EventBus(clock);
+    const filesystem = new MemoryFilesystem();
+    await filesystem.writeFileAtomic(
+      "/state.json",
+      JSON.stringify({ devices: [], leases, physicalDevices: records }),
+    );
+    const registry = await Registry.load({
+      clock,
+      eventBus,
+      filesystem,
+      idGenerator: sequence(),
+      statePath: "/state.json",
+    });
+    const driver = new FakeDriver({
+      clock,
+      estimateMs: { boot: 2_000, provision: 1_000, reclaim: 1_000 },
+      platform: "ios",
+    });
+    driver.setManagedReality({ devices: [], processes: [] });
+    return { clock, driver, eventBus, registry };
+  }
+
+  const heldLease = {
+    deviceId: "dev_leased",
+    grantedAt: 1,
+    id: "lse_held",
+    idChosenByRequester: false,
+    lastRenewedAt: 1,
+    ownerId: "agent",
+    requesterId: "agent",
+    ttlDeadline: 10_000_000,
+    ttlMs: 60_000,
+  };
+
+  it("raises no drift finding for a ready or a leased physical record that no root holds, and --fix leaves both as they are", async () => {
+    const { clock, driver, eventBus, registry } = await physicalHarness(
+      [physical("ready"), physical("leased")],
+      [heldLease],
+    );
+    const destroy = vi.spyOn(driver, "destroy");
+    const shutdown = vi.spyOn(driver, "shutdown");
+
+    const report = await new Doctor({
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile({ fix: true });
+
+    expect(report.findings).toEqual([]);
+    expect(registry.snapshot.devices.map((device) => device.state)).toEqual(["ready", "leased"]);
+    expect(destroy).not.toHaveBeenCalled();
+    expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it("does not report as an orphan the ID a physical record holds, and a purge destroys only the orphan, as a virtual driver device", async () => {
+    const { clock, driver, eventBus, registry } = await physicalHarness([physical("ready")]);
+    driver.setManagedReality({
+      devices: [
+        {
+          address: "a",
+          deviceId: "00008110-ready",
+          driverData: {},
+          runState: "running",
+        },
+        { address: "b", deviceId: "simlock-orphan", driverData: {}, runState: "running" },
+      ],
+      processes: [],
+    });
+    const destroy = vi.spyOn(driver, "destroy");
+
+    const report = await new Doctor({
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile({ purgeOrphans: true });
+
+    expect(report.findings).toEqual([]);
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(destroy).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: "simlock-orphan", physical: false }),
+    );
+  });
+
+  it("reports stalled-transition for a reclaiming physical record past its threshold and --fix quarantines it, arming no retry", async () => {
+    const { clock, driver, eventBus, registry } = await physicalHarness([
+      physical("reclaiming", { lastLeaseEndedAt: 1_000 }),
+    ]);
+    const quarantine = new QuarantineCoordinator({
+      clock,
+      config: {
+        maxRetries: 3,
+        maxRetryBackoffMs: 300_000,
+        retryBackoffMs: 30_000,
+        retryBackoffMultiplier: 2,
+      },
+      decisions: new SerializedDecision(),
+      drivers: new DriverCatalog([driver]),
+      eventBus,
+      notifyAvailability: () => {},
+      registry,
+    });
+
+    const report = await new Doctor({
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      quarantine,
+      registry,
+    }).reconcile({ fix: true });
+
+    expect(report.findings).toEqual([
+      expect.objectContaining({ deviceId: "dev_reclaiming", kind: "stalled-transition" }),
+    ]);
+    expect(registry.snapshot.devices[0]?.state).toBe("quarantined");
+    expect(clock.pendingTimerCount).toBe(0);
+  });
+});
 
 function sequence() {
   let next = 1;
@@ -2656,7 +2807,12 @@ describe("Doctor: warm pool targets", () => {
   it("pins the unknown-model message and remedy, naming the model and the platform", async () => {
     const found = await findings({
       figures: figuresOf([
-        { model: "Pixel 99", osVersion: "35", platform: "android", short: "unknown-model" },
+        {
+          model: "Pixel 99",
+          osVersion: "35",
+          platform: "android",
+          short: "unknown-model",
+        },
       ]),
     });
 
@@ -2675,7 +2831,12 @@ describe("Doctor: warm pool targets", () => {
   it("names an Android runtime as Android, and a target that names no OS without one", async () => {
     const found = await findings({
       figures: figuresOf([
-        { model: "Pixel 8", osVersion: "35", platform: "android", short: "runtime-missing" },
+        {
+          model: "Pixel 8",
+          osVersion: "35",
+          platform: "android",
+          short: "runtime-missing",
+        },
         { model: "iPhone 17", short: "runtime-missing" },
         { model: "iPhone 99", short: "unknown-model" },
       ]),

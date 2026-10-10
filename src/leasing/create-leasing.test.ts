@@ -6,7 +6,7 @@ import {
   type ComponentInstaller,
   type Config,
   DriverCrashError,
-  type DeviceSpec,
+  type VirtualSpec,
   type LeaseProgress,
   Registry,
   UnknownLeaseError,
@@ -31,7 +31,12 @@ import { QueueTimeoutError, RequestCancelledError } from "./wait-queue.js";
 
 const gibibyte = 1024 ** 3;
 const statePath = "/home/agent/.simlock/state.json";
-const request = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+const request = {
+  physical: false,
+  model: "iPhone 16",
+  osVersion: "26.5",
+  platform: "ios",
+} as const;
 
 function config(
   overrides: Partial<Config["lease"]> = {},
@@ -220,7 +225,7 @@ async function createHarness(
 
 async function seedReady(
   harness: Awaited<ReturnType<typeof createHarness>>,
-  spec: DeviceSpec = request,
+  spec: VirtualSpec = request,
 ) {
   const driverDevice = await harness.driver.provision(spec);
   // Running on the machine as well as ready in the registry, which is what a daemon start reads
@@ -348,6 +353,58 @@ describe("createLeasing", () => {
     expect(progress).toEqual([{ queuePosition: 1, stage: "queued" }]);
   });
 
+  it("gives no reclaiming stage to a waiter queued while the only reclaiming device of its model and OS is physical", async () => {
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    await filesystem.writeFileAtomic(
+      statePath,
+      JSON.stringify({
+        devices: [],
+        leases: [],
+        physicalDevices: [
+          {
+            createdAt: 1,
+            driverData: {},
+            driverDeviceId: "00008110-001A2B3C4D5E",
+            enrolledApps: [],
+            id: "dev_physical",
+            lastLeaseEndedAt: 1_000,
+            physical: true,
+            spec: {
+              class: "phone",
+              model: "iPhone 16",
+              osVersion: "26.5",
+              physical: true,
+              platform: "ios",
+            },
+            state: "reclaiming",
+          },
+        ],
+      }),
+    );
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({
+      availableOsVersions: ["26.5"],
+      clock,
+      estimateMs: { reclaim: 34_000 },
+      platform: "ios",
+    });
+    const harness = await createHarness({ driver, filesystem });
+    await harness.engine.request(request, { ownerId: "holder", requesterId: "holder" });
+    const progress: LeaseProgress[] = [];
+    void harness.engine.request(request, {
+      onProgress: (update) => progress.push(update),
+      ownerId: "queued",
+      requesterId: "queued",
+    });
+    await flush();
+
+    // The request is held up by the simulator limit; the physical device reclaiming beside it is
+    // nobody's erase to wait for, so no reclaiming stage is quoted.
+    expect(progress).toEqual([{ queuePosition: 1, stage: "queued" }]);
+    expect(harness.registry.snapshot.devices.map((device) => device.id)).toContain("dev_physical");
+  });
+
   it("a release whose reclaim leaves the device ready, with running capacity over its limit, has the pool shut the least recently used idle device down", async () => {
     const harness = await createHarness({
       limits: {
@@ -417,7 +474,12 @@ describe("createLeasing", () => {
         maxRunning: 1,
       },
     });
-    const androidSpec = { model: "Pixel 9", osVersion: "36", platform: "android" } as const;
+    const androidSpec = {
+      physical: false,
+      model: "Pixel 9",
+      osVersion: "36",
+      platform: "android",
+    } as const;
     const driverDevice = await android.provision(androidSpec);
     const registered = await harness.registry.registerDevice({
       driverData: driverDevice.driverData,
@@ -615,7 +677,12 @@ describe("createLeasing", () => {
       requesterId: "ios-holder",
       ownerId: "ios-holder",
     });
-    const androidRequest = { model: "Pixel 9", osVersion: "36", platform: "android" } as const;
+    const androidRequest = {
+      physical: false,
+      model: "Pixel 9",
+      osVersion: "36",
+      platform: "android",
+    } as const;
 
     await expect(
       harness.engine.request(androidRequest, {
@@ -850,7 +917,12 @@ describe("createLeasing", () => {
   it("grants an existing matching ready device and does not match a different spec", async () => {
     const harness = await createHarness();
     const matching = await seedReady(harness);
-    await seedReady(harness, { model: "iPhone SE", osVersion: "26.5", platform: "ios" });
+    await seedReady(harness, {
+      physical: false,
+      model: "iPhone SE",
+      osVersion: "26.5",
+      platform: "ios",
+    });
     const progress: string[] = [];
 
     const grant = await harness.engine.request(request, {
@@ -2447,7 +2519,7 @@ describe("createLeasing: capacity.changed and queue.changed", () => {
 
   function currentFigures(harness: Awaited<ReturnType<typeof createHarness>>): CapacityEvent {
     return capacityChangedPayload(
-      buildCapacityFigures(harness.registry.snapshot.devices, harness.engine),
+      buildCapacityFigures(harness.registry.snapshot.virtualDevices, harness.engine),
     );
   }
 
@@ -2733,7 +2805,12 @@ describe("createLeasing: lease.rejected names its request", () => {
 });
 
 describe("createLeasing queue timeout and failure storage", () => {
-  const android = { model: "Pixel 9", osVersion: "35", platform: "android" } as const;
+  const android = {
+    physical: false,
+    model: "Pixel 9",
+    osVersion: "35",
+    platform: "android",
+  } as const;
 
   it("emits lease.rejected for a timed-out waiter under the wait queue's module, then lets the request behind it through", async () => {
     const clock = new FakeClock(1_000);
@@ -2838,7 +2915,12 @@ describe("createLeasing wiring", () => {
 });
 
 describe("createLeasing warm pool", () => {
-  const androidSpec = { model: "Pixel 9", osVersion: "36", platform: "android" } as const;
+  const androidSpec = {
+    physical: false,
+    model: "Pixel 9",
+    osVersion: "36",
+    platform: "android",
+  } as const;
 
   it("shuts down one of three ready devices with initiator warm-pool after daemon.started when maxRunning is 2", async () => {
     const harness = await createHarness({
@@ -3196,6 +3278,7 @@ describe("createLeasing warm pool", () => {
       modelPreferences: { ios: { phone: ["iPhone 17", "iPhone 15"] } },
     });
     const iphone15 = await seedReady(harness, {
+      physical: false,
       model: "iPhone 15",
       osVersion: "26.0",
       platform: "ios",
@@ -3303,7 +3386,12 @@ describe("createLeasing warm pool", () => {
 });
 
 describe("createLeasing warm targets", () => {
-  const target = { count: 2, model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+  const target = {
+    count: 2,
+    model: "iPhone 16",
+    osVersion: "26.5",
+    platform: "ios",
+  } as const;
   const roomy = {
     android: { maxDevices: 1, maxRunning: 1 },
     ios: { maxDevices: 4, maxRunning: 4 },

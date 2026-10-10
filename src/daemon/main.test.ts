@@ -293,7 +293,11 @@ describe("startDaemon", () => {
       filesystem,
     });
     const statePath = join(directory, "state.json");
-    const missingRuntime = { model: "iPhone 16", osVersion: "99.0", platform: "ios" } as const;
+    const missingRuntime = {
+      model: "iPhone 16",
+      osVersion: "99.0",
+      platform: "ios",
+    } as const;
     const session = {
       manageEventSubscription: () => undefined,
       principal: "agent",
@@ -395,7 +399,12 @@ describe("startDaemon", () => {
     const lease = daemon
       .dispatch(
         "lease.request",
-        { allowDownload: true, model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+        {
+          allowDownload: true,
+          model: "iPhone 16",
+          osVersion: "26.5",
+          platform: "ios",
+        },
         { manageEventSubscription: () => undefined, principal: "agent", role: "agent" },
       )
       .catch((error: unknown) => error);
@@ -1525,6 +1534,7 @@ describe("discoverDrivers on a host with an Android SDK", () => {
     await expect(
       android?.makeReady(
         {
+          physical: false,
           address: "emulator-5586",
           deviceId: "simlock_one",
           driverData: {

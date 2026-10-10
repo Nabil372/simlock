@@ -1,7 +1,7 @@
 import type { CapacityRefusalReason, RunningCapacity } from "../capacity/index.js";
 import {
-  type DeviceRecord,
-  type DeviceSpec,
+  type VirtualDevice,
+  type VirtualSpec,
   fits,
   type LeaseRecord,
   mayBeGranted,
@@ -29,13 +29,13 @@ export type WarmProposal =
         | "recently-released"
         | "target"
         | "never-leased-idle";
-      readonly target?: DeviceSpec;
+      readonly target?: VirtualSpec;
     }
   | {
       readonly action: "provision";
-      readonly spec: DeviceSpec;
+      readonly spec: VirtualSpec;
       readonly reason: "target";
-      readonly target: DeviceSpec;
+      readonly target: VirtualSpec;
     };
 
 /** A proposal that acts on a device already in the registry: a shutdown or a boot. */
@@ -43,7 +43,7 @@ type DeviceProposal = Extract<WarmProposal, { readonly deviceId: string }>;
 
 /** A target that resolved: the spec a request for it resolves to, and how many to keep ready. */
 export interface ResolvedTarget {
-  readonly spec: DeviceSpec;
+  readonly spec: VirtualSpec;
   readonly count: number;
 }
 
@@ -70,7 +70,7 @@ export interface TargetReport {
   readonly target: string;
   /** The kind as resolved, or as configured for a target that did not resolve. */
   readonly kind: TargetKind;
-  readonly spec?: DeviceSpec;
+  readonly spec?: VirtualSpec;
   readonly count: number;
   readonly ready: number;
   /** Boots and creations of the kind running or proposed in the pass. */
@@ -86,7 +86,7 @@ export interface WarmPlan {
 }
 
 export interface WarmPolicyView {
-  readonly devices: readonly DeviceRecord[];
+  readonly devices: readonly VirtualDevice[];
   readonly leases: readonly LeaseRecord[];
   /** The requests with no device yet, oldest first: waiting (`new`, `queued`) or in flight. */
   readonly waiting: readonly WaitingDemand[];
@@ -104,13 +104,13 @@ export interface WarmPolicyView {
   /** Targets whose resolution failed and that keep a stale spec: their devices are spared. */
   readonly spared: readonly ResolvedTarget[];
   /** The spec of each target boot or creation still running: they count toward the boot cap. */
-  readonly inFlight: readonly DeviceSpec[];
+  readonly inFlight: readonly VirtualSpec[];
   /** The failure schedule: whether a spec may be tried now. */
-  readonly retry: { mayAttempt(spec: DeviceSpec, now: number): boolean };
+  readonly retry: { mayAttempt(spec: VirtualSpec, now: number): boolean };
   /** What the capacity strategy refuses besides the running slots `capacity` already totals. */
   readonly admit: {
-    create(spec: DeviceSpec): CapacityRefusalReason | undefined;
-    boot(device: DeviceRecord): CapacityRefusalReason | undefined;
+    create(spec: VirtualSpec): CapacityRefusalReason | undefined;
+    boot(device: VirtualDevice): CapacityRefusalReason | undefined;
   };
   /**
    * A device is on its way to a lease: booted, `ready` and claimed, still counted as running
@@ -209,28 +209,28 @@ function roomOf(capacity: RunningCapacity): Slots {
   };
 }
 
-function release(room: Slots, device: DeviceRecord): void {
+function release(room: Slots, device: VirtualDevice): void {
   room.global += 1;
   room[device.spec.platform] += 1;
 }
 
-function claim(room: Slots, device: DeviceRecord): void {
+function claim(room: Slots, device: VirtualDevice): void {
   room.global -= 1;
   room[device.spec.platform] -= 1;
 }
 
-function hasRoom(room: Slots, device: DeviceRecord): boolean {
+function hasRoom(room: Slots, device: VirtualDevice): boolean {
   return room.global >= 1 && room[device.spec.platform] >= 1;
 }
 
 /** Whether an idle warm device may take a slot: one beyond what the reserve holds back. */
-function hasWarmRoom(room: Slots, held: Slots, device: DeviceRecord): boolean {
+function hasWarmRoom(room: Slots, held: Slots, device: VirtualDevice): boolean {
   const platform = device.spec.platform;
   return room.global - held.global >= 1 && room[platform] - held[platform] >= 1;
 }
 
 /** Whether `device` is one a waiting request would be granted: it fits and is in the pool mode. */
-function serves(device: DeviceRecord, demand: WaitingDemand): boolean {
+function serves(device: VirtualDevice, demand: WaitingDemand): boolean {
   return (
     mayBeGranted(device) &&
     specMode(device.spec) === demand.mode &&
@@ -247,7 +247,7 @@ function serves(device: DeviceRecord, demand: WaitingDemand): boolean {
  */
 function overBudget(
   view: WarmPolicyView,
-  running: readonly DeviceRecord[],
+  running: readonly VirtualDevice[],
   room: Slots,
   held: Slots,
 ): DeviceProposal[] {
@@ -255,7 +255,7 @@ function overBudget(
   const candidates = running.filter(
     (device) => !view.waiting.some((demand) => !demand.inFlight && serves(device, demand)),
   );
-  const nextVictim = (): DeviceRecord | undefined =>
+  const nextVictim = (): VirtualDevice | undefined =>
     candidates.find((device) => room[device.spec.platform] - held[device.spec.platform] < 0) ??
     (room.global - held.global < 0 ? candidates[0] : undefined);
   for (let victim = nextVictim(); victim !== undefined; victim = nextVictim()) {
@@ -275,14 +275,14 @@ function overBudget(
  */
 function boots(
   view: WarmPolicyView,
-  running: readonly DeviceRecord[],
-  bootable: readonly DeviceRecord[],
+  running: readonly VirtualDevice[],
+  bootable: readonly VirtualDevice[],
   room: Slots,
   held: Slots,
 ): DeviceProposal[] {
   const proposals: DeviceProposal[] = [];
   const taken = new Set<string>();
-  const boot = (device: DeviceRecord, reason: DeviceProposal["reason"]): void => {
+  const boot = (device: VirtualDevice, reason: DeviceProposal["reason"]): void => {
     taken.add(device.id);
     claim(room, device);
     proposals.push({ action: "boot", deviceId: device.id, reason });
@@ -345,10 +345,10 @@ function mergeTargets(targets: readonly ResolvedTarget[]): ResolvedTarget[] {
  * are the ones it keeps.
  */
 function readyOfKind(
-  devices: readonly DeviceRecord[],
-  isIdle: (device: DeviceRecord) => boolean,
-  spec: DeviceSpec,
-): DeviceRecord[] {
+  devices: readonly VirtualDevice[],
+  isIdle: (device: VirtualDevice) => boolean,
+  spec: VirtualSpec,
+): VirtualDevice[] {
   return devices
     .filter(
       (device) =>
@@ -364,19 +364,19 @@ function readyOfKind(
 function idlePredicate(
   leases: readonly LeaseRecord[],
   isClaimed: (deviceId: string) => boolean,
-): (device: DeviceRecord) => boolean {
+): (device: VirtualDevice) => boolean {
   const leased = new Set(leases.map((lease) => lease.deviceId));
   return (device) => !leased.has(device.id) && !isClaimed(device.id);
 }
 
 interface DeviceCounts {
-  readonly devices: readonly DeviceRecord[];
+  readonly devices: readonly VirtualDevice[];
   readonly leases: readonly LeaseRecord[];
   readonly isClaimed: (deviceId: string) => boolean;
 }
 
 /** How many ready, unleased devices of `spec`'s kind there are: what a target report calls ready. */
-export function readyCount(input: DeviceCounts, spec: DeviceSpec): number {
+export function readyCount(input: DeviceCounts, spec: VirtualSpec): number {
   return readyOfKind(input.devices, idlePredicate(input.leases, input.isClaimed), spec).length;
 }
 
@@ -406,7 +406,7 @@ export function targetedDevices(
  */
 function neverLeasedIdle(
   view: WarmPolicyView,
-  running: readonly DeviceRecord[],
+  running: readonly VirtualDevice[],
   proposed: readonly DeviceProposal[],
   room: Slots,
 ): DeviceProposal[] {
@@ -449,7 +449,7 @@ function shortOf(refusal: CapacityRefusalReason | undefined): TargetShort | unde
 /** What `planTargets` shares across targets: the room left, the devices taken, the boots begun. */
 interface TargetPlan {
   readonly view: WarmPolicyView;
-  readonly bootable: readonly DeviceRecord[];
+  readonly bootable: readonly VirtualDevice[];
   readonly room: Slots;
   readonly held: Slots;
   readonly taken: Set<string>;
@@ -468,11 +468,11 @@ interface TargetPlan {
 function planTargets(
   view: WarmPolicyView,
   targets: readonly ResolvedTarget[],
-  bootable: readonly DeviceRecord[],
+  bootable: readonly VirtualDevice[],
   keeps: readonly DeviceProposal[],
   room: Slots,
   held: Slots,
-  isIdle: (device: DeviceRecord) => boolean,
+  isIdle: (device: VirtualDevice) => boolean,
 ): { proposals: WarmProposal[]; reports: TargetReport[] } {
   const keepBoots = keeps.map((proposal) => proposal.deviceId);
   const plan: TargetPlan = {
@@ -484,7 +484,7 @@ function planTargets(
     taken: new Set(keepBoots),
     view,
   };
-  const pending = (spec: DeviceSpec): number =>
+  const pending = (spec: VirtualSpec): number =>
     view.inFlight.filter((flying) => sameSpec(flying, spec)).length +
     keepBoots.filter((id) =>
       view.devices.some((device) => device.id === id && sameSpec(device.spec, spec)),
@@ -515,7 +515,7 @@ function planTargets(
  */
 function fillTarget(
   plan: TargetPlan,
-  spec: DeviceSpec,
+  spec: VirtualSpec,
   missing: number,
   filling: boolean,
 ): TargetShort | undefined {
@@ -534,7 +534,7 @@ function fillTarget(
 }
 
 /** Proposes one boot of a shut-down device of the kind, else one creation; or why it cannot. */
-function addOne(plan: TargetPlan, spec: DeviceSpec): TargetShort | undefined {
+function addOne(plan: TargetPlan, spec: VirtualSpec): TargetShort | undefined {
   const shutDown = plan.bootable.find(
     (device) =>
       !plan.taken.has(device.id) &&
@@ -563,7 +563,7 @@ function addOne(plan: TargetPlan, spec: DeviceSpec): TargetShort | undefined {
 }
 
 /** A spec's kind as a report names it. */
-function kindOf(spec: DeviceSpec): TargetKind {
+function kindOf(spec: VirtualSpec): TargetKind {
   return {
     mode: specMode(spec),
     model: spec.model,

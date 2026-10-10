@@ -1,14 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import type { DeviceSpec } from "../domain.js";
+import type { VirtualSpec } from "../domain.js";
 import { RETRY_FIRST_MS, RETRY_MAX_MS, RetrySchedule } from "./retry.js";
 
 const minute = 60_000;
-const spec: DeviceSpec = { model: "iPhone 17", osVersion: "26.0", platform: "ios" };
-const other: DeviceSpec = { model: "iPhone 16", osVersion: "18.4", platform: "ios" };
+const spec: VirtualSpec = {
+  physical: false,
+  model: "iPhone 17",
+  osVersion: "26.0",
+  platform: "ios",
+};
+const other: VirtualSpec = {
+  physical: false,
+  model: "iPhone 16",
+  osVersion: "18.4",
+  platform: "ios",
+};
 
 /** Fails `times` in a row, each at the first moment a try is allowed; returns the last failure. */
-function failTimes(schedule: RetrySchedule, target: DeviceSpec, times: number): number {
+function failTimes(schedule: RetrySchedule, target: VirtualSpec, times: number): number {
   let at = 0;
   for (let failure = 0; failure < times; failure += 1) {
     schedule.failed(target, at);

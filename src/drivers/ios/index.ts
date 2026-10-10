@@ -35,6 +35,7 @@ import {
   type DeviceClass,
   type DeviceMode,
   type DeviceSpec,
+  type VirtualSpec,
 } from "../../core/index.js";
 import type {
   Clock,
@@ -335,7 +336,7 @@ interface SimctlCatalog {
 interface ResolvedIosSpec {
   readonly deviceType: DeviceType;
   readonly runtime: Runtime;
-  readonly spec: DeviceSpec;
+  readonly spec: VirtualSpec;
 }
 
 type ProcessOutcome =
@@ -421,7 +422,7 @@ export class IosSimctlDriver implements Driver {
    * Never downloads: a runtime a download could supply throws, naming it as the component. An iOS
    * runtime comes in one type, so a request naming an image tag is refused.
    */
-  async resolveSpec(request: ExactDeviceRequest): Promise<DeviceSpec> {
+  async resolveSpec(request: ExactDeviceRequest): Promise<VirtualSpec> {
     this.#requireIosPlatform(request.platform);
     if (request.imageTag !== undefined) {
       throw new UnsupportedRequestOptionError("ios", "imageTag");
@@ -446,7 +447,7 @@ export class IosSimctlDriver implements Driver {
    * 18.5 or newer (ADR 0007 §4). Read from the runtime `resolveSpec` just committed, by the same
    * `supportsPersistentSlim(iosRuntimeVersionFromId(...))` call `planSlimBoot` makes.
    */
-  #canSlim(spec: DeviceSpec): boolean {
+  #canSlim(spec: VirtualSpec): boolean {
     const runtime = this.#resolvedSpecs.get(specKey(spec))?.runtime;
     return (
       this.#slim !== undefined &&
@@ -464,7 +465,7 @@ export class IosSimctlDriver implements Driver {
     deviceType: DeviceType,
     osVersion: string,
     catalog: SimctlCatalog,
-  ): DeviceSpec {
+  ): VirtualSpec {
     if (!isVersionInRange(osVersion, deviceType)) {
       throw new IosVersionOutOfRangeError(deviceType.name, osVersion, deviceType);
     }
@@ -498,7 +499,7 @@ export class IosSimctlDriver implements Driver {
    * XS/XR support is the motivating case). With none, the component to install is `latest`
    * when the model's range has no upper bound, and the bare major of its upper bound otherwise.
    */
-  #resolveDefaultRuntime(deviceType: DeviceType, catalog: SimctlCatalog): DeviceSpec {
+  #resolveDefaultRuntime(deviceType: DeviceType, catalog: SimctlCatalog): VirtualSpec {
     const paired = newestRuntime(pairedInstalledRuntimes(catalog, deviceType));
     if (paired !== undefined) {
       return this.#commitResolution(deviceType, paired);
@@ -514,10 +515,11 @@ export class IosSimctlDriver implements Driver {
     );
   }
 
-  #commitResolution(deviceType: DeviceType, runtime: Runtime): DeviceSpec {
-    const spec: DeviceSpec = {
+  #commitResolution(deviceType: DeviceType, runtime: Runtime): VirtualSpec {
+    const spec: VirtualSpec = {
       model: deviceType.name,
       osVersion: runtime.version,
+      physical: false,
       platform: this.platform,
     };
     this.#resolvedSpecs.set(specKey(spec), { deviceType, runtime, spec });
@@ -831,7 +833,7 @@ export class IosSimctlDriver implements Driver {
     throw new DriverCrashError(`xcodebuild ${args.join(" ")} failed: ${message}`);
   }
 
-  async provision(spec: DeviceSpec): Promise<DriverDevice> {
+  async provision(spec: VirtualSpec): Promise<DriverDevice> {
     this.#requireIosPlatform(spec.platform);
     const resolved = await this.#resolvedSpec(spec);
     // Cosmetic, and deliberately so: what proves this device is Simlock's is that it
@@ -1689,7 +1691,7 @@ export class IosSimctlDriver implements Driver {
     }
   }
 
-  async #resolvedSpec(spec: DeviceSpec): Promise<ResolvedIosSpec> {
+  async #resolvedSpec(spec: VirtualSpec): Promise<ResolvedIosSpec> {
     const existing = this.#resolvedSpecs.get(specKey(spec));
     if (existing !== undefined) {
       return existing;
@@ -2599,7 +2601,7 @@ function alreadyBooted(stderr: string): boolean {
   return /current state:\s*Booted|already booted/i.test(stderr);
 }
 
-function specKey(spec: DeviceSpec): string {
+function specKey(spec: VirtualSpec): string {
   return `${spec.model.toLocaleLowerCase()}\u0000${spec.osVersion}`;
 }
 

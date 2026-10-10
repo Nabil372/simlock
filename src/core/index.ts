@@ -18,7 +18,10 @@ export {
   type DeviceSpec,
   type LeaseRecord,
   type LeaseRequestFailure,
+  type PhysicalClass,
   type Platform,
+  type VirtualDevice,
+  type VirtualSpec,
   IllegalTransition,
   transition,
   transitionEnteredAt,
@@ -109,7 +112,7 @@ export {
   type WarmPoolReader,
 } from "./core-ports.js";
 export { findCatalogModel, modelClass, pairedRuntimes } from "./catalog-match.js";
-export { type DeviceRequirement, fits, type LeaseGrant } from "./domain.js";
+export { type DeviceRequirement, type FittableSpec, fits, type LeaseGrant } from "./domain.js";
 export {
   type DriverCatalogImage,
   type MissingPrerequisite,

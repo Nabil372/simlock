@@ -11,7 +11,7 @@ import {
   pairedRuntimes,
   type DeviceClass,
   type DeviceRequirement,
-  type DeviceSpec,
+  type FittableSpec,
   fits,
 } from "../../core/index.js";
 import type { WorkerView } from "../worker-registry.js";
@@ -48,7 +48,7 @@ function servingModel(catalog: PlatformEntry, request: RoutableRequest): string 
 export function deviceFit(
   worker: WorkerView,
   request: RoutableRequest,
-): ((spec: DeviceSpec) => boolean) | undefined {
+): ((spec: FittableSpec) => boolean) | undefined {
   const catalog = catalogOf(worker, request);
   if (catalog === undefined) return undefined;
   const model = servingModel(catalog, request);

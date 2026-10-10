@@ -27,7 +27,7 @@ import {
   RuntimeMissingError,
   UnsupportedRequestOptionError,
   type DeviceMode,
-  type DeviceSpec,
+  type VirtualSpec,
   type Platform,
   specMode,
   type CatalogReader,
@@ -53,7 +53,12 @@ import { type LeaseRequestOptions, RequesterAlreadyLeasedError, WaitQueue } from
 
 const gibibyte = 1024 ** 3;
 const statePath = "/home/agent/.simlock/state.json";
-const request = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+const request = {
+  physical: false,
+  model: "iPhone 16",
+  osVersion: "26.5",
+  platform: "ios",
+} as const;
 
 function config(maxDevices = 1, maxRunning = 1): Config {
   return {
@@ -280,7 +285,7 @@ async function createHarness(
 
 async function seedReady(
   harness: Awaited<ReturnType<typeof createHarness>>,
-  spec: DeviceSpec = request,
+  spec: VirtualSpec = request,
 ) {
   const driverDevice = await harness.driver.provision(spec);
   const provisioned = await harness.registry.registerDevice({
@@ -317,7 +322,7 @@ function capturingLogger(): { readonly logger: Logger; readonly sink: MemoryLogS
 
 async function seedShutdown(
   harness: Awaited<ReturnType<typeof createHarness>>,
-  spec: DeviceSpec = request,
+  spec: VirtualSpec = request,
 ) {
   const ready = await seedReady(harness, spec);
   await harness.driver.shutdown({
@@ -1275,6 +1280,7 @@ describe("LeaseAcquisitionCoordinator", () => {
           drivers: [slimmingDriver()],
         });
         const spec = {
+          physical: false as const,
           model: "iPhone 17",
           osVersion: "26.5",
           platform: "ios" as const,
@@ -1290,11 +1296,33 @@ describe("LeaseAcquisitionCoordinator", () => {
         defaultModes: { ios: "slim" },
         drivers: [slimmingDriver()],
       });
-      const android = { model: "Pixel 9", osVersion: "35", platform: "android" as const };
+      const android = {
+        physical: false as const,
+        model: "Pixel 9",
+        osVersion: "35",
+        platform: "android" as const,
+      };
 
       expect(harness.coordinator.servesDefaultMode(android)).toBe(true);
       expect(harness.coordinator.servesDefaultMode({ ...android, mode: "slim" })).toBe(false);
     });
+
+    it.each(["ios", "android"] as const)(
+      "reports servesDefaultMode false for a physical spec on %s, though it names no mode and the platform's default is full",
+      async (platform) => {
+        const harness = await createHarness({ defaultModes: { [platform]: "full" } });
+
+        expect(
+          harness.coordinator.servesDefaultMode({
+            class: "phone",
+            model: "Some Phone",
+            osVersion: "1",
+            physical: true,
+            platform,
+          }),
+        ).toBe(false);
+      },
+    );
 
     it("passes the resolved mode to resolveSpec, the default filled in for a request that named none", async () => {
       const driver = slimmingDriver();
@@ -1310,7 +1338,7 @@ describe("LeaseAcquisitionCoordinator", () => {
       class AlwaysSlimDriver extends FakeDriver {
         override async resolveSpec(
           ...args: Parameters<FakeDriver["resolveSpec"]>
-        ): Promise<DeviceSpec> {
+        ): Promise<VirtualSpec> {
           return { ...(await super.resolveSpec(...args)), mode: "slim" };
         }
       }
@@ -1646,7 +1674,7 @@ describe("LeaseAcquisitionCoordinator", () => {
         destroy: (device, initiator, operation, claim) => {
           const reservation = capacity.tryReserveBoot(
             capacityDevice(device),
-            capacityDevices(registry.snapshot.devices),
+            capacityDevices(registry.snapshot.virtualDevices),
           );
           const warmClaim = claims.tryClaim(device.id, "boot");
           raced = reservation.ok && warmClaim !== undefined;
@@ -1674,7 +1702,7 @@ describe("LeaseAcquisitionCoordinator", () => {
     await settle();
 
     const running = harness.capacity.runningCapacity(
-      capacityDevices(harness.registry.snapshot.devices),
+      capacityDevices(harness.registry.snapshot.virtualDevices),
     );
     expect({ global: running.global.reserved, ios: running.ios.reserved }).toEqual({
       global: 0,
@@ -1870,7 +1898,12 @@ describe("LeaseAcquisitionCoordinator stored requests", () => {
 });
 
 describe("LeaseAcquisitionCoordinator: image tags", () => {
-  const android = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+  const android = {
+    physical: false,
+    model: "Pixel 8",
+    osVersion: "34",
+    platform: "android",
+  } as const;
   const playstore = { ...android, imageTag: "google_apis_playstore" } as const;
   const owner = (id: string) => ({ ownerId: id, requesterId: id });
 
@@ -1973,7 +2006,7 @@ describe("LeaseAcquisitionCoordinator: image tags", () => {
     class NoTagsDriver extends FakeDriver {
       override async resolveSpec(
         ...args: Parameters<FakeDriver["resolveSpec"]>
-      ): Promise<DeviceSpec> {
+      ): Promise<VirtualSpec> {
         if (args[0].imageTag !== undefined) {
           throw new UnsupportedRequestOptionError(this.platform, "imageTag");
         }
@@ -2015,7 +2048,7 @@ describe("LeaseAcquisitionCoordinator: image tags", () => {
       class WrongTagDriver extends FakeDriver {
         override async resolveSpec(
           ...args: Parameters<FakeDriver["resolveSpec"]>
-        ): Promise<DeviceSpec> {
+        ): Promise<VirtualSpec> {
           return { ...(await super.resolveSpec(...args)), ...returned };
         }
       }
@@ -2053,7 +2086,12 @@ describe("LeaseAcquisitionCoordinator: class requests", () => {
     },
   };
   const phone = { class: "phone", platform: "ios" } as const;
-  const iphone15 = { model: "iPhone 15", osVersion: "18.4", platform: "ios" } as const;
+  const iphone15 = {
+    physical: false,
+    model: "iPhone 15",
+    osVersion: "18.4",
+    platform: "ios",
+  } as const;
 
   function iosDriver(options: Partial<ConstructorParameters<typeof FakeDriver>[0]> = {}) {
     return new FakeDriver({
@@ -2075,7 +2113,7 @@ describe("LeaseAcquisitionCoordinator: class requests", () => {
     return harness.bus
       .replay()
       .filter((event) => event.event === "device.provisioned")
-      .map((event) => (event.payload as { spec: DeviceSpec }).spec);
+      .map((event) => (event.payload as { spec: VirtualSpec }).spec);
   }
 
   async function classHarness(driver = iosDriver(), preferences = iosPreferences) {
@@ -2120,7 +2158,12 @@ describe("LeaseAcquisitionCoordinator: class requests", () => {
   });
 
   it("does not grant a request with no class a ready idle Apple Watch, and grants a watch request it", async () => {
-    const watch = { model: "Apple Watch", osVersion: "26.5", platform: "ios" } as const;
+    const watch = {
+      physical: false,
+      model: "Apple Watch",
+      osVersion: "26.5",
+      platform: "ios",
+    } as const;
     const first = await classHarness();
     const warm = await seedReady(first, watch);
 
@@ -2196,7 +2239,12 @@ describe("LeaseAcquisitionCoordinator: class requests", () => {
   });
 
   describe("image tags", () => {
-    const pixel = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+    const pixel = {
+      physical: false,
+      model: "Pixel 8",
+      osVersion: "34",
+      platform: "android",
+    } as const;
     const androidPhone = { class: "phone", platform: "android" } as const;
     const androidPreferences: ModelPreferences = { android: { phone: ["Pixel 9", "Pixel 8"] } };
     const androidDriver = () =>
@@ -2353,6 +2401,7 @@ describe("LeaseAcquisitionCoordinator: class requests", () => {
       const harness = await classHarness(rangeDriver());
       const other = await seedReady(harness, { ...iphone15, osVersion: "18.0" });
       const same = await seedReady(harness, {
+        physical: false,
         model: "iPhone 16",
         osVersion: "18.0",
         platform: "ios",
@@ -2385,7 +2434,7 @@ describe("LeaseAcquisitionCoordinator: class requests", () => {
 
     it("never installs for a range even when the driver then reports a downloadable runtime missing", async () => {
       class Racing extends FakeDriver {
-        override async resolveSpec(): Promise<DeviceSpec> {
+        override async resolveSpec(): Promise<VirtualSpec> {
           throw new RuntimeMissingError("ios", "18.4", { component: "18.4" });
         }
       }
@@ -2544,7 +2593,12 @@ describe("LeaseAcquisitionCoordinator: class requests", () => {
       const harness = await classHarness(driver, { android: { phone: ["Pixel 8"] } });
 
       const byModel = await harness.coordinator.request(
-        { imageTag: "google_apis", model: "Pixel 8", osVersion: ">=33", platform: "android" },
+        {
+          imageTag: "google_apis",
+          model: "Pixel 8",
+          osVersion: ">=33",
+          platform: "android",
+        },
         owner("agent"),
       );
       expect(byModel.device.spec).toMatchObject({ imageTag: "google_apis", osVersion: "34" });
@@ -3083,7 +3137,9 @@ describe("LeaseAcquisitionCoordinator: resolve", () => {
       { ownerId: "a", requesterId: "a" },
     );
 
-    expect(resolved).toEqual({ spec: { model: "iPhone 17", osVersion: "26.0", platform: "ios" } });
+    expect(resolved).toEqual({
+      spec: { physical: false, model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+    });
     expect(granted.device.spec).toEqual(
       "spec" in resolved ? resolved.spec : { model: "never matches" },
     );
@@ -3094,7 +3150,9 @@ describe("LeaseAcquisitionCoordinator: resolve", () => {
 
     const resolved = await harness.coordinator.resolve({ ...iphone17, osVersion: ">=18 <26" });
 
-    expect(resolved).toEqual({ spec: { model: "iPhone 17", osVersion: "18.4", platform: "ios" } });
+    expect(resolved).toEqual({
+      spec: { physical: false, model: "iPhone 17", osVersion: "18.4", platform: "ios" },
+    });
   });
 
   it("queues nothing, reserves nothing and creates nothing", async () => {
@@ -3194,9 +3252,17 @@ describe("LeaseAcquisitionCoordinator: resolve", () => {
     });
 
     expect(slimmable).toEqual({
-      spec: { mode: "slim", model: "iPhone 17", osVersion: "26.5", platform: "ios" },
+      spec: {
+        physical: false,
+        mode: "slim",
+        model: "iPhone 17",
+        osVersion: "26.5",
+        platform: "ios",
+      },
     });
-    expect(below).toEqual({ spec: { model: "iPhone 17", osVersion: "17.5", platform: "ios" } });
+    expect(below).toEqual({
+      spec: { physical: false, model: "iPhone 17", osVersion: "17.5", platform: "ios" },
+    });
   });
 
   it("gives a target naming no mode the worker's default mode, and a full one a full spec", async () => {
@@ -3211,6 +3277,8 @@ describe("LeaseAcquisitionCoordinator: resolve", () => {
     });
 
     expect(defaulted).toMatchObject({ spec: { mode: "slim" } });
-    expect(full).toEqual({ spec: { model: "iPhone 17", osVersion: "26.5", platform: "ios" } });
+    expect(full).toEqual({
+      spec: { physical: false, model: "iPhone 17", osVersion: "26.5", platform: "ios" },
+    });
   });
 });

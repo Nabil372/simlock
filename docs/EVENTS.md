@@ -38,7 +38,7 @@ the gateway's own lease index before any worker is ever contacted. `lease-id-tak
 
 | Event | Payload (key fields) | Emitted when | Emitter | Status |
 |---|---|---|---|---|
-| `device.provisioned` | device id, spec (platform, model, os version, `mode: "slim"` for a device planned slim, and `imageTag` for a device whose request named one), driver, duration | driver `provision` committed to registry | Registry | implemented |
+| `device.provisioned` | device id, spec (platform, model, os version, `physical: false`, `mode: "slim"` for a device planned slim, and `imageTag` for a device whose request named one), driver, duration | driver `provision` committed to registry | Registry | implemented |
 | `device.ready` | device id, boot duration | readiness probe passed | Registry | implemented |
 | `device.reclaimed` | device id, strategy (erase/snapshot/wipe), duration | fresh-state reclaim finished. Never emitted for a device created under `lease.identity` `fresh`: nothing is reclaimed, the device is deleted instead | Registry | implemented |
 | `device.purge-failed` | device id, lease id, attempted strategy (erase/snapshot/wipe/delete), duration, stable error summary | release-time purge failed (including the wipe of a device a daemon start put off), or (strategy `delete`) the shutdown or delete that ends a `fresh` device's lease failed; the device enters `quarantined` (see below) rather than rejoining the pool. The strategy list can grow: a consumer must tolerate a strategy it does not know | Reclaim coordinator | implemented |

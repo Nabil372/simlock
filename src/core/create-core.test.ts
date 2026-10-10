@@ -83,7 +83,7 @@ async function releasedLease(
   { driver, registry }: Awaited<ReturnType<typeof build>>,
   options: { readonly deferReclaim?: boolean } = {},
 ) {
-  const spec = { model: "Phone", osVersion: "1", platform: "ios" } as const;
+  const spec = { physical: false, model: "Phone", osVersion: "1", platform: "ios" } as const;
   const provisioned = await driver.provision(spec);
   const device = await registry.registerDevice({
     driverData: provisioned.driverData,
@@ -285,7 +285,7 @@ describe("createCore", () => {
 
   it("doctor expires a lease past its deadline through the connected leaseExpirer port", async () => {
     const { core, driver, registry } = await build();
-    const spec = { model: "Phone", osVersion: "1", platform: "ios" } as const;
+    const spec = { physical: false, model: "Phone", osVersion: "1", platform: "ios" } as const;
     const provisioned = await driver.provision(spec);
     const device = await registry.registerDevice({
       driverData: provisioned.driverData,

@@ -1276,6 +1276,13 @@ device's `mode` is what it is; this is what a lease with no `--mode` would
 get. In `--json` it is `servesDefaultMode`, a boolean on every device, next to
 `mode`; `list --devices --json` carries it too.
 
+In `--json`, every device also carries `physical`: `false` for a simulator or
+emulator Simlock created, `true` for a real phone or tablet. A physical device
+has a `class` (`phone` or `tablet`) and no `mode`, and its line reads
+`Device dev_9: ready, physical phone` with the same markers after it.
+`list --devices --json` carries both too. Capacity figures, limits and the RAM
+budget count simulators and emulators only.
+
 Each platform's capacity line ends in `(at RAM budget)` when creating one more
 full device of that platform would be refused for RAM. In `--json` it is
 `capacity.ios.atRamBudget` and `capacity.android.atRamBudget`, always present,

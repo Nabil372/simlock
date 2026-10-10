@@ -3,7 +3,7 @@ import { stableError } from "./stable-error.js";
 import type { CapacityReservation } from "./capacity/index.js";
 import type { ComponentInstaller } from "./component-installer.js";
 import type { DeviceOperationClaim, DeviceOperationClaims } from "./device-operation-claims.js";
-import type { DeviceRecord, DeviceSpec, LeaseProgress } from "./domain.js";
+import type { LeaseProgress, VirtualDevice, VirtualSpec } from "./domain.js";
 import { BootTimeoutError, type DriverDevice } from "./driver.js";
 import { DriverCatalog } from "./driver-catalog.js";
 import { ManagedDeviceLifecycle, type ReadyDeviceHandoff } from "./managed-device-lifecycle.js";
@@ -17,10 +17,10 @@ export type ProvisionProgress = Extract<
 export interface DeviceProvisionerRegistry {
   registerDevice(input: {
     readonly driverDeviceId: string;
-    readonly spec: DeviceSpec;
+    readonly spec: VirtualSpec;
     readonly driverData: unknown;
     readonly provisionDuration: number;
-  }): Promise<DeviceRecord>;
+  }): Promise<VirtualDevice>;
 }
 
 export interface DeviceProvisionerOptions {
@@ -56,7 +56,7 @@ export class DeviceProvisioner {
     this.#logger = options.logger?.child("device-provisioner") ?? new NoopLogger();
   }
 
-  async provision(spec: DeviceSpec, options: ProvisionDeviceOptions): Promise<ReadyDeviceHandoff> {
+  async provision(spec: VirtualSpec, options: ProvisionDeviceOptions): Promise<ReadyDeviceHandoff> {
     const driver = this.options.catalog.get(spec.platform);
     // Claimed inside the gate, so a removal's own count in the gate sees this device before the
     // driver creates it, or this claim sees the removal's mark and refuses.
@@ -83,7 +83,7 @@ export class DeviceProvisioner {
       throw error;
     }
 
-    let device: DeviceRecord;
+    let device: VirtualDevice;
     let bootClaim: DeviceOperationClaim | undefined;
     try {
       // The claim ends in the section that commits the record, so the device is counted by one

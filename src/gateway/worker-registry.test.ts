@@ -156,10 +156,11 @@ describe("WorkerRegistry", () => {
   it("lists each worker's granted devices under that worker's id, and keeps them through a refresh that carries none", () => {
     const { workers } = registry();
     const granted = (udid: string) => ({
+      physical: false,
       driverDeviceId: udid,
       id: "dev_1",
       mode: "full" as const,
-      spec: { model: "iPhone 17", osVersion: "26.0", platform: "ios" as const },
+      spec: { physical: false, model: "iPhone 17", osVersion: "26.0", platform: "ios" as const },
     });
     workers.connected("wrk_a", undefined, "0.3.0");
     workers.connected("wrk_b", undefined, "0.3.0");
@@ -183,10 +184,11 @@ describe("WorkerRegistry", () => {
     workers.refresh("wrk_1", {
       grantedDevices: [
         {
+          physical: false,
           driverDeviceId: "UDID-1",
           id: "dev_1",
           mode: "full",
-          spec: { model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+          spec: { physical: false, model: "iPhone 17", osVersion: "26.0", platform: "ios" },
         },
       ],
     });

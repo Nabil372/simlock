@@ -8,11 +8,12 @@ import {
   type DriverCatalog,
   type ObservedDevice,
   type ObservedMark,
+  type VirtualDevice,
 } from "../core/index.js";
 
 export interface HealthMonitorRegistry {
   readonly snapshot: {
-    readonly devices: readonly DeviceRecord[];
+    readonly virtualDevices: readonly VirtualDevice[];
     readonly leases: readonly LeaseRecord[];
   };
   markRecoveryAttempt(deviceId: string, at: number): Promise<DeviceRecord>;
@@ -20,7 +21,7 @@ export interface HealthMonitorRegistry {
 }
 
 export interface HealthMonitorLifecycle {
-  recoverLeased(target: DeviceRecord, leaseId: string): Promise<DeviceRecord | undefined>;
+  recoverLeased(target: VirtualDevice, leaseId: string): Promise<VirtualDevice | undefined>;
 }
 
 /** Releases a lease whose device is gone for good. Internally originated only. */
@@ -123,7 +124,7 @@ export class LeaseHealthMonitor {
    */
   async #runTick(): Promise<void> {
     const snapshot = this.options.registry.snapshot;
-    const leased = snapshot.devices.filter((device) => device.state === "leased");
+    const leased = snapshot.virtualDevices.filter((device) => device.state === "leased");
     this.#dropStaleCounters(leased);
 
     const observedByPlatform = await this.#pollDrivers(leased);
@@ -163,7 +164,7 @@ export class LeaseHealthMonitor {
     }
   }
 
-  #dropStaleCounters(leased: readonly DeviceRecord[]): void {
+  #dropStaleCounters(leased: readonly VirtualDevice[]): void {
     const leasedIds = new Set(leased.map((device) => device.id));
     for (const deviceId of this.#counters.keys()) {
       if (!leasedIds.has(deviceId)) {
@@ -173,7 +174,7 @@ export class LeaseHealthMonitor {
   }
 
   async #pollDrivers(
-    leased: readonly DeviceRecord[],
+    leased: readonly VirtualDevice[],
   ): Promise<ReadonlyMap<Platform, readonly ObservedDevice[]>> {
     const observedByPlatform = new Map<Platform, readonly ObservedDevice[]>();
     const platforms = new Set(leased.map((device) => device.spec.platform));
@@ -194,7 +195,7 @@ export class LeaseHealthMonitor {
 
   /** Updates crash counters for one device and reports whether it needs a recovery attempt. */
   async #classify(
-    device: DeviceRecord,
+    device: VirtualDevice,
     lease: LeaseRecord,
     observed: ObservedDevice | undefined,
   ): Promise<boolean> {
@@ -215,7 +216,7 @@ export class LeaseHealthMonitor {
   }
 
   async #classifyMissing(
-    device: DeviceRecord,
+    device: VirtualDevice,
     lease: LeaseRecord,
     counters: CrashCounters,
   ): Promise<boolean> {
@@ -228,7 +229,7 @@ export class LeaseHealthMonitor {
   }
 
   async #classifyRunning(
-    device: DeviceRecord,
+    device: VirtualDevice,
     lease: LeaseRecord,
     counters: CrashCounters,
     observed: ObservedDevice,
@@ -255,7 +256,7 @@ export class LeaseHealthMonitor {
   }
 
   /** Starts a detached recovery attempt if the concurrency cap allows it this tick. */
-  #dispatchRecovery(device: DeviceRecord, lease: LeaseRecord): void {
+  #dispatchRecovery(device: VirtualDevice, lease: LeaseRecord): void {
     if (this.#inFlight.size >= this.options.config.health.maxConcurrentRecoveries) {
       // Cap reached; this device's counters stay elevated and it is retried next tick.
       return;
@@ -272,7 +273,7 @@ export class LeaseHealthMonitor {
   }
 
   /** Makes exactly one recovery attempt for a crashed device; retries land on later ticks. */
-  async #recover(device: DeviceRecord, lease: LeaseRecord): Promise<void> {
+  async #recover(device: VirtualDevice, lease: LeaseRecord): Promise<void> {
     const attemptsSoFar = device.recoveryAttempts ?? 0;
     if (attemptsSoFar >= this.options.config.health.maxRecoveryAttempts) {
       await this.#giveUp(device, lease, "attempts-exhausted", attemptsSoFar, undefined);
@@ -307,9 +308,9 @@ export class LeaseHealthMonitor {
     await this.#attemptReboot(device, lease, attempt);
   }
 
-  async #attemptReboot(device: DeviceRecord, lease: LeaseRecord, attempt: number): Promise<void> {
+  async #attemptReboot(device: VirtualDevice, lease: LeaseRecord, attempt: number): Promise<void> {
     const startedAt = this.options.clock.now();
-    let recovered: DeviceRecord | undefined;
+    let recovered: VirtualDevice | undefined;
     try {
       recovered = await this.options.lifecycle.recoverLeased(device, lease.id);
     } catch (error: unknown) {
@@ -346,7 +347,7 @@ export class LeaseHealthMonitor {
   }
 
   async #giveUp(
-    device: DeviceRecord,
+    device: VirtualDevice,
     lease: LeaseRecord,
     reason: GiveUpReason,
     attempts: number,

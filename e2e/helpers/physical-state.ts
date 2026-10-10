@@ -24,6 +24,12 @@ export interface PhysicalSeed {
   readonly enrolledApps?: readonly string[];
 }
 
+/** A shut-down simulator in the registry's own `devices` list, beside the physical records. */
+export interface ShutdownSimulatorSeed {
+  readonly id: string;
+  readonly driverDeviceId: string;
+}
+
 export interface SeededLease {
   readonly id: string;
   readonly deviceId: string;
@@ -62,11 +68,21 @@ export async function seedPhysicalState(
   env: Pick<TestEnv, "home">,
   physical: readonly PhysicalSeed[],
   leases: readonly SeededLease[] = [],
+  simulators: readonly ShutdownSimulatorSeed[] = [],
 ): Promise<void> {
   const now = Date.now();
   const state = {
     components: [],
-    devices: [],
+    devices: simulators.map((simulator) => ({
+      createdAt: now - 2 * DAY_MS,
+      driverData: {},
+      driverDeviceId: simulator.driverDeviceId,
+      id: simulator.id,
+      mode: "full",
+      shutdownAt: now - DAY_MS,
+      spec: { model: PHYSICAL_MODEL, osVersion: PHYSICAL_OS, platform: "ios" },
+      state: "shutdown",
+    })),
     leaseRequests: [],
     leases: leases.map((lease) => ({
       deviceId: lease.deviceId,

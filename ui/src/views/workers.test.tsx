@@ -45,7 +45,7 @@ describe("the workers views", () => {
     const device = {
       id: "dev_1",
       mode: "full",
-      spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+      spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" },
       // A state a newer daemon may send, which this console has never heard of.
       state: "hibernating",
     } as unknown as NonNullable<WorkerView["devices"]>[number];
@@ -60,10 +60,11 @@ describe("the workers views", () => {
 
   it("each device shows how long it has been in its state, where the data says", () => {
     const leased = {
+      physical: false,
       id: "dev_leased",
       mode: "full",
       servesDefaultMode: true,
-      spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+      spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" },
       state: "leased",
     } as const;
     const provisioning = {
@@ -98,6 +99,32 @@ describe("the workers views", () => {
     expect(shown).toContain("dev_ready ready —");
   });
 
+  it("a physical device is a row of the worker's Devices table with an empty Mode cell, and counts in the Workers view's device total", () => {
+    const physical = {
+      class: "phone" as const,
+      id: "dev_p",
+      physical: true as const,
+      servesDefaultMode: false,
+      spec: {
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        physical: true as const,
+        platform: "ios" as const,
+      },
+      state: "ready" as const,
+    };
+    const view = worker({ devices: [physical] });
+
+    const html = renderToStaticMarkup(<DeviceTable worker={view} now={NOW} />);
+
+    expect(text(html)).toContain("dev_p ready");
+    expect(html).toContain('<td data-label="Model">iPhone 15 Pro</td>');
+    expect(html).toMatch(/<td data-label="Mode"[^>]*><\/td>/);
+    expect(workersStats([view]).find((stat) => stat.label === "Devices")?.caption).toBe(
+      "running of 1",
+    );
+  });
+
   it('a 501 UNSUPPORTED_IN_WORKER_MODE shows "Not available on a single host"', () => {
     const render = (error: ApiError) =>
       renderToStaticMarkup(<Loaded state={{ error }}>{() => "the view"}</Loaded>);
@@ -128,10 +155,11 @@ describe("the workers views", () => {
 
   it("a disconnected worker shows no time for a device mid-provisioning", () => {
     const provisioning = {
+      physical: false,
       id: "dev_new",
       mode: "full",
       servesDefaultMode: true,
-      spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+      spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" },
       state: "provisioning",
       transitionAgeMs: 4_000,
     } as const;
@@ -182,10 +210,11 @@ describe("the busiest workers", () => {
 
   describe("a worker that reports starting", () => {
     const DEVICE = {
+      physical: false,
       id: "dev_1",
       mode: "full",
       servesDefaultMode: true,
-      spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+      spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" },
       state: "ready",
     } as const;
     const LEASE = {

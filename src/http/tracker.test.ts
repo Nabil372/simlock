@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { type DeviceRecord } from "../core/index.js";
+import { type VirtualDevice } from "../core/index.js";
 import {
   NoCapacityError,
   RequesterAlreadyLeasedError,
@@ -333,8 +333,39 @@ describe("LeaseRequestTracker granted lease payload", () => {
     },
   );
 
+  it("leaves mode off the lease for a granted physical device, which has none", async () => {
+    const { dispatcher, tracker } = buildTracker();
+    const { view, callIndex } = await createTracked(tracker, dispatcher);
+    dispatcher.calls[callIndex]?.resolve({
+      ...makeGrant(),
+      device: {
+        createdAt: 0,
+        driverData: undefined,
+        driverDeviceId: "00008110-001A2B3C4D5E",
+        enrolledApps: [],
+        id: "dev_phys",
+        physical: true,
+        spec: {
+          class: "phone",
+          model: "iPhone 15 Pro",
+          osVersion: "18.4",
+          physical: true,
+          platform: "ios",
+        },
+        state: "leased",
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const state = tracker.get(view.id)?.state;
+    if (state?.stage !== "granted") throw new Error("expected granted");
+
+    expect(state.lease).toMatchObject({ device: "iPhone 15 Pro", udid: "00008110-001A2B3C4D5E" });
+    expect(state.lease).not.toHaveProperty("mode");
+  });
+
   it("shows the granted device's image tag on the lease, and none for a device without one", async () => {
-    const granted = async (spec: DeviceRecord["spec"]) => {
+    const granted = async (spec: VirtualDevice["spec"]) => {
       const { dispatcher, tracker } = buildTracker();
       const { view, callIndex } = await createTracked(tracker, dispatcher);
       dispatcher.calls[callIndex]?.resolve(makeGrant({ device: { spec } }));
@@ -344,7 +375,12 @@ describe("LeaseRequestTracker granted lease payload", () => {
       if (state?.stage !== "granted") throw new Error("expected granted");
       return state.lease;
     };
-    const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+    const spec = {
+      physical: false,
+      model: "Pixel 8",
+      osVersion: "34",
+      platform: "android",
+    } as const;
 
     expect(await granted({ ...spec, imageTag: "google_apis_playstore" })).toMatchObject({
       imageTag: "google_apis_playstore",

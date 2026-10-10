@@ -114,6 +114,10 @@ called out where it applies below:
 - **The lease's `slim` boolean is gone; it carries `mode` instead** —
   `"slim"` or `"full"`, the device mode of the granted device. Every device in
   `GET /v1/status` carries the same `mode`.
+- **A device carries `physical`**, `false` for a simulator or emulator and
+  `true` for a real phone or tablet, in `GET /v1/status` and its `spec`. A
+  physical device has a `class` (`phone` or `tablet`) and no `mode`, and so does
+  a lease on one: its lease object has no `mode`.
 
 Routes, status codes, and every other field are unchanged.
 

@@ -14,6 +14,7 @@ import {
   seedPhysicalState,
   type PhysicalSeed,
   type SeededLease,
+  type ShutdownSimulatorSeed,
 } from "./helpers/physical-state.js";
 
 /**
@@ -57,6 +58,7 @@ async function startWith(
   physical: readonly PhysicalSeed[],
   options: {
     readonly leases?: readonly SeededLease[];
+    readonly simulators?: readonly ShutdownSimulatorSeed[];
     readonly config?: Record<string, unknown>;
     readonly script?: Record<string, unknown>;
   } = {},
@@ -67,7 +69,7 @@ async function startWith(
     driverScript: { ios: { ...IOS, ...options.script } },
     mode: "auto",
   });
-  await seedPhysicalState(env, physical, options.leases ?? []);
+  await seedPhysicalState(env, physical, options.leases ?? [], options.simulators ?? []);
   const started = await env.startDaemon();
   expect(started.code, started.stderr).toBe(0);
   return env;
@@ -306,25 +308,17 @@ describe("the core knows physical devices", () => {
 
   it("with limits.ios.maxRunning 1, a ready physical record and a shut-down iPhone 15 Pro simulator on 18.4, a warm target of one iPhone 15 Pro on 18.4 boots that simulator; were the physical record counted, the running limit would refuse the boot", async () => {
     const target = { count: 1, model: PHYSICAL_MODEL, osVersion: PHYSICAL_OS, platform: "ios" };
+    const simulator = { driverDeviceId: "fake-ios-shut", id: "dev_vshut" };
     const env = await startWith([READY], {
-      config: { limits: { ios: { maxDevices: 8, maxRunning: 1 } } },
-    });
-    const held = await leaseSimulator(env, ["--device", PHYSICAL_MODEL, "--os", PHYSICAL_OS]);
-    expect((await env.cli(["release", held.lease.id])).code).toBe(0);
-    await env.withConfig({ idle: { shutdownAfterMs: 1 } }, async () => {
-      await waitFor(
-        async () => {
-          await env.cli(["cleanup"]);
-          return (await stateOf(env, held.device.id)) === "shutdown";
-        },
-        { label: "the simulator is shut down" },
-      );
+      config: {
+        limits: { ios: { maxDevices: 8, maxRunning: 1 } },
+        warmPool: { targets: [target] },
+      },
+      simulators: [simulator],
     });
 
-    await env.withConfig({ warmPool: { targets: [target] } }, async () => {
-      await waitFor(async () => (await stateOf(env, held.device.id)) === "ready", {
-        label: "the pool boots the shut-down simulator",
-      });
+    await waitFor(async () => (await stateOf(env, simulator.id)) === "ready", {
+      label: "the pool boots the shut-down simulator",
     });
     await expectState(env, READY.id, "ready");
   });

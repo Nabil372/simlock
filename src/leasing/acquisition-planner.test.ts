@@ -6,14 +6,14 @@ import {
   CapacityCoordinator,
   type Config,
   DeviceOperationClaims,
-  type DeviceRecord,
-  type DeviceSpec,
+  type VirtualDevice,
+  type VirtualSpec,
   type LeaseRecord,
 } from "../core/index.js";
 import { createCapacityStrategy } from "../core/testing.js";
 
 const gibibyte = 1024 ** 3;
-const spec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+const spec = { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
 const config: Config = {
   mode: "worker",
   exec: { timeoutMs: 600_000 },
@@ -83,10 +83,11 @@ const config: Config = {
 
 function device(
   id: string,
-  state: DeviceRecord["state"],
-  deviceSpec: DeviceSpec = spec,
-): DeviceRecord {
+  state: VirtualDevice["state"],
+  deviceSpec: VirtualSpec = spec,
+): VirtualDevice {
   return {
+    physical: false,
     createdAt: 1,
     driverData: {},
     driverDeviceId: `driver-${id}`,
@@ -110,25 +111,25 @@ function planner(
 
 function plan(
   acquisitionPlanner: AcquisitionPlanner,
-  devices: readonly DeviceRecord[],
+  devices: readonly VirtualDevice[],
   options: {
     failures?: number;
     leases?: readonly LeaseRecord[];
     noWait?: boolean;
     owner?: string;
-    spec?: DeviceSpec;
+    spec?: VirtualSpec;
   } = {},
 ) {
   return acquisitionPlanner.plan({
     failures: options.failures ?? 0,
     noWait: options.noWait ?? false,
     ...(options.owner === undefined ? {} : { owner: options.owner }),
-    snapshot: { devices, leases: options.leases ?? [] },
+    snapshot: { devices, leases: options.leases ?? [], virtualDevices: devices },
     spec: options.spec ?? spec,
   });
 }
 
-function leaseOn(target: DeviceRecord): LeaseRecord {
+function leaseOn(target: VirtualDevice): LeaseRecord {
   return {
     deviceId: target.id,
     grantedAt: 1,
@@ -177,6 +178,7 @@ describe("AcquisitionPlanner", () => {
   it("selects a warm victim when a running limit blocks provisioning", () => {
     const { claims, planner: acquisitionPlanner } = planner();
     const warm = device("warm", "ready", {
+      physical: false,
       model: "Pixel 9",
       osVersion: "36",
       platform: "android",
@@ -274,7 +276,7 @@ describe("AcquisitionPlanner", () => {
   });
 
   describe("RAM budget by mode", () => {
-    const slimSpec: DeviceSpec = { ...spec, mode: "slim" };
+    const slimSpec: VirtualSpec = { ...spec, mode: "slim" };
 
     /**
      * 12 GiB of RAM: an 8 GiB budget once the 4 GiB reserve is taken. Full iOS devices take
@@ -305,6 +307,7 @@ describe("AcquisitionPlanner", () => {
     it("needs full-size room to provision a new device, whatever its spec's mode", () => {
       const { planner: acquisitionPlanner } = sizedPlanner(8);
       const android = device("android", "leased", {
+        physical: false,
         model: "Pixel 9",
         osVersion: "36",
         platform: "android",
@@ -331,6 +334,7 @@ describe("AcquisitionPlanner", () => {
     it("waits, and evicts nothing, when the boot of a matching shut-down slim device is refused for RAM", () => {
       const { claims, planner: acquisitionPlanner } = sizedPlanner(8);
       const android = device("android", "leased", {
+        physical: false,
         model: "Pixel 9",
         osVersion: "36",
         platform: "android",
@@ -364,6 +368,7 @@ describe("AcquisitionPlanner", () => {
     it("evicts an idle slim device for a full request at the device limit, then waits when the freed RAM is not enough", () => {
       const { planner: acquisitionPlanner } = sizedPlanner(2);
       const android = device("android", "leased", {
+        physical: false,
         model: "Pixel 9",
         osVersion: "36",
         platform: "android",

@@ -158,6 +158,7 @@
                   "DeviceRequest",
                   "DeviceRequirement",
                   "DeviceSpec",
+                  "FittableSpec",
                   "LeaseProgress",
                   "LeaseRecord",
                   "LeaseRequestFailure",

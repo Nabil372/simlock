@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { MemoryFilesystem } from "../ports/index.js";
+import { FakeClock, MemoryFilesystem } from "../ports/index.js";
+import type { PhysicalDevice, PhysicalSpec, VirtualDevice } from "./domain.js";
 import {
   DiskSpaceGuard,
+  type Driver,
+  type DriverDevice,
   InsufficientDiskSpaceError,
   sameReceipt,
   UnknownModelError,
 } from "./driver.js";
+import { FakeDriver } from "./fake-driver.js";
+import type { ManagedDeviceLifecycle } from "./managed-device-lifecycle.js";
 
 const gibibyte = 1024 ** 3;
 
@@ -123,5 +128,86 @@ describe("UnknownModelError", () => {
       "No android model of class tablet is listed on this host; name one in android.defaultModels.tablet",
     );
     expect(error).toMatchObject({ class: "tablet", model: undefined, platform: "android" });
+  });
+});
+
+declare const driver: Driver;
+declare const lifecycle: ManagedDeviceLifecycle;
+declare const physicalDevice: PhysicalDevice;
+declare const virtualDevice: VirtualDevice;
+
+describe("the virtual-only driver and lifecycle calls (ADR 0022 §4, §5)", () => {
+  const physicalDriverDevice = {
+    address: "00008110-001A2B3C4D5E",
+    deviceId: "00008110-001A2B3C4D5E",
+    driverData: {},
+    physical: true,
+  } satisfies DriverDevice & { readonly physical: true };
+  const physicalSpec: PhysicalSpec = {
+    class: "phone",
+    model: "iPhone 15 Pro",
+    osVersion: "18.4",
+    physical: true,
+    platform: "ios",
+  };
+  const prepare = { mode: "full", purpose: "prepare" } as const;
+
+  /** Never run: every line must fail to compile, or its `@ts-expect-error` is itself an error. */
+  function physicalCallsDoNotCompile(): void {
+    // @ts-expect-error a physical driver device is not a VirtualDriverDevice
+    void driver.makeReady(physicalDriverDevice, prepare);
+    // @ts-expect-error a physical driver device is not a VirtualDriverDevice
+    void driver.reclaim(physicalDriverDevice, { clean: "standard" });
+    // @ts-expect-error a physical driver device is not a VirtualDriverDevice
+    void driver.shutdown(physicalDriverDevice);
+    // @ts-expect-error a physical driver device is not a VirtualDriverDevice
+    void driver.destroy(physicalDriverDevice);
+    // @ts-expect-error a physical driver device is not a VirtualDriverDevice
+    void driver.destroyLegacy?.(physicalDriverDevice);
+    // @ts-expect-error a physical spec is not a VirtualSpec
+    void driver.provision(physicalSpec);
+    // @ts-expect-error a resolved spec is virtual, so it is not assignable to a physical one
+    const _resolved: Promise<PhysicalSpec> = driver.resolveSpec({ model: "m", platform: "ios" });
+    // @ts-expect-error a physical record is not a VirtualDevice
+    void lifecycle.bootForLease(physicalDevice, undefined as never);
+    // @ts-expect-error a physical record is not a VirtualDevice
+    void lifecycle.bootWarm(physicalDevice, undefined as never);
+    // @ts-expect-error a physical record is not a VirtualDevice
+    void lifecycle.readyProvisionedForLease(physicalDevice);
+    // @ts-expect-error a physical record is not a VirtualDevice
+    void lifecycle.shutdown(physicalDevice, "test", "cleanup");
+    // @ts-expect-error a physical record is not a VirtualDevice
+    void lifecycle.destroy(physicalDevice, "test", "cleanup");
+    // @ts-expect-error a physical record is not a VirtualDevice
+    void lifecycle.recoverLeased(physicalDevice, "lse_1");
+  }
+
+  /** Never run: the same calls with the virtual types are the ones that compile. */
+  function virtualCallsCompile(): void {
+    void lifecycle.bootForLease(virtualDevice, undefined as never);
+    void lifecycle.bootWarm(virtualDevice, undefined as never);
+    void lifecycle.readyProvisionedForLease(virtualDevice);
+    void lifecycle.shutdown(virtualDevice, "test", "cleanup");
+    void lifecycle.destroy(virtualDevice, "test", "cleanup");
+    void lifecycle.recoverLeased(virtualDevice, "lse_1");
+  }
+
+  it("take a VirtualDriverDevice, a VirtualSpec and a VirtualDevice, and a resolved spec goes to provision as it is", async () => {
+    const fake: Driver = new FakeDriver({
+      availableOsVersions: ["18.4"],
+      clock: new FakeClock(1_000),
+      platform: "ios",
+    });
+
+    const spec = await fake.resolveSpec({ model: "iPhone 16", osVersion: "18.4", platform: "ios" });
+    const provisioned = await fake.provision(spec);
+    const device = { ...provisioned, physical: false } as const;
+    const ready = await fake.makeReady(device, prepare);
+    await fake.shutdown({ ...ready, physical: false });
+    await fake.destroy({ ...ready, physical: false });
+
+    expect(spec.physical).toBe(false);
+    expect(physicalCallsDoNotCompile).toBeTypeOf("function");
+    expect(virtualCallsCompile).toBeTypeOf("function");
   });
 });

@@ -69,9 +69,10 @@ const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve,
 /** A minimal daemon lease response, for the tests that only care what the CLI prints. */
 const detachedGrant: LeaseGrant = {
   device: {
+    physical: false,
     id: "device-1",
     driverDeviceId: "ABCD",
-    spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+    spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
     mode: "full",
   },
   environment: {},
@@ -2875,8 +2876,14 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
       host: { arch: "x64", os: "Linux", osVersion: "6.8.0", tools: [] },
       devices: [
         {
+          physical: false,
           id: "dev_1",
-          spec: { model: "iPhone 17", osVersion: "26.0", platform: "ios" as const },
+          spec: {
+            physical: false,
+            model: "iPhone 17",
+            osVersion: "26.0",
+            platform: "ios" as const,
+          },
           mode: "full" as const,
           servesDefaultMode: true,
           state: "leased" as const,
@@ -3340,12 +3347,31 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
 
   it("prints each device's mode and whether it serves a request naming no mode", async () => {
     const output = outputCapture();
-    const spec = { model: "iPhone 17", osVersion: "26.0", platform: "ios" as const };
+    const spec = {
+      physical: false,
+      model: "iPhone 17",
+      osVersion: "26.0",
+      platform: "ios" as const,
+    };
     const status: StatusGetOutput = {
       ...EMPTY_STATUS,
       devices: [
-        { id: "dev_slim", mode: "slim", servesDefaultMode: false, spec, state: "ready" },
-        { id: "dev_full", mode: "full", servesDefaultMode: true, spec, state: "leased" },
+        {
+          physical: false,
+          id: "dev_slim",
+          mode: "slim",
+          servesDefaultMode: false,
+          spec,
+          state: "ready",
+        },
+        {
+          physical: false,
+          id: "dev_full",
+          mode: "full",
+          servesDefaultMode: true,
+          spec,
+          state: "leased",
+        },
       ],
     };
     const environment = output.environmentWith({
@@ -3415,12 +3441,60 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
     expect(lines).toContain("Capacity android: managed 0/1, running 0 + 0 reserved/1, warm 0");
   });
 
+  it("simlock status prints a physical device as physical and its class, with today's markers, and a simulator's line as before", async () => {
+    const status: StatusGetOutput = {
+      ...EMPTY_STATUS,
+      devices: [
+        {
+          class: "phone",
+          id: "dev_p1",
+          physical: true,
+          servesDefaultMode: false,
+          spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+          state: "ready",
+        },
+        {
+          class: "tablet",
+          id: "dev_p2",
+          physical: true,
+          servesDefaultMode: false,
+          spec: { model: "iPad Pro", osVersion: "18.4", physical: true, platform: "ios" },
+          state: "quarantined",
+          quarantineAttempts: 1,
+          workerId: "wrk_1",
+        },
+        {
+          id: "dev_v1",
+          mode: "full",
+          physical: false,
+          servesDefaultMode: true,
+          spec: { model: "iPhone 16", osVersion: "18.4", physical: false, platform: "ios" },
+          state: "ready",
+        },
+      ],
+    };
+    const output = outputCapture();
+
+    await runCli(
+      ["status"],
+      output.environmentWith({
+        connectAdmin: async () => fakeClient({ getStatus: () => Promise.resolve(status) }),
+      }),
+    );
+
+    const lines = output.stdout.split("\n");
+    expect(lines).toContain("Device dev_p1: ready, physical phone");
+    expect(lines).toContain("Device dev_p2 on wrk_1: quarantined, physical tablet (purge retry 1)");
+    expect(lines).toContain("Device dev_v1: ready, mode full, serves default mode: yes");
+  });
+
   it("simlock status marks a stalled device", async () => {
     const device = (id: string, extra: object) => ({
+      physical: false,
       id,
       mode: "full" as const,
       servesDefaultMode: true,
-      spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" as const },
+      spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" as const },
       state: "provisioning" as const,
       ...extra,
     });
@@ -3534,9 +3608,10 @@ describe("CLI: lease pushes and exit codes (own logic, not the dispatcher's)", (
         recoveredListener?.({ leaseId: "lse_1", deviceId: "dev_1", attempts: 2 });
         return Promise.resolve({
           device: {
+            physical: false,
             id: "dev_1",
             driverDeviceId: "dev_1",
-            spec: { platform: "ios", model: "x", osVersion: "26.5" },
+            spec: { physical: false, platform: "ios", model: "x", osVersion: "26.5" },
             mode: "full",
           },
           environment: {},
@@ -3590,9 +3665,10 @@ describe("CLI: lease pushes and exit codes (own logic, not the dispatcher's)", (
         capturedInput = input as unknown as Record<string, unknown>;
         return Promise.resolve({
           device: {
+            physical: false,
             id: "dev_1",
             driverDeviceId: "dev_1",
-            spec: { platform: "ios", model: "x", osVersion: "26.5" },
+            spec: { physical: false, platform: "ios", model: "x", osVersion: "26.5" },
             mode: "full",
           },
           environment: {},
@@ -3641,9 +3717,10 @@ describe("CLI: lease pushes and exit codes (own logic, not the dispatcher's)", (
         inputs.push(input as unknown as Record<string, unknown>);
         return Promise.resolve({
           device: {
+            physical: false,
             id: "dev_1",
             driverDeviceId: "dev_1",
-            spec: { platform: "android", model: "Pixel 8", osVersion: "34" },
+            spec: { physical: false, platform: "android", model: "Pixel 8", osVersion: "34" },
             mode: "full",
           },
           environment: {},
@@ -3704,9 +3781,10 @@ describe("CLI: lease pushes and exit codes (own logic, not the dispatcher's)", (
         capturedInput = input as unknown as Record<string, unknown>;
         return Promise.resolve({
           device: {
+            physical: false,
             id: "dev_1",
             driverDeviceId: "dev_1",
-            spec: { platform: "ios", model: "x", osVersion: "26.5" },
+            spec: { physical: false, platform: "ios", model: "x", osVersion: "26.5" },
             mode: "full",
           },
           environment: {},
@@ -4240,9 +4318,10 @@ describe("CLI: holder renew and release (ADR 0004 §2)", () => {
       requestLease: () =>
         Promise.resolve({
           device: {
+            physical: false,
             id: "dev_1",
             driverDeviceId: "dev_1",
-            spec: { platform: "ios", model: "x", osVersion: "26.5" },
+            spec: { physical: false, platform: "ios", model: "x", osVersion: "26.5" },
             mode: "full",
           },
           // A driver-supplied key that is not a shell identifier fails the command rather than
@@ -5039,9 +5118,10 @@ function fakeClient(overrides: Partial<SimlockAdminClient> = {}): SimlockAdminCl
   const grant: LeaseGrant = {
     environment: {},
     device: {
+      physical: false,
       id: "dev_1",
       driverDeviceId: "dev_1",
-      spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
+      spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
       mode: "full",
     },
     lease: {
@@ -5492,7 +5572,7 @@ describe("simlock list --requests", () => {
             id: "req_2",
             queuePosition: 2,
             requesterId: "local-agent",
-            spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+            spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" },
             stage: "queued",
             workerId: "wrk_1",
           },
@@ -5551,10 +5631,11 @@ describe("simlock list --requests", () => {
 describe("simlock lease: a request names a model, a class, or nothing", () => {
   const grant = {
     device: {
+      physical: false,
       driverDeviceId: "dev_1",
       id: "dev_1",
       mode: "full" as const,
-      spec: { model: "iPhone 17", osVersion: "26.5", platform: "ios" as const },
+      spec: { physical: false, model: "iPhone 17", osVersion: "26.5", platform: "ios" as const },
     },
     environment: {},
     lease: {

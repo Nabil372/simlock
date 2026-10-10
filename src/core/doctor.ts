@@ -9,19 +9,21 @@ import {
   mayBeGranted,
   type Platform,
   transitionEnteredAt,
+  type VirtualDevice,
 } from "./domain.js";
 import type { DeviceOperationClaims } from "./device-operation-claims.js";
 import type { StartupRead } from "./startup-read.js";
-import type {
-  Driver,
-  DriverDevice,
-  DriverRejection,
-  DriverReality,
-  DriverRejectionReason,
-  MissingPrerequisite,
-  ObservedDevice,
-  ObservedMark,
-  PrerequisiteCheck,
+import {
+  type Driver,
+  type DriverDevice,
+  type DriverRejection,
+  type DriverReality,
+  type DriverRejectionReason,
+  type MissingPrerequisite,
+  type ObservedDevice,
+  type ObservedMark,
+  type PrerequisiteCheck,
+  virtualDriverDevice,
 } from "./driver.js";
 import type { CapacityReader, LeaseExpirer, WarmPoolReader } from "./core-ports.js";
 import { reservedRunning, type WarmTargetFigures } from "./warm-pool/index.js";
@@ -250,35 +252,16 @@ export class Doctor {
     );
     const findings: DoctorFinding[] = [];
 
-    for (const device of snapshot.devices) {
-      if (observedPlatforms.has(device.spec.platform)) {
-        const deviceFindings = await this.#withLegacyDevice(
-          device,
-          registryDriftFindings(device, realDeviceKeys, observedDevices, this.options.claims),
-          driversByPlatform.get(device.spec.platform),
-        );
-        findings.push(...deviceFindings);
-        if (deviceFindings.some((finding) => finding.kind === "foreign-state-change")) {
-          await this.options.registry.markForeignStateDetected(device.id, this.options.clock.now());
-        }
-        if (deviceFindings.some((finding) => finding.kind === "foreign-provenance-change")) {
-          await this.options.registry.markForeignProvenanceDetected(
-            device.id,
-            this.options.clock.now(),
-          );
-        }
-      }
-      const stalled = stalledTransitionFinding(
-        device,
+    findings.push(
+      ...(await this.#driftFindings(snapshot.virtualDevices, {
         driversByPlatform,
-        this.options.config.stalledTransition,
-        this.options.clock.now(),
-        this.options.claims,
-      );
-      if (stalled !== undefined) {
-        findings.push(stalled);
-      }
-    }
+        observedDevices,
+        observedPlatforms,
+        realDeviceKeys,
+      })),
+    );
+    // The stalled-transition rule is shared by both types, so it reads every device.
+    findings.push(...this.#stalledFindings(snapshot.devices, driversByPlatform));
     findings.push(...driverUnavailableFindings(this.options.driverRejections ?? []));
     findings.push(...orphanFindings(realities, registryDeviceKeys));
     findings.push(...expiredLeaseFindings(snapshot.leases, this.options.clock.now()));
@@ -365,7 +348,7 @@ export class Doctor {
       const driver = driversByPlatform.get(orphan.platform);
       if (driver === undefined) continue;
       try {
-        await driver.destroy(orphan.device);
+        await driver.destroy(virtualDriverDevice(orphan.device));
       } catch (error: unknown) {
         this.#logger.error("Could not purge orphan device", {
           deviceId: orphan.device.deviceId,
@@ -434,6 +417,63 @@ export class Doctor {
       }
     }
     return true;
+  }
+
+  /**
+   * Registry versus root, per device: existence, run state and provenance. Drift compares the
+   * registry with what a root holds, so it reads virtual devices only: a physical record is in
+   * no root and would read as missing (ADR 0022 §4).
+   */
+  async #driftFindings(
+    devices: readonly VirtualDevice[],
+    reality: {
+      readonly driversByPlatform: ReadonlyMap<Platform, Driver>;
+      readonly observedDevices: ReadonlyMap<string, ObservedDevice>;
+      readonly observedPlatforms: ReadonlySet<Platform>;
+      readonly realDeviceKeys: ReadonlySet<string>;
+    },
+  ): Promise<DoctorFinding[]> {
+    const findings: DoctorFinding[] = [];
+    for (const device of devices) {
+      if (!reality.observedPlatforms.has(device.spec.platform)) continue;
+      const deviceFindings = await this.#withLegacyDevice(
+        device,
+        registryDriftFindings(
+          device,
+          reality.realDeviceKeys,
+          reality.observedDevices,
+          this.options.claims,
+        ),
+        reality.driversByPlatform.get(device.spec.platform),
+      );
+      findings.push(...deviceFindings);
+      if (deviceFindings.some((finding) => finding.kind === "foreign-state-change")) {
+        await this.options.registry.markForeignStateDetected(device.id, this.options.clock.now());
+      }
+      if (deviceFindings.some((finding) => finding.kind === "foreign-provenance-change")) {
+        await this.options.registry.markForeignProvenanceDetected(
+          device.id,
+          this.options.clock.now(),
+        );
+      }
+    }
+    return findings;
+  }
+
+  #stalledFindings(
+    devices: readonly DeviceRecord[],
+    driversByPlatform: ReadonlyMap<Platform, Driver>,
+  ): DoctorFinding[] {
+    return devices.flatMap((device) => {
+      const stalled = stalledTransitionFinding(
+        device,
+        driversByPlatform,
+        this.options.config.stalledTransition,
+        this.options.clock.now(),
+        this.options.claims,
+      );
+      return stalled === undefined ? [] : [stalled];
+    });
   }
 
   /**
@@ -734,7 +774,7 @@ export class Doctor {
       return;
     }
     try {
-      await destroyLegacy(finding.device);
+      await destroyLegacy(virtualDriverDevice(finding.device));
     } catch (error: unknown) {
       this.#logger.error("Could not destroy a pre-root device", {
         deviceId: finding.deviceId,

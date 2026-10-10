@@ -31,17 +31,20 @@ export interface LeaseReconcilerOptions {
  *   the reclaim. A later start whose read succeeds recovers it.
  *
  * A device is judged by its registry `driverDeviceId`, on its own platform, the key doctor uses.
+ * A lease on a physical device is skipped: that device is in no root, so the read says nothing
+ * about it (ADR 0022 §7).
  */
 export class LeaseReconciler {
   constructor(private readonly options: LeaseReconcilerOptions) {}
 
-  // fallow-ignore-next-line unused-class-member -- reached through LeaseStartup's reconciler port.
   async run(read: StartupRead): Promise<void> {
     const { devices, leases } = this.options.registry.snapshot;
     const now = this.options.clock.now();
     for (const lease of [...leases].sort(byDeadline)) {
       const device = devices.find((candidate) => candidate.id === lease.deviceId);
-      if (device === undefined) continue;
+      // A physical device is not in a root a start reads: its lease and its state stay as they
+      // are (ADR 0022 §7), and the expiry timers restored next end the lease on its deadline.
+      if (device === undefined || device.physical) continue;
       const outcome = deviceOutcome(device, read);
       if (outcome === undefined) continue;
       await this.options.ender.endAtStartup(lease.id, {

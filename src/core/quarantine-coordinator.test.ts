@@ -1,18 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { EventBus, type EventEnvelope } from "../bus/index.js";
-import { FakeClock, JsonLinesLogger, type Logger, MemoryLogSink } from "../ports/index.js";
+import {
+  FakeClock,
+  JsonLinesLogger,
+  type Logger,
+  MemoryFilesystem,
+  MemoryLogSink,
+} from "../ports/index.js";
 import { DriverCatalog } from "./driver-catalog.js";
-import type { DeviceRecord, DeviceSpec } from "./domain.js";
+import type { VirtualDevice, VirtualSpec } from "./domain.js";
 import { FakeDriver } from "./fake-driver.js";
 import {
   QuarantineCoordinator,
   type QuarantineRegistry,
   type QuarantineRetryConfig,
 } from "./quarantine-coordinator.js";
+import { Registry } from "./registry.js";
 import { SerializedDecision } from "./serialized-decision.js";
 
-const spec: DeviceSpec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" };
+const spec: VirtualSpec = {
+  physical: false,
+  model: "iPhone 16",
+  osVersion: "26.5",
+  platform: "ios",
+};
 
 const retryConfig: QuarantineRetryConfig = {
   maxRetries: 2,
@@ -23,19 +35,19 @@ const retryConfig: QuarantineRetryConfig = {
 
 /** In-memory stand-in mirroring the four Registry methods QuarantineCoordinator calls. */
 class FakeRegistry implements QuarantineRegistry {
-  #devices: DeviceRecord[];
+  #devices: VirtualDevice[];
   /** The initiator of every `deleteQuarantined` commit, in order. */
   readonly deletions: string[] = [];
 
-  constructor(devices: readonly DeviceRecord[]) {
+  constructor(devices: readonly VirtualDevice[]) {
     this.#devices = [...devices];
   }
 
-  get snapshot(): { readonly devices: readonly DeviceRecord[] } {
-    return { devices: this.#devices.map((device) => ({ ...device })) };
+  get snapshot(): { readonly virtualDevices: readonly VirtualDevice[] } {
+    return { virtualDevices: this.#devices.map((device) => ({ ...device })) };
   }
 
-  async enterQuarantine(deviceId: string, nextRetryAt: number): Promise<DeviceRecord> {
+  async enterQuarantine(deviceId: string, nextRetryAt: number): Promise<VirtualDevice> {
     return this.#update(deviceId, (device) => ({
       ...device,
       quarantineAttempts: 0,
@@ -48,7 +60,7 @@ class FakeRegistry implements QuarantineRegistry {
     deviceId: string,
     attempts: number,
     nextRetryAt: number,
-  ): Promise<DeviceRecord> {
+  ): Promise<VirtualDevice> {
     return this.#update(deviceId, (device) => ({
       ...device,
       quarantineAttempts: attempts,
@@ -56,14 +68,14 @@ class FakeRegistry implements QuarantineRegistry {
     }));
   }
 
-  async strandQuarantine(deviceId: string, attempts: number): Promise<DeviceRecord> {
+  async strandQuarantine(deviceId: string, attempts: number): Promise<VirtualDevice> {
     return this.#update(deviceId, (device) => {
       const { quarantineNextRetryAt: _quarantineNextRetryAt, ...rest } = device;
       return { ...rest, quarantineAttempts: attempts };
     });
   }
 
-  async recoverFromQuarantine(deviceId: string, to: "ready" | "shutdown"): Promise<DeviceRecord> {
+  async recoverFromQuarantine(deviceId: string, to: "ready" | "shutdown"): Promise<VirtualDevice> {
     return this.#update(deviceId, (device) => {
       const {
         quarantineAttempts: _quarantineAttempts,
@@ -75,7 +87,7 @@ class FakeRegistry implements QuarantineRegistry {
     });
   }
 
-  async deleteQuarantined(deviceId: string, initiator: string): Promise<DeviceRecord> {
+  async deleteQuarantined(deviceId: string, initiator: string): Promise<VirtualDevice> {
     this.deletions.push(initiator);
     return this.#update(deviceId, (device) => {
       const {
@@ -89,11 +101,11 @@ class FakeRegistry implements QuarantineRegistry {
   }
 
   /** Test-only escape hatch to simulate a device leaving quarantine out of band. */
-  forceState(deviceId: string, state: DeviceRecord["state"]): void {
+  forceState(deviceId: string, state: VirtualDevice["state"]): void {
     this.#update(deviceId, (device) => ({ ...device, state }));
   }
 
-  #update(deviceId: string, apply: (device: DeviceRecord) => DeviceRecord): DeviceRecord {
+  #update(deviceId: string, apply: (device: VirtualDevice) => VirtualDevice): VirtualDevice {
     const index = this.#devices.findIndex((device) => device.id === deviceId);
     const current = this.#devices[index];
     if (index === -1 || current === undefined) throw new Error(`missing device: ${deviceId}`);
@@ -103,8 +115,9 @@ class FakeRegistry implements QuarantineRegistry {
   }
 }
 
-function device(id: string, driverDeviceId: string): DeviceRecord {
+function device(id: string, driverDeviceId: string): VirtualDevice {
   return {
+    physical: false,
     createdAt: 1,
     driverData: {},
     driverDeviceId,
@@ -121,7 +134,7 @@ async function createHarness(
     readonly config?: QuarantineRetryConfig;
     readonly driver?: FakeDriver;
     readonly logger?: Logger;
-    readonly target?: Pick<DeviceRecord, "lastLeaseEndedAt" | "leaseIdentity">;
+    readonly target?: Pick<VirtualDevice, "lastLeaseEndedAt" | "leaseIdentity">;
   } = {},
 ) {
   const clock = options.clock ?? new FakeClock(1_000);
@@ -162,7 +175,7 @@ describe("QuarantineCoordinator", () => {
       leaseId: "lease-1",
     });
 
-    expect(harness.registry.snapshot.devices[0]).toMatchObject({
+    expect(harness.registry.snapshot.virtualDevices[0]).toMatchObject({
       quarantineAttempts: 0,
       quarantineNextRetryAt: 2_000,
       state: "quarantined",
@@ -182,7 +195,7 @@ describe("QuarantineCoordinator", () => {
 
     await harness.coordinator.enterFromStalledTransition(harness.target.id);
 
-    expect(harness.registry.snapshot.devices[0]).toMatchObject({
+    expect(harness.registry.snapshot.virtualDevices[0]).toMatchObject({
       quarantineAttempts: 0,
       quarantineNextRetryAt: 2_000,
       state: "quarantined",
@@ -204,7 +217,7 @@ describe("QuarantineCoordinator", () => {
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
 
-    expect(harness.registry.snapshot.devices[0]?.state).toBe("ready");
+    expect(harness.registry.snapshot.virtualDevices[0]?.state).toBe("ready");
     expect(eventsOf(harness.bus).map((event) => event.event)).toEqual([
       "device.quarantined",
       "device.quarantine-recovered",
@@ -227,8 +240,8 @@ describe("QuarantineCoordinator", () => {
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
 
-    expect(harness.registry.snapshot.devices[0]?.state).toBe("ready");
-    expect(harness.registry.snapshot.devices[0]?.quarantineAttempts).toBeUndefined();
+    expect(harness.registry.snapshot.virtualDevices[0]?.state).toBe("ready");
+    expect(harness.registry.snapshot.virtualDevices[0]?.quarantineAttempts).toBeUndefined();
     expect(eventsOf(harness.bus).map((event) => event.event)).toEqual([
       "device.purge-failed",
       "device.quarantined",
@@ -259,7 +272,7 @@ describe("QuarantineCoordinator", () => {
     // First retry (attempt 1) fails; backoff grows to retryBackoffMs * multiplier^1 = 2_000.
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
-    expect(harness.registry.snapshot.devices[0]).toMatchObject({
+    expect(harness.registry.snapshot.virtualDevices[0]).toMatchObject({
       quarantineAttempts: 1,
       quarantineNextRetryAt: 4_000,
       state: "quarantined",
@@ -270,7 +283,7 @@ describe("QuarantineCoordinator", () => {
     await flush();
 
     expect(harness.driver.calls.map((call) => call.operation)).toContain("destroy");
-    expect(harness.registry.snapshot.devices[0]?.state).toBe("deleted");
+    expect(harness.registry.snapshot.virtualDevices[0]?.state).toBe("deleted");
     expect(harness.registry.deletions).toEqual(["quarantine-coordinator"]);
     expect(eventsOf(harness.bus).map((event) => event.event)).toEqual([
       "device.purge-failed",
@@ -305,12 +318,12 @@ describe("QuarantineCoordinator", () => {
 
     // Still quarantined: not grantable, still counted against capacity, and no further retry --
     // a terminal state an operator has to clear, which is exactly why it is worth a fact.
-    expect(harness.registry.snapshot.devices[0]).toMatchObject({
+    expect(harness.registry.snapshot.virtualDevices[0]).toMatchObject({
       quarantineAttempts: 2,
       state: "quarantined",
     });
     // Nothing is armed any more, so the record must not advertise a retry deadline.
-    expect(harness.registry.snapshot.devices[0]?.quarantineNextRetryAt).toBeUndefined();
+    expect(harness.registry.snapshot.virtualDevices[0]?.quarantineNextRetryAt).toBeUndefined();
     expect(eventsOf(harness.bus).map((event) => event.event)).toEqual([
       "device.purge-failed",
       "device.quarantined",
@@ -344,7 +357,7 @@ describe("QuarantineCoordinator", () => {
     const operations = harness.driver.calls.map((call) => call.operation);
     expect(operations).toContain("destroy");
     expect(operations).not.toContain("reclaim");
-    expect(harness.registry.snapshot.devices[0]?.state).toBe("deleted");
+    expect(harness.registry.snapshot.virtualDevices[0]?.state).toBe("deleted");
     expect(harness.registry.deletions).toEqual(["lease-end"]);
     expect(eventsOf(harness.bus).map((event) => event.event)).toEqual([
       "device.purge-failed",
@@ -374,7 +387,7 @@ describe("QuarantineCoordinator", () => {
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
 
-    expect(harness.registry.snapshot.devices[0]).toMatchObject({
+    expect(harness.registry.snapshot.virtualDevices[0]).toMatchObject({
       quarantineAttempts: 1,
       state: "quarantined",
     });
@@ -504,7 +517,7 @@ describe("QuarantineCoordinator", () => {
     await flush();
 
     expect(harness.driver.calls.map((call) => call.operation)).not.toContain("reclaim");
-    expect(harness.registry.snapshot.devices[0]?.state).toBe("leased");
+    expect(harness.registry.snapshot.virtualDevices[0]?.state).toBe("leased");
   });
 
   it("restores retry timers for devices still quarantined at startup", async () => {
@@ -534,7 +547,7 @@ describe("QuarantineCoordinator", () => {
     clock.advance(2_000); // now = 3_000, exactly the persisted deadline
     await flush();
 
-    expect(registry.snapshot.devices[0]?.state).toBe("ready");
+    expect(registry.snapshot.virtualDevices[0]?.state).toBe("ready");
     expect(notifyAvailability).toHaveBeenCalledOnce();
   });
 
@@ -564,7 +577,7 @@ describe("QuarantineCoordinator", () => {
     await flush();
 
     expect(driver.calls.map((call) => call.operation)).not.toContain("reclaim");
-    expect(registry.snapshot.devices[0]?.state).toBe("quarantined");
+    expect(registry.snapshot.virtualDevices[0]?.state).toBe("quarantined");
   });
 
   it("arms no retry timer for a device that is not quarantined", async () => {
@@ -594,3 +607,104 @@ describe("QuarantineCoordinator", () => {
 async function flush(): Promise<void> {
   for (let count = 0; count < 100; count += 1) await Promise.resolve();
 }
+
+describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
+  const physicalRecord = {
+    createdAt: 600,
+    driverData: {},
+    driverDeviceId: "00008110-001A2B3C4D5E",
+    enrolledApps: [],
+    id: "dev_physical",
+    lastLeaseEndedAt: 700,
+    physical: true,
+    spec: {
+      class: "phone",
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      physical: true,
+      platform: "ios",
+    },
+    state: "reclaiming",
+  };
+
+  async function physicalHarness(state: "reclaiming" | "quarantined") {
+    const clock = new FakeClock(1_000);
+    const bus = new EventBus(clock);
+    const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    await filesystem.writeFileAtomic(
+      "/home/agent/.simlock/state.json",
+      JSON.stringify({
+        devices: [],
+        leases: [],
+        physicalDevices: [{ ...physicalRecord, quarantineNextRetryAt: 1_500, state }],
+      }),
+    );
+    const registry = await Registry.load({
+      clock,
+      eventBus: bus,
+      filesystem,
+      idGenerator: { generate: () => "id" },
+      statePath: "/home/agent/.simlock/state.json",
+    });
+    const coordinator = new QuarantineCoordinator({
+      clock,
+      config: retryConfig,
+      decisions: new SerializedDecision(),
+      drivers: new DriverCatalog([driver]),
+      eventBus: bus,
+      notifyAvailability: vi.fn(),
+      registry,
+    });
+    const driverCalls = vi.spyOn(driver, "reclaim");
+    return { bus, clock, coordinator, driver, driverCalls, registry };
+  }
+
+  it("commits quarantined for a stalled physical device and arms no retry, though the event and the record carry nextRetryAt", async () => {
+    const harness = await physicalHarness("reclaiming");
+
+    await harness.coordinator.enterFromStalledTransition("dev_physical");
+
+    expect(harness.clock.pendingTimerCount).toBe(0);
+    harness.clock.advance(60_000);
+    await flush();
+    expect(harness.registry.snapshot.devices[0]).toMatchObject({
+      quarantineNextRetryAt: 2_000,
+      state: "quarantined",
+    });
+    expect(harness.driverCalls).not.toHaveBeenCalled();
+    expect(eventsOf(harness.bus).map((event) => event.event)).toEqual(["device.quarantined"]);
+    expect(eventsOf(harness.bus)[0]?.payload).toMatchObject({ nextRetryAt: 2_000 });
+  });
+
+  it("arms no retry for a physical device quarantined by a purge failure either", async () => {
+    const harness = await physicalHarness("reclaiming");
+
+    await harness.coordinator.enter({
+      attemptedStrategy: "erase",
+      deviceId: "dev_physical",
+      duration: 5,
+      error: "Error: uninstall failed",
+      leaseId: "lse_1",
+    });
+
+    expect(harness.clock.pendingTimerCount).toBe(0);
+    harness.clock.advance(60_000);
+    await flush();
+    expect(harness.registry.snapshot.devices[0]?.state).toBe("quarantined");
+    expect(harness.driverCalls).not.toHaveBeenCalled();
+  });
+
+  it("arms no timer for a quarantined physical device when it restores, and leaves it quarantined", async () => {
+    const harness = await physicalHarness("quarantined");
+
+    harness.coordinator.restore();
+    harness.clock.advance(60_000);
+    await flush();
+
+    expect(harness.clock.pendingTimerCount).toBe(0);
+    expect(harness.driverCalls).not.toHaveBeenCalled();
+    expect(harness.registry.snapshot.devices[0]?.state).toBe("quarantined");
+  });
+});

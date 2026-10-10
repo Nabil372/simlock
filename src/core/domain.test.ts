@@ -1,21 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { type DeviceRecord, IllegalTransition, transition, transitionEnteredAt } from "./index.js";
+import { type VirtualDevice, IllegalTransition, transition, transitionEnteredAt } from "./index.js";
 import {
+  assertVirtual,
   type DeviceClass,
+  type PhysicalDevice,
+  type PhysicalSpec,
+  type PhysicalState,
   type DeviceRequirement,
-  type DeviceSpec,
+  type VirtualSpec,
   fits,
   mayBeGranted,
   sameSpec,
 } from "./domain.js";
 
-const baseDevice: Omit<DeviceRecord, "state"> = {
+const baseDevice: Omit<VirtualDevice, "state"> = {
+  physical: false,
   createdAt: 1_000,
   driverData: { opaque: true },
   driverDeviceId: "driver_test",
   id: "dev_test",
-  spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+  spec: { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" },
   mode: "full",
 };
 
@@ -147,7 +152,12 @@ describe("mayBeGranted", () => {
 });
 
 describe("sameSpec", () => {
-  const spec: DeviceSpec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" };
+  const spec: VirtualSpec = {
+    physical: false,
+    model: "iPhone 16",
+    osVersion: "26.5",
+    platform: "ios",
+  };
 
   it("matches two identical plain specs", () => {
     expect(sameSpec(spec, { ...spec })).toBe(true);
@@ -163,7 +173,7 @@ describe("sameSpec", () => {
   });
 
   it("keeps a spec with an image tag apart from one with another tag and from one with none", () => {
-    const tagged: DeviceSpec = { ...spec, imageTag: "google_apis_playstore" };
+    const tagged: VirtualSpec = { ...spec, imageTag: "google_apis_playstore" };
     expect(sameSpec(tagged, { ...spec, imageTag: "google_apis" })).toBe(false);
     expect(sameSpec(tagged, spec)).toBe(false);
     expect(sameSpec(spec, tagged)).toBe(false);
@@ -178,7 +188,12 @@ describe("sameSpec", () => {
 });
 
 describe("fits (ADR 0015 §6)", () => {
-  const spec: DeviceSpec = { model: "iPhone 15", osVersion: "18.4", platform: "ios" };
+  const spec: VirtualSpec = {
+    physical: false,
+    model: "iPhone 15",
+    osVersion: "18.4",
+    platform: "ios",
+  };
   const classes: Record<string, DeviceClass> = { "iPhone 15": "phone", "iPad Pro": "tablet" };
   const classOf = (model: string) => classes[model];
   const exact: DeviceRequirement = {
@@ -210,7 +225,7 @@ describe("fits (ADR 0015 §6)", () => {
   });
 
   it("fails for a device whose model has no class when a class is requested", () => {
-    const unclassed: DeviceSpec = { ...spec, model: "Custom Phone" };
+    const unclassed: VirtualSpec = { ...spec, model: "Custom Phone" };
     expect(fits({ ...exact, target: { class: "phone", kind: "class" } }, unclassed, classOf)).toBe(
       false,
     );
@@ -238,6 +253,157 @@ describe("fits (ADR 0015 §6)", () => {
   });
 
   it("does not read the mode, which the planner compares", () => {
-    expect(fits(exact, { ...spec, mode: "slim" }, classOf)).toBe(true);
+    const slim: VirtualSpec = { ...spec, mode: "slim" };
+    expect(fits(exact, slim, classOf)).toBe(true);
+  });
+});
+
+const physicalSpec: PhysicalSpec = {
+  class: "phone",
+  model: "iPhone 15 Pro",
+  osVersion: "18.4",
+  physical: true,
+  platform: "ios",
+};
+
+const physicalDevice: Omit<PhysicalDevice, "state"> = {
+  createdAt: 1_000,
+  driverData: {},
+  driverDeviceId: "00008110-001A2B3C4D5E",
+  enrolledApps: ["com.example.kept"],
+  id: "dev_phys",
+  physical: true,
+  spec: physicalSpec,
+};
+
+describe("a physical device's state machine (ADR 0022 §2)", () => {
+  it.each([
+    ["ready", "leased"],
+    ["ready", "deleted"],
+    ["leased", "reclaiming"],
+    ["reclaiming", "ready"],
+    ["reclaiming", "quarantined"],
+    ["quarantined", "ready"],
+    ["quarantined", "deleted"],
+  ] as const)("allows %s -> %s", (from, to) => {
+    expect(transition({ ...physicalDevice, state: from }, to)).toEqual({
+      ...physicalDevice,
+      state: to,
+    });
+  });
+
+  it.each(["ready", "leased", "reclaiming", "quarantined", "deleted"] as const)(
+    "allows nothing out of %s beyond its table: every other physical state, shutdown and provisioning throw",
+    (from) => {
+      const allowed: Record<PhysicalState, readonly string[]> = {
+        deleted: [],
+        leased: ["reclaiming"],
+        quarantined: ["ready", "deleted"],
+        ready: ["leased", "deleted"],
+        reclaiming: ["ready", "quarantined"],
+      };
+      for (const to of [
+        "ready",
+        "leased",
+        "reclaiming",
+        "quarantined",
+        "deleted",
+        "shutdown",
+        "provisioning",
+      ] as const) {
+        if (allowed[from].includes(to)) continue;
+        expect(
+          () => transition({ ...physicalDevice, state: from }, to),
+          `${from} -> ${to}`,
+        ).toThrow(IllegalTransition);
+      }
+    },
+  );
+
+  it("refuses ready -> shutdown, reclaiming -> shutdown, shutdown -> ready and any move into provisioning, which the virtual table still allows or has", () => {
+    expect(() => transition({ ...physicalDevice, state: "ready" }, "shutdown")).toThrow(
+      IllegalTransition,
+    );
+    expect(() => transition({ ...physicalDevice, state: "reclaiming" }, "shutdown")).toThrow(
+      IllegalTransition,
+    );
+    expect(() => transition({ ...physicalDevice, state: "ready" }, "provisioning")).toThrow(
+      IllegalTransition,
+    );
+    expect(transition({ ...baseDevice, state: "ready" }, "shutdown").state).toBe("shutdown");
+    expect(transition({ ...baseDevice, state: "reclaiming" }, "shutdown").state).toBe("shutdown");
+    expect(transition({ ...baseDevice, state: "shutdown" }, "ready").state).toBe("ready");
+  });
+
+  it("gives a transition into ready no driver-reported mode, whatever the update carries", () => {
+    const ready = transition({ ...physicalDevice, state: "reclaiming" }, "ready", { mode: "full" });
+
+    expect(ready).not.toHaveProperty("mode");
+  });
+
+  it("drops a deferred reclaim on any exit from reclaiming, as a virtual device does", () => {
+    const reclaiming = {
+      ...physicalDevice,
+      deferredReclaimLeaseId: "lse_1",
+      state: "reclaiming" as const,
+    };
+
+    expect(transition(reclaiming, "quarantined")).not.toHaveProperty("deferredReclaimLeaseId");
+  });
+});
+
+describe("physical specs and records against the shared rules", () => {
+  it("never matches a virtual spec of the same platform, model and OS under sameSpec", () => {
+    const virtual: VirtualSpec = {
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      physical: false,
+      platform: "ios",
+    };
+
+    expect(sameSpec(physicalSpec, virtual)).toBe(false);
+    expect(sameSpec(virtual, physicalSpec)).toBe(false);
+    expect(sameSpec(physicalSpec, { ...physicalSpec })).toBe(true);
+  });
+
+  it("never fits a requirement, by model or by class, that a virtual spec of the same model would meet", () => {
+    const requirement: DeviceRequirement = {
+      imageTag: undefined,
+      osVersion: { kind: "exact", version: "18.4" },
+      platform: "ios",
+      target: { kind: "model", model: "iPhone 15 Pro" },
+    };
+    const classOf = () => "phone" as const;
+    const virtual: VirtualSpec = {
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      physical: false,
+      platform: "ios",
+    };
+
+    expect(fits(requirement, virtual, classOf)).toBe(true);
+    expect(fits(requirement, physicalSpec, classOf)).toBe(false);
+    expect(
+      fits({ ...requirement, target: { class: "phone", kind: "class" } }, physicalSpec, classOf),
+    ).toBe(false);
+  });
+
+  it("ages a reclaiming physical device from lastLeaseEndedAt", () => {
+    expect(
+      transitionEnteredAt({ ...physicalDevice, lastLeaseEndedAt: 4_000, state: "reclaiming" }),
+    ).toBe(4_000);
+  });
+
+  it("may be granted whatever its history, since lease.identity does not apply to it", () => {
+    expect(mayBeGranted({ ...physicalDevice, lastLeaseEndedAt: 4_000, state: "ready" })).toBe(true);
+  });
+});
+
+describe("assertVirtual", () => {
+  it("hands back a virtual device as it is, and throws for a physical one", () => {
+    const virtual: VirtualDevice = { ...baseDevice, state: "ready" };
+
+    expect(assertVirtual(virtual)).toBe(virtual);
+    expect(() => assertVirtual({ ...physicalDevice, state: "ready" })).toThrow(/dev_phys/);
   });
 });

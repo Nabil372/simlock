@@ -9,7 +9,12 @@ import {
   WaitQueue,
 } from "./wait-queue.js";
 
-const request = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+const request = {
+  physical: false,
+  model: "iPhone 16",
+  osVersion: "26.5",
+  platform: "ios",
+} as const;
 
 function createQueue(onTimeout?: (waiter: import("./wait-queue.js").Waiter) => void) {
   const clock = new FakeClock(1_000);

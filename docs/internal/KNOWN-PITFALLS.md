@@ -1154,3 +1154,22 @@ never boot is retried after 1, 2, 4 and so on minutes, at most 10 apart, for
 as long as the daemon runs. There is no attempt limit; each try boots the
 target's shut-down device of that kind, or, when it has none, creates a device
 and deletes it again. `retry.ts` is the one place to add a limit.
+
+## An older Simlock cannot end a lease on a physical device (ADR 0022 §1)
+
+A physical device's record is in its own list in `state.json`, `physicalDevices`,
+which an older Simlock keeps as an unknown key and never loads. A lease on a
+physical device is in the `leases` list, which it does load, so it keeps that
+lease and its startup reconciler skips it, because it holds no such device.
+
+**The pitfall:** the older Simlock cannot end that lease. Its expiry, `release`,
+`release --all` and `nuke` all go through `beginRelease`, which throws
+`UnknownDeviceError` when the lease's device is not in `devices`. The lease stays
+in the file, and the device it names is not one that daemon can reach.
+
+**Why it is accepted:** a rollback after physical devices were enrolled is rare,
+and the record is safe: the older Simlock never sees the device, so it cannot
+treat a phone as a simulator.
+
+**What to do before a rollback:** release every lease on a physical device while
+the newer Simlock is still running. The upgrade notes say so.

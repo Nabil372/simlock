@@ -10,8 +10,8 @@ import type { DeviceOperationClaims } from "../device-operation-claims.js";
 import type { DeviceProvisioner } from "../device-provisioner.js";
 import {
   type DeviceMode,
-  type DeviceRecord,
-  type DeviceSpec,
+  type VirtualDevice,
+  type VirtualSpec,
   type LeaseRecord,
   type Platform,
   sameSpec,
@@ -65,7 +65,7 @@ export interface WarmPoolOptions {
   readonly provisioner: Pick<DeviceProvisioner, "provision">;
   readonly registry: {
     readonly snapshot: {
-      readonly devices: readonly DeviceRecord[];
+      readonly virtualDevices: readonly VirtualDevice[];
       readonly leases: readonly LeaseRecord[];
     };
   };
@@ -76,7 +76,7 @@ export const WARM_POOL_TICK_MS = 30_000;
 
 /** A target boot or creation that runs beside the pass: the target's spec, and its end. */
 interface Flight {
-  readonly spec: DeviceSpec;
+  readonly spec: VirtualSpec;
   done: Promise<void>;
 }
 
@@ -112,7 +112,7 @@ export class WarmPool {
   #spared: readonly ResolvedTarget[] = [];
   #hasResolved = false;
   /** The spec each target last resolved to, which a transient refusal does not take away. */
-  readonly #lastSpecs = new Map<string, DeviceSpec>();
+  readonly #lastSpecs = new Map<string, VirtualSpec>();
   /** Every target's state as the last pass left it. */
   #reports: readonly TargetReport[] = [];
   /** Whether a pass has left its reports yet: until one has, the figures come from the config. */
@@ -126,7 +126,7 @@ export class WarmPool {
   /** Which configured targets each report stands for: a report merges those of one spec. */
   #covers = new WeakMap<TargetReport, readonly number[]>();
   /** The spec each resolved target resolved to this pass, by position in `warmPool.targets`. */
-  #owners: readonly { readonly index: number; readonly spec: DeviceSpec }[] = [];
+  #owners: readonly { readonly index: number; readonly spec: VirtualSpec }[] = [];
   #loggedShort = new Set<string>();
   #retryTimer: TimerHandle | undefined;
   #running: Promise<void> | undefined;
@@ -202,7 +202,7 @@ export class WarmPool {
   async targeted(): Promise<ReadonlySet<string>> {
     if (!this.options.config.enabled) return new Set();
     if (!this.#hasResolved) await this.#resolveTargets();
-    const { devices, leases } = this.options.registry.snapshot;
+    const { leases, virtualDevices: devices } = this.options.registry.snapshot;
     return targetedDevices({
       devices,
       isClaimed: (deviceId) => this.options.claims.isClaimed(deviceId),
@@ -282,7 +282,7 @@ export class WarmPool {
     if (this.options.acquisition.maintenanceActive) {
       // Whatever is shut down under a reset, an iOS device its forced release left that way
       // included, is meant to stay down.
-      for (const device of this.options.registry.snapshot.devices) {
+      for (const device of this.options.registry.snapshot.virtualDevices) {
         if (device.state === "shutdown") this.#reset.add(device.id);
       }
       return;
@@ -321,7 +321,7 @@ export class WarmPool {
     const resolved: ResolvedTarget[] = [];
     const spared: ResolvedTarget[] = [];
     const refused: TargetReport[] = [];
-    const owners: { index: number; spec: DeviceSpec }[] = [];
+    const owners: { index: number; spec: VirtualSpec }[] = [];
     for (const { index, resolution, target } of answers) {
       const key = JSON.stringify(target);
       if ("spec" in resolution) {
@@ -361,7 +361,7 @@ export class WarmPool {
   }
 
   #deviceCounts(): Parameters<typeof readyCount>[0] {
-    const { devices, leases } = this.options.registry.snapshot;
+    const { leases, virtualDevices: devices } = this.options.registry.snapshot;
     return { devices, isClaimed: (deviceId) => this.options.claims.isClaimed(deviceId), leases };
   }
 
@@ -440,7 +440,7 @@ export class WarmPool {
   }
 
   #view(): Parameters<typeof evaluate>[0] {
-    const { devices, leases } = this.options.registry.snapshot;
+    const { leases, virtualDevices: devices } = this.options.registry.snapshot;
     for (const id of this.#reset) {
       if (devices.find((device) => device.id === id)?.state !== "shutdown") this.#reset.delete(id);
     }
@@ -515,7 +515,7 @@ export class WarmPool {
    * an attempt was made. One that was declined (the device or the budget was gone by then) asks
    * for none: the same view would propose it again at once, and the pool would spin.
    */
-  #launch(spec: DeviceSpec, run: () => Promise<boolean>): void {
+  #launch(spec: VirtualSpec, run: () => Promise<boolean>): void {
     const flight: Flight = { done: Promise.resolve(), spec };
     this.#flights.add(flight);
     flight.done = run()
@@ -550,13 +550,13 @@ export class WarmPool {
    * Boots a shut-down device; for a target, also reports the outcome to the failure schedule.
    * Whether a boot was attempted: not when the device is no longer there to boot.
    */
-  async #boot(deviceId: string, target: DeviceSpec | undefined): Promise<boolean> {
+  async #boot(deviceId: string, target: VirtualSpec | undefined): Promise<boolean> {
     const held = await this.options.decisions.run(() => {
       const device = this.#unleased(deviceId, "shutdown");
       if (device === undefined) return undefined;
       const reservation = this.options.capacity.tryReserveBoot(
         capacityDevice(device),
-        capacityDevices(this.options.registry.snapshot.devices),
+        capacityDevices(this.options.registry.snapshot.virtualDevices),
       );
       if (!reservation.ok) return undefined;
       const claim = this.options.claims.tryClaim(device.id, "boot");
@@ -590,11 +590,11 @@ export class WarmPool {
    * ready under an ownerless `boot` claim, so a request that serves it may wait on it (#369), and
    * the claim ends once it is ready and unleased.
    */
-  async #provision(spec: DeviceSpec, target: DeviceSpec): Promise<boolean> {
+  async #provision(spec: VirtualSpec, target: VirtualSpec): Promise<boolean> {
     const reservation = await this.options.decisions.run(() => {
       const attempt = this.options.capacity.tryReserveProvisioning(
         plannedCapacityDevice(spec),
-        capacityDevices(this.options.registry.snapshot.devices),
+        capacityDevices(this.options.registry.snapshot.virtualDevices),
       );
       return attempt.ok ? attempt.reservation : undefined;
     });
@@ -619,13 +619,13 @@ export class WarmPool {
   }
 
   /** Remembers the failure; the pass the ended flight asks for arms the timer for the retry. */
-  #failed(target: DeviceSpec): void {
+  #failed(target: VirtualSpec): void {
     this.#schedule.failed(target, this.options.clock.now());
   }
 
   /** The device, when it is still in `state`, has no lease and no operation claim on it. */
-  #unleased(deviceId: string, state: DeviceRecord["state"]): DeviceRecord | undefined {
-    const { devices, leases } = this.options.registry.snapshot;
+  #unleased(deviceId: string, state: VirtualDevice["state"]): VirtualDevice | undefined {
+    const { leases, virtualDevices: devices } = this.options.registry.snapshot;
     const device = devices.find((candidate) => candidate.id === deviceId);
     if (
       device?.state !== state ||
@@ -642,7 +642,7 @@ export class WarmPool {
    * back by the retry schedule alone, so a keep boot of that device is not dropped for it.
    */
   #logFailure(
-    device: DeviceRecord,
+    device: VirtualDevice,
     step: "shutdown" | "boot",
     error: unknown,
     pause: boolean,
