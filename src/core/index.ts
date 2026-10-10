@@ -34,8 +34,7 @@ export {
   type CapacityReservation,
   plannedCapacityDevice,
 } from "./capacity/index.js";
-export { type CleanupRule, type RegistryView } from "./cleanup/types.js";
-export { automaticCleanupRules } from "./cleanup/rules.js";
+export { automaticCleanupRules, type CleanupRule, type RegistryView } from "./cleanup/index.js";
 export { CleanupReaper } from "./reaper.js";
 export {
   BootTimeoutError,

@@ -126,11 +126,11 @@ const deviceSpecSchema = z.object({
   imageTag: imageTagSchema.optional(),
 });
 
-/** Mirrors `DeviceRecord` (src/core/domain.ts) field for field, except `deferredReclaimLeaseId`,
- * which is internal bookkeeping a response never carries, and `PhysicalDevice.enrolledApps`,
- * which a response leaves out; `class` sits at the top level here, where core keeps it on the
- * spec. It adds the `status`/`list`
- * decoration's derived `transitionAgeMs` (see `DaemonServer#decorateDevice`). */
+/** Mirrors `DeviceRecord` (src/core/domain.ts) field for field, except: it leaves out
+ * `deferredReclaimLeaseId` (internal bookkeeping a response never carries), `readyAt` and
+ * `shutdownAt`, and `PhysicalDevice.enrolledApps`; `class` sits at the top level here, where core
+ * keeps it on the spec. It adds the `status`/`list` decoration's derived `transitionAgeMs` and
+ * `stalled` (see `DaemonServer#decorateDevice`) and `servesDefaultMode`. */
 export const deviceRecordSchema = z
   .object({
     id: z.string(),
@@ -152,7 +152,7 @@ export const deviceRecordSchema = z
     physical: z.boolean(),
     /** Present exactly when `physical` is `false`. */
     mode: deviceModeSchema.optional(),
-    /** Carried by a physical device; the grant does not require it (see `checkDeviceType`). */
+    /** Present exactly when `physical` is `true`: this schema requires it (see `checkDeviceType`). */
     class: physicalClassSchema.optional(),
     leaseIdentity: leaseIdentitySchema.optional(),
     /** Decoration added by `status.get`/`list.get`; absent for a device not mid-transition. */
@@ -281,7 +281,7 @@ export const grantedDeviceSchema = z
     physical: z.boolean(),
     /** The mode the device actually has (see `DeviceRecord.mode`); absent exactly when `physical`. */
     mode: deviceModeSchema.optional(),
-    /** Present exactly when `physical` is `true`. */
+    /** Carried by a physical device, but a grant does not require it (see `checkDeviceType`). */
     class: physicalClassSchema.optional(),
   })
   .superRefine((device, context) => checkDeviceType(device, context, false));

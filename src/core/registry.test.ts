@@ -2580,6 +2580,17 @@ describe("Registry: physical devices (ADR 0022 §1)", () => {
   });
 
   it("refuses to mark a physical device missing, whether the call is markDeviceMissing or endLeaseAndMarkDeviceMissing, and writes nothing", async () => {
+    const idle = await stateFile({ devices: [], physicalDevices: [physicalRecord] });
+    const idleRegistry = await idle.load();
+    const idleBefore = await idle.filesystem.readFile(statePath);
+
+    await expect(idleRegistry.markDeviceMissing("dev_physical", "doctor")).rejects.toThrow(
+      "Cannot mark a physical device missing",
+    );
+
+    expect(await idle.filesystem.readFile(statePath)).toBe(idleBefore);
+    expect(idleRegistry.snapshot.devices.map((device) => device.id)).toEqual(["dev_physical"]);
+
     const { filesystem, load } = await stateFile({
       devices: [],
       leases: [lease],
@@ -2588,9 +2599,6 @@ describe("Registry: physical devices (ADR 0022 §1)", () => {
     const registry = await load();
     const before = await filesystem.readFile(statePath);
 
-    await expect(registry.markDeviceMissing("dev_physical", "doctor")).rejects.toThrow(
-      RegistryEventError,
-    );
     await expect(
       registry.endLeaseAndMarkDeviceMissing("lse_physical", "startup", () => undefined),
     ).rejects.toThrow("Cannot mark a physical device missing");

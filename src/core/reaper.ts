@@ -8,8 +8,12 @@ import {
 } from "../ports/index.js";
 import type { Config } from "./config.js";
 import type { CleanupActionExecutor } from "./cleanup-executor.js";
-import { automaticCleanupRules } from "./cleanup/rules.js";
-import type { CleanupRule, Proposal, RegistryView } from "./cleanup/types.js";
+import {
+  automaticCleanupRules,
+  type CleanupRule,
+  type Proposal,
+  type RegistryView,
+} from "./cleanup/index.js";
 import type { Registry } from "./registry.js";
 import { stableError } from "./stable-error.js";
 

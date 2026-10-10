@@ -103,10 +103,7 @@ grounds for rejecting a change even if it works.
     grown past one file becomes a directory with an index, not a second
     file others reach into. The inventory in
     [../COMPONENTS.md](../COMPONENTS.md) names each component and its
-    surface. Two directories predate this rule: `src/core/cleanup/` has no
-    index, and `src/gateway/routing/` has its entry in `routing.ts` beside
-    it while `fleet-coordinator.ts` still reaches into it. The next change
-    that touches either gives it an index and moves the reach-ins behind it.
+    surface.
 15. **Dependencies point from the optional to the required, never back.**
     The lease transaction (request book, queue, acquisition, planner,
     provisioner, lifecycle, release, reclaim, registry, capacity) is the

@@ -150,15 +150,17 @@ misbehaving.
 of readiness-checking it back into circulation. The reclaim coordinator
 (`ReclaimCoordinator`), which runs the purge after a release, hands the
 failed device to quarantine with the strategy it attempted. `quarantined` is a shared
-"present in the registry, counts against running capacity, not grantable"
-disposition (see `docs/internal/ARCHITECTURE.md`, "Quarantine: present but not
+"present in the registry, not grantable" disposition; a quarantined virtual
+device counts against running capacity, and a quarantined physical device never
+does (see `docs/internal/ARCHITECTURE.md`, "Quarantine: present but not
 grantable") — `AcquisitionPlanner` and the idle-order eviction helpers select
 targets by exact state, so a quarantined device is simply invisible to every
 grant path with no special-casing required. `QuarantineCoordinator` retries
-the purge on a `Clock`-driven backoff (`warmPool.quarantine.{maxRetries,
+the purge of a virtual device on a `Clock`-driven backoff (`warmPool.quarantine.{maxRetries,
 retryBackoffMs,retryBackoffMultiplier,maxRetryBackoffMs}`); a successful
 retry returns the device to the warm pool, and exhausting the retry budget
-destroys it (registry-only, as always). The device stays visible as
+destroys it (registry-only, as always). A quarantined physical device gets no
+retry yet: it stays quarantined. The device stays visible as
 `quarantined` in `simlock status` and `simlock list --devices` throughout.
 `device.purge-failed` still fires as before; `device.quarantined`,
 `device.quarantine-recovered`, and `device.quarantine-abandoned` are the new

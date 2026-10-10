@@ -554,8 +554,8 @@ function transitionPhysical(
   to: DeviceState,
   update: DeviceTransitionUpdate | undefined,
 ): PhysicalDevice {
-  // `current.state` is checked too: a record read back from outside the type (a corrupt or
-  // newer store) can carry a state the physical table has no row for.
+  // `current.state` is checked too to narrow it for the table lookup: `PhysicalDevice.state` is
+  // typed as any `DeviceState`, although the load refuses a record with a non-physical one.
   if (
     !isPhysicalState(current.state) ||
     !isPhysicalState(to) ||

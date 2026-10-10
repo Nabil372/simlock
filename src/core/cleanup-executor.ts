@@ -1,5 +1,5 @@
 import type { EventBus } from "../bus/index.js";
-import type { Proposal } from "./cleanup/types.js";
+import type { Proposal } from "./cleanup/index.js";
 import type { VirtualDevice } from "./domain.js";
 import type { ManagedDeviceLifecycle } from "./managed-device-lifecycle.js";
 import type { RegistrySnapshot } from "./registry.js";
