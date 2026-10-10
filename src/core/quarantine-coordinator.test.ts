@@ -190,6 +190,21 @@ describe("QuarantineCoordinator", () => {
     expect(harness.notifyAvailability).not.toHaveBeenCalled();
   });
 
+  it("hands the driver's retried reclaim a device marked virtual", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
+    const harness = await createHarness({ clock, driver });
+
+    await harness.coordinator.enterFromStalledTransition(harness.target.id);
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    const reclaims = driver.calls.filter((call) => call.operation === "reclaim");
+    expect(reclaims.map((call) => call.arguments[0])).toEqual([
+      expect.objectContaining({ physical: false }),
+    ]);
+  });
+
   it("commits stalled-transition quarantine entry, emits only quarantined, and does not wake availability", async () => {
     const harness = await createHarness();
 

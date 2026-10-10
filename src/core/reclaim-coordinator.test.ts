@@ -186,6 +186,17 @@ describe("ReclaimCoordinator", () => {
     expect(harness.quarantined).toEqual([]);
   });
 
+  it("hands the driver's reclaim a device marked virtual", async () => {
+    const harness = await createHarness();
+
+    await harness.coordinator.reclaim(released(harness.reclaiming));
+
+    const reclaims = harness.driver.calls.filter((call) => call.operation === "reclaim");
+    expect(reclaims.map((call) => call.arguments[0])).toEqual([
+      expect.objectContaining({ physical: false }),
+    ]);
+  });
+
   it("commits shutdown, emits device.reclaimed and kicks acquisition when the driver returns shutdown", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "shutdown" });

@@ -261,9 +261,63 @@ describe("Doctor", () => {
           eventBus.replay().some((entry) => entry.event === "device.foreign-provenance-detected"),
         ).toBe(true);
       }
+      // A mark finding says nothing of the run state, which matches the registry's.
+      expect(registry.snapshot.devices[0]?.foreignStateDetectedAt).toBeUndefined();
       // Report-only: --fix must never touch a device over a mark finding.
       expect(registry.snapshot.devices[0]?.state).toBe("ready");
     }
+  });
+
+  it("flags both a foreign state change and a foreign provenance change on a device that shows both", async () => {
+    const clock = new FakeClock(10_000);
+    const eventBus = new EventBus(clock);
+    const registry = await Registry.load({
+      clock,
+      eventBus,
+      filesystem: new MemoryFilesystem(),
+      idGenerator: sequence(),
+      statePath: "/state.json",
+    });
+    const device = await registry.registerDevice({
+      driverData: {},
+      driverDeviceId: "simlock-both",
+      provisionDuration: 0,
+      spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
+    });
+    await registry.transitionDevice(device.id, "ready", {
+      event: "device.ready",
+      payload: { bootDuration: 0, deviceId: device.id },
+    });
+    const driver = new FakeDriver({ clock, platform: "ios" });
+    driver.setManagedReality({
+      devices: [
+        {
+          address: "simlock-both-address",
+          deviceId: "simlock-both",
+          driverData: {},
+          mark: { durable: "tok", erasable: undefined, erasableReadable: true },
+          runState: "stopped",
+        },
+      ],
+      processes: [],
+    });
+
+    const report = await new Doctor({
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile();
+
+    expect(report.findings.map((finding) => finding.kind)).toEqual([
+      "foreign-state-change",
+      "foreign-provenance-change",
+    ]);
+    expect(registry.snapshot.devices[0]).toMatchObject({
+      foreignProvenanceDetectedAt: 10_000,
+      foreignStateDetectedAt: 10_000,
+    });
   });
 
   it("ignores provenance marks while Simlock is itself erasing the device", async () => {

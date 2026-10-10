@@ -2274,6 +2274,63 @@ describe("Registry", () => {
   });
 });
 
+describe("Registry: the device event a transition carries", () => {
+  async function provisioned() {
+    const clock = new FakeClock(1_000);
+    const registry = await Registry.load({
+      clock,
+      eventBus: new EventBus(clock),
+      filesystem: new MemoryFilesystem(),
+      idGenerator: { generate: () => "x" },
+      statePath,
+    });
+    const device = await registry.registerDevice({
+      driverData: {},
+      driverDeviceId: "driver_x",
+      provisionDuration: 0,
+      spec,
+    });
+    return { device, registry };
+  }
+
+  it("names the event a transition requires when it comes without one or with another", async () => {
+    const { device, registry } = await provisioned();
+
+    await expect(registry.transitionDevice(device.id, "ready")).rejects.toThrow(
+      "Transition from provisioning to ready requires device.ready device event",
+    );
+    await expect(
+      registry.transitionDevice(device.id, "ready", {
+        event: "device.shutdown",
+        payload: { deviceId: device.id, initiator: "test" },
+      }),
+    ).rejects.toThrow("requires device.ready device event");
+    expect(registry.snapshot.devices[0]?.state).toBe("provisioning");
+  });
+
+  it("says a transition requires no event when it comes with one", async () => {
+    const { device, registry } = await provisioned();
+
+    await expect(
+      registry.transitionDevice(device.id, "quarantined", {
+        event: "device.ready",
+        payload: { bootDuration: 0, deviceId: device.id },
+      }),
+    ).rejects.toThrow("Transition from provisioning to quarantined requires no device event");
+  });
+
+  it("refuses an event whose payload names another device", async () => {
+    const { device, registry } = await provisioned();
+
+    await expect(
+      registry.transitionDevice(device.id, "ready", {
+        event: "device.ready",
+        payload: { bootDuration: 0, deviceId: "dev_other" },
+      }),
+    ).rejects.toThrow(`Device event payload does not match device: ${device.id}`);
+  });
+});
+
 describe("Registry: physical devices (ADR 0022 §1)", () => {
   const virtualRecord = {
     createdAt: 500,
@@ -2416,6 +2473,43 @@ describe("Registry: physical devices (ADR 0022 §1)", () => {
     },
   );
 
+  it.each(["ready", "leased", "reclaiming", "quarantined", "deleted"] as const)(
+    "loads a physical record in the %s state",
+    async (state) => {
+      const { load } = await stateFile({
+        devices: [],
+        physicalDevices: [{ ...physicalRecord, state }],
+      });
+
+      expect((await load()).snapshot.devices[0]).toMatchObject({ physical: true, state });
+    },
+  );
+
+  it.each([
+    ["its state is unknown", { state: "absent" }],
+    ["its spec is not an object", { spec: "iPhone 15 Pro" }],
+    ["its model is missing", { spec: { ...physicalSpec, model: undefined } }],
+    ["its model is a number", { spec: { ...physicalSpec, model: 15 } }],
+    ["its OS version is missing", { spec: { ...physicalSpec, osVersion: undefined } }],
+    ["its OS version is a number", { spec: { ...physicalSpec, osVersion: 18 } }],
+    ["its platform is unknown", { spec: { ...physicalSpec, platform: "tizen" } }],
+  ])("fails the load when a physical record breaks the shape: %s", async (_why, change) => {
+    const { load } = await stateFile({
+      devices: [],
+      physicalDevices: [{ ...physicalRecord, ...change }],
+    });
+
+    await expect(load()).rejects.toThrow(invalid);
+  });
+
+  it("fails the load when a record in devices has a state no device has, or a spec that is not an object", async () => {
+    for (const change of [{ state: "absent" }, { spec: "iPhone 16" }]) {
+      const { load } = await stateFile({ devices: [{ ...virtualRecord, ...change }] });
+
+      await expect(load()).rejects.toThrow(invalid);
+    }
+  });
+
   it("loads a file with no physicalDevices with no physical record, and fails one whose physicalDevices is a string", async () => {
     const without = await stateFile({ devices: [virtualRecord] });
     expect((await without.load()).snapshot.devices.map((device) => device.physical)).toEqual([
@@ -2539,6 +2633,16 @@ describe("Registry: physical devices (ADR 0022 §1)", () => {
 
       expect(device).toMatchObject({ physical: true, spec: { class: "phone", physical: true } });
       expect(device).not.toHaveProperty("mode");
+    });
+
+    it("loads a stored grant whose device has no spec without failing the load", async () => {
+      const { spec: _spec, ...withoutSpec } = { ...virtualRecord, state: "leased" };
+      const { load } = await stateFile({
+        devices: [{ ...virtualRecord, state: "leased" }],
+        leaseRequests: [grantOf(withoutSpec)],
+      });
+
+      expect((await load()).leaseRequests()).toHaveLength(1);
     });
 
     it("drops a stored grant that gives a physical device a mode, as it drops one with an unknown mode", async () => {

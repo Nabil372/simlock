@@ -231,6 +231,35 @@ describe("LeaseHealthMonitor", () => {
     harness.monitor.dispose();
   });
 
+  it("observes only leased devices: a ready device the driver reports stopped costs no driver listing and starts no recovery", async () => {
+    const harness = await createHarness();
+    const device = await harness.registry.registerDevice({
+      driverData: { fakeDeviceId: "simlock-idle" },
+      driverDeviceId: "simlock-idle",
+      provisionDuration: 0,
+      spec,
+    });
+    await harness.registry.transitionDevice(device.id, "ready", {
+      event: "device.ready",
+      payload: { bootDuration: 0, deviceId: device.id },
+    });
+    harness.driver.setManagedReality({
+      devices: [observedDevice("simlock-idle", "stopped")],
+      processes: [],
+    });
+
+    harness.monitor.start();
+    harness.clock.advance(30_000);
+    await flush();
+    harness.clock.advance(30_000);
+    await flush();
+
+    expect(listManagedCalls(harness.driver)).toBe(0);
+    expect(makeReadyCalls(harness.driver)).toBe(0);
+    expect(harness.registry.snapshot.devices[0]?.state).toBe("ready");
+    harness.monitor.dispose();
+  });
+
   it("does not recover on a single stopped reading but recovers on the second consecutive one", async () => {
     const harness = await createHarness();
     const { device, lease } = await seedLeased(harness);

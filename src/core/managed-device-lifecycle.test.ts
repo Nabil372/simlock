@@ -126,6 +126,26 @@ describe("ManagedDeviceLifecycle", () => {
     expect(handoff?.device.driverDeviceId).toBe(ready.driverDeviceId);
   });
 
+  it("hands the driver a device marked virtual for makeReady, shutdown and destroy", async () => {
+    const harness = await createHarness();
+    const ready = await readyDevice(harness);
+    const shutdown = await shutdownDevice(harness, ready);
+    const claim = harness.claims.tryClaim(shutdown.id, "boot");
+    if (claim === undefined) throw new Error("expected boot claim");
+    const booted = await harness.lifecycle.bootForLease(shutdown, claim);
+    booted?.claim.release();
+    const stopped = await harness.lifecycle.shutdown(booted?.device ?? shutdown, "test", "cleanup");
+    await harness.lifecycle.destroy(stopped ?? shutdown, "test", "cleanup");
+
+    const handed = (operation: string) =>
+      harness.driver.calls
+        .filter((call) => call.operation === operation)
+        .map((call) => call.arguments[0]);
+    expect(handed("makeReady").at(-1)).toMatchObject({ physical: false });
+    expect(handed("shutdown").at(-1)).toMatchObject({ physical: false });
+    expect(handed("destroy")).toEqual([expect.objectContaining({ physical: false })]);
+  });
+
   it("bootWarm makes a shut-down device ready and ends the boot claim, where bootForLease keeps it", async () => {
     const harness = await createHarness();
     const ready = await readyDevice(harness);

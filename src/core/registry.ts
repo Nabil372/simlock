@@ -1204,12 +1204,11 @@ function parseVirtualDevice(
 function parsePhysicalDevice(
   value: Record<string, unknown>,
   spec: Record<string, unknown>,
-  state: DeviceState | "warm",
+  state: unknown,
   shared: SharedDeviceFields,
 ): PhysicalDevice {
   const { enrolledApps } = value;
   if (
-    state === "warm" ||
     !isPhysicalState(state) ||
     value.physical !== true ||
     value.mode !== undefined ||

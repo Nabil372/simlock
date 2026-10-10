@@ -364,6 +364,30 @@ describe("a device's type on the wire (ADR 0022 §1)", () => {
     ).toThrow();
   });
 
+  it("names the broken rule and where, for each of the four ways a device can break it", () => {
+    const issues = (device: object) => {
+      const result = statusDeviceSchema.safeParse(device);
+      return result.success
+        ? []
+        : result.error.issues.map((issue) => ({ message: issue.message, path: issue.path }));
+    };
+    const { mode: _mode, ...withoutMode } = virtual;
+    const { class: _class, ...withoutClass } = physical;
+
+    expect(issues({ ...physical, mode: "full" })).toEqual([
+      { message: "A physical device has no mode", path: ["mode"] },
+    ]);
+    expect(issues(withoutClass)).toEqual([
+      { message: "A physical device has a class", path: ["class"] },
+    ]);
+    expect(issues(withoutMode)).toEqual([
+      { message: "A virtual device has a mode", path: ["mode"] },
+    ]);
+    expect(issues({ ...virtual, class: "phone" })).toEqual([
+      { message: "A virtual device has no class", path: ["class"] },
+    ]);
+  });
+
   it("grantedDeviceSchema accepts a physical device with no mode, keeps physical and class, and refuses a device without physical or a virtual one without a mode", () => {
     const granted = grantedDeviceSchema.parse(physical);
 
