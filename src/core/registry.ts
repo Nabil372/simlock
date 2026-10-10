@@ -1062,7 +1062,7 @@ function assertTransitionEvent(
   event: RegistryDeviceEvent | undefined,
 ): void {
   const expectedEvent = eventForTransition(device.state, to);
-  if (expectedEvent === undefined ? event !== undefined : event?.event !== expectedEvent) {
+  if (event?.event !== expectedEvent) {
     throw new RegistryEventError(
       `Transition from ${device.state} to ${to} requires ${expectedEvent ?? "no"} device event`,
     );
@@ -1131,7 +1131,7 @@ function parseDevice(value: unknown, physical: boolean): DeviceRecord {
   }
 
   const { spec, state } = value;
-  if (!(isDeviceState(state) || state === "warm") || !isObject(spec)) {
+  if (!isObject(spec)) {
     throw new RegistryLoadError("Invalid device record in registry state");
   }
   const shared = parseSharedDeviceFields(value);
@@ -1178,7 +1178,7 @@ type SharedDeviceFields = Omit<
 function parseVirtualDevice(
   value: Record<string, unknown>,
   spec: Record<string, unknown>,
-  state: DeviceState | "warm",
+  state: unknown,
   shared: SharedDeviceFields,
 ): VirtualDevice {
   const virtualState = state === "warm" ? "reclaiming" : state;
@@ -1538,10 +1538,6 @@ function isDeviceClass(value: unknown): value is DeviceClass {
 
 function isPlatform(value: unknown): value is Platform {
   return value === "ios" || value === "android";
-}
-
-function isDeviceState(value: unknown): value is DeviceState {
-  return isVirtualState(value) || isPhysicalState(value);
 }
 
 function isVirtualState(value: unknown): value is VirtualState {

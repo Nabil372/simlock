@@ -135,6 +135,8 @@ describe("Doctor", () => {
     expect(report.findings.map((finding) => finding.kind)).toContain("foreign-state-change");
     expect(registry.snapshot.devices[0]?.state).toBe("leased");
     expect(registry.snapshot.devices[0]?.foreignStateDetectedAt).toBe(10_000);
+    // A state change is no provenance change: only the first is flagged.
+    expect(registry.snapshot.devices[0]?.foreignProvenanceDetectedAt).toBeUndefined();
   });
 
   it("keeps the first-detected timestamp when drift persists across ticks", async () => {
