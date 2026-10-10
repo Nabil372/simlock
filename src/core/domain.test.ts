@@ -330,6 +330,9 @@ describe("a physical device's state machine (ADR 0022 §2)", () => {
     expect(() => transition({ ...physicalDevice, state: "ready" }, "provisioning")).toThrow(
       IllegalTransition,
     );
+    expect(() =>
+      transition({ ...physicalDevice, state: "shutdown" as unknown as "ready" }, "ready"),
+    ).toThrow(IllegalTransition);
     expect(transition({ ...baseDevice, state: "ready" }, "shutdown").state).toBe("shutdown");
     expect(transition({ ...baseDevice, state: "reclaiming" }, "shutdown").state).toBe("shutdown");
     expect(transition({ ...baseDevice, state: "shutdown" }, "ready").state).toBe("ready");

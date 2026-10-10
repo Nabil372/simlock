@@ -2489,6 +2489,10 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
     const { clock, driver, eventBus, registry } = await physicalHarness([
       physical("reclaiming", { lastLeaseEndedAt: 1_000 }),
     ]);
+    // A retry timer's first act is a serialized decision: compare the spy before and after the
+    // clock passes the backoff, rather than counting the shared clock's timers.
+    const decisions = new SerializedDecision();
+    const decisionRuns = vi.spyOn(decisions, "run");
     const quarantine = new QuarantineCoordinator({
       clock,
       config: {
@@ -2497,7 +2501,7 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
         retryBackoffMs: 30_000,
         retryBackoffMultiplier: 2,
       },
-      decisions: new SerializedDecision(),
+      decisions,
       drivers: new DriverCatalog([driver]),
       eventBus,
       notifyAvailability: () => {},
@@ -2512,12 +2516,15 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
       quarantine,
       registry,
     }).reconcile({ fix: true });
+    const runsAfterFix = decisionRuns.mock.calls.length;
+    clock.advance(300_000);
+    for (let count = 0; count < 100; count += 1) await Promise.resolve();
 
     expect(report.findings).toEqual([
       expect.objectContaining({ deviceId: "dev_reclaiming", kind: "stalled-transition" }),
     ]);
     expect(registry.snapshot.devices[0]?.state).toBe("quarantined");
-    expect(clock.pendingTimerCount).toBe(0);
+    expect(decisionRuns).toHaveBeenCalledTimes(runsAfterFix);
   });
 });
 

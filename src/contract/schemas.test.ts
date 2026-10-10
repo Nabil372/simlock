@@ -127,10 +127,12 @@ describe("leaseGrantSchema's device projection", () => {
 
   it("rejects a granted device without a mode, or with a mode other than slim or full", () => {
     const device = {
+      physical: false,
       id: "device-1",
       driverDeviceId: "SIM-1",
       spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "26.5" },
     };
+    expect(() => grantedDeviceSchema.parse({ ...device, mode: "slim" })).not.toThrow();
     expect(() => grantedDeviceSchema.parse(device)).toThrow();
     expect(() => grantedDeviceSchema.parse({ ...device, mode: "reduced" })).toThrow();
   });

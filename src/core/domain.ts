@@ -554,7 +554,13 @@ function transitionPhysical(
   to: DeviceState,
   update: DeviceTransitionUpdate | undefined,
 ): PhysicalDevice {
-  if (!isPhysicalState(to) || !legalPhysicalTransitions[current.state].includes(to)) {
+  // `current.state` is checked too: a record read back from outside the type (a corrupt or
+  // newer store) can carry a state the physical table has no row for.
+  if (
+    !isPhysicalState(current.state) ||
+    !isPhysicalState(to) ||
+    !legalPhysicalTransitions[current.state].includes(to)
+  ) {
     throw new IllegalTransition(current.state, to);
   }
   // A physical device has no driver-reported mode, and a deferred reclaim ends with any exit.

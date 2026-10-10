@@ -663,27 +663,33 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
       idGenerator: { generate: () => "id" },
       statePath: "/home/agent/.simlock/state.json",
     });
+    // A retry timer's first act is a serialized decision, so `decisionRuns` is the device's own
+    // retry: the test compares it before and after the clock passes, not against a count of the
+    // shared clock's timers.
+    const decisions = new SerializedDecision();
+    const decisionRuns = vi.spyOn(decisions, "run");
     const coordinator = new QuarantineCoordinator({
       clock,
       config: retryConfig,
-      decisions: new SerializedDecision(),
+      decisions,
       drivers: new DriverCatalog([driver]),
       eventBus: bus,
       notifyAvailability: vi.fn(),
       registry,
     });
     const driverCalls = vi.spyOn(driver, "reclaim");
-    return { bus, clock, coordinator, driver, driverCalls, registry };
+    return { bus, clock, coordinator, decisionRuns, driver, driverCalls, registry };
   }
 
   it("commits quarantined for a stalled physical device and arms no retry, though the event and the record carry nextRetryAt", async () => {
     const harness = await physicalHarness("reclaiming");
 
     await harness.coordinator.enterFromStalledTransition("dev_physical");
-
-    expect(harness.clock.pendingTimerCount).toBe(0);
+    const runsAfterEntry = harness.decisionRuns.mock.calls.length;
     harness.clock.advance(60_000);
     await flush();
+
+    expect(harness.decisionRuns).toHaveBeenCalledTimes(runsAfterEntry);
     expect(harness.registry.snapshot.devices[0]).toMatchObject({
       quarantineNextRetryAt: 2_000,
       state: "quarantined",
@@ -704,9 +710,11 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
       leaseId: "lse_1",
     });
 
-    expect(harness.clock.pendingTimerCount).toBe(0);
+    const runsAfterEntry = harness.decisionRuns.mock.calls.length;
     harness.clock.advance(60_000);
     await flush();
+
+    expect(harness.decisionRuns).toHaveBeenCalledTimes(runsAfterEntry);
     expect(harness.registry.snapshot.devices[0]?.state).toBe("quarantined");
     expect(harness.driverCalls).not.toHaveBeenCalled();
   });
@@ -714,11 +722,12 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
   it("arms no timer for a quarantined physical device when it restores, and leaves it quarantined", async () => {
     const harness = await physicalHarness("quarantined");
 
+    const runsBefore = harness.decisionRuns.mock.calls.length;
     harness.coordinator.restore();
     harness.clock.advance(60_000);
     await flush();
 
-    expect(harness.clock.pendingTimerCount).toBe(0);
+    expect(harness.decisionRuns).toHaveBeenCalledTimes(runsBefore);
     expect(harness.driverCalls).not.toHaveBeenCalled();
     expect(harness.registry.snapshot.devices[0]?.state).toBe("quarantined");
   });
