@@ -554,8 +554,8 @@ function transitionPhysical(
   to: DeviceState,
   update: DeviceTransitionUpdate | undefined,
 ): PhysicalDevice {
-  // `current.state` is checked too to narrow it for the table lookup: `PhysicalDevice.state` is
-  // typed as any `DeviceState`, although the load refuses a record with a non-physical one.
+  // `current.state` is typed `PhysicalState`, so the check on it narrows nothing. It refuses, at
+  // runtime, a record whose state is outside that type (the load refuses one too).
   if (
     !isPhysicalState(current.state) ||
     !isPhysicalState(to) ||

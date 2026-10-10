@@ -130,7 +130,7 @@ const deviceSpecSchema = z.object({
  * `deferredReclaimLeaseId` (internal bookkeeping a response never carries), `readyAt` and
  * `shutdownAt`, and `PhysicalDevice.enrolledApps`; `class` sits at the top level here, where core
  * keeps it on the spec. It adds the `status`/`list` decoration's derived `transitionAgeMs` and
- * `stalled` (see `DaemonServer#decorateDevice`) and `servesDefaultMode`. */
+ * `stalled` (see `Dispatcher#decorateDevice`) and `servesDefaultMode`. */
 export const deviceRecordSchema = z
   .object({
     id: z.string(),
@@ -180,6 +180,9 @@ export const deviceRecordSchema = z
  * device health, not just identity --
  *
  * - `id`, `spec`: which device this is.
+ * - `physical`, `mode`, `class`: which kind of device it is (`mode` for a virtual one, `class` for
+ *   a physical one).
+ * - `servesDefaultMode`: whether the device's pool is the worker's default mode (ADR 0009 §6).
  * - `state`: the human-status line's primary content (`Device <id>: <state>`).
  * - `foreignStateDetectedAt`, `foreignProvenanceDetectedAt`: surfaced as "foreign state/
  *   provenance change" markers -- an agent legitimately wants to know a device it might be
@@ -254,6 +257,7 @@ export const statusDeviceSchema = z
  * - `id`: the lease-facing device identity (what `lease.list`/`lease.renew` correlate against).
  * - `driverDeviceId`: the driver address a caller actually drives (simctl UDID / adb serial).
  * - `spec`, `address`, `mode`: same meanings as on `DeviceRecord` (src/core/domain.ts).
+ * - `physical`, `class`: which kind of device it is; `class` is optional on a grant.
  *
  * Everything else on `DeviceRecord` -- `driverData` (opaque driver-private blob), `state`,
  * `createdAt`, every `quarantine*`/`foreign*`/`recovering*` field, and the `status`/`list`
