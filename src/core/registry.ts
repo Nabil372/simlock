@@ -75,8 +75,9 @@ export interface RegistrySnapshot {
   readonly devices: readonly DeviceRecord[];
   /**
    * The virtual read: every record that is not physical, in snapshot order. The paths that boot,
-   * shut down, destroy, count or compare devices with a root read this, and none writes the
-   * filter itself (ADR 0022 §4).
+   * shut down, destroy or count devices read this instead of writing the filter themselves
+   * (ADR 0022 §4). Two paths still filter on their own: Doctor's orphan key set compares
+   * `devices` with the root, and `LeaseReconciler` filters `device.physical` itself.
    */
   readonly virtualDevices: readonly VirtualDevice[];
   readonly leases: readonly LeaseRecord[];

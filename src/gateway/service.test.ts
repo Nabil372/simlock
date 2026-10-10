@@ -1137,7 +1137,7 @@ describe("GatewayService", () => {
     await harness.service.stop();
   });
 
-  it("marks a worker one protocol version behind the gateway incompatible (ADR 0021 §6: it would refuse fleetRequestId)", async () => {
+  it("marks a worker one protocol version behind the gateway incompatible (ADR 0022 §1: it would refuse the required physical field)", async () => {
     const previous = {
       min: PROTOCOL_VERSION_RANGE.max - 1,
       max: PROTOCOL_VERSION_RANGE.max - 1,

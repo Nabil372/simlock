@@ -1220,14 +1220,14 @@ entry in `workers`.
 
 Human and JSON status include derived warm counts globally and per platform.
 `ready` devices contribute to those counts; `reclaiming` and `quarantined`
-devices remain visible as busy running capacity and never contribute to warm
+virtual devices remain visible as busy running capacity (a physical device never counts as running capacity) and never contribute to warm
 inventory. A `quarantined` device is one whose release-time purge failed, one
 created under `lease.identity` `fresh` whose lease-end delete failed (it is
 retried as a delete, never returned to the pool), or one
 whose `provisioning`/`reclaiming` transition stalled past its driver-derived
 threshold (see `simlock doctor` below): it stays visible in `status` and
-`list --devices` with that state while `QuarantineCoordinator` retries it in
-the background, and is never handed to a new requester.
+`list --devices` with that state while `QuarantineCoordinator` retries a virtual device in
+the background (a physical device is not retried), and is never handed to a new requester.
 
 A device currently `provisioning` or `reclaiming` carries a derived
 `transitionAgeMs` — how long it has been in that state — visible in `status`

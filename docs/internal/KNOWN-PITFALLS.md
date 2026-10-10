@@ -1172,4 +1172,5 @@ and the record is safe: the older Simlock never sees the device, so it cannot
 treat a phone as a simulator.
 
 **What to do before a rollback:** release every lease on a physical device while
-the newer Simlock is still running. The upgrade notes say so.
+the newer Simlock is still running. No upgrade note says so yet: the release that
+enrols physical devices adds one.

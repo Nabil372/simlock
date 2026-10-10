@@ -53,13 +53,13 @@ export interface QuarantineCoordinatorOptions {
 /**
  * Owns the quarantine lifecycle: entry (release-time purge failure via `enter()`,
  * stalled-transition timeout via `enterFromStalledTransition()`), retry, and give-up.
- * `quarantined` is the shared "present in the registry, counts against running
- * capacity, but not grantable" disposition (see domain.ts): AcquisitionPlanner and
+ * `quarantined` is the shared "present in the registry, not grantable" disposition (for a
+ * virtual device it also counts against running capacity; a physical device never counts) (see domain.ts): AcquisitionPlanner and
  * the idle-order eviction helpers already select targets by exact state, so a
  * quarantined device is invisible to every one of them with no special-casing
  * required.
  *
- * A quarantined device retries its purge on a Clock-driven backoff until it
+ * A quarantined virtual device retries its purge on a Clock-driven backoff until it
  * either succeeds (the device rejoins the warm pool) or exhausts
  * `config.maxRetries`. A spent fresh device (see `mayBeGranted`) retries its
  * delete instead, never a purge, and success deletes it. Either way, exhausting
@@ -80,9 +80,10 @@ export class QuarantineCoordinator {
   /**
    * Commits quarantine entry for a device whose release-time purge just
    * failed, emits the (unchanged) `device.purge-failed` fact alongside the
-   * new `device.quarantined` fact, and arms the first retry. Capacity
-   * accounting does not change here -- `reclaiming` and `quarantined` both
-   * count as running -- so no queued waiter can be satisfied by this alone
+   * new `device.quarantined` fact, and arms the first retry (for a virtual
+   * device; a physical device arms none). Capacity
+   * accounting does not change here -- a virtual device in `reclaiming` and `quarantined` both
+   * counts as running -- so no queued waiter can be satisfied by this alone
    * and `notifyAvailability` is not called.
    */
   // fallow-ignore-next-line unused-class-member -- called through ReclaimCoordinator's quarantine port.
@@ -120,8 +121,8 @@ export class QuarantineCoordinator {
    * doctor.ts). Distinct from `enter()`: there is no purge failure, no lease, and no
    * `attemptedStrategy` to report, so only `device.quarantined` fires here --
    * `device.purge-failed` stays specific to the release-time path. Retry/give-up
-   * thereafter is identical: `#retry` treats every quarantined device the same
-   * regardless of how it arrived.
+   * thereafter is identical for a virtual device: `#retry` treats every quarantined virtual
+   * device the same regardless of how it arrived. A physical device arms no retry.
    */
   async enterFromStalledTransition(deviceId: string): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;

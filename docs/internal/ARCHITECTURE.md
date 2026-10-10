@@ -1136,8 +1136,8 @@ operation that starts a device. Where those limits come from is a
 machine and adds a RAM budget, `fixed` pins them to a configured number.
 Each strategy lives behind one entry point in `core/capacity/strategies/`
 and is registered in one map, so adding a policy touches neither the
-coordinator nor its callers. The core accounts `ready`, `leased`,
-`reclaiming`, and `quarantined` devices as running. A serialized,
+coordinator nor its callers. The core accounts a virtual device in `ready`, `leased`,
+`reclaiming`, or `quarantined` as running; a physical device is never counted, since capacity reads the virtual devices only. A serialized,
 platform-agnostic reservation covers provisioning and boots from `shutdown`
 until the registry commits the resulting running or non-running state. Global
 and platform limits are checked atomically; no driver-specific runtime
@@ -1300,7 +1300,7 @@ bypassing the FIFO head.
 
 `quarantined` is the shared state for a device the core cannot vouch
 for right now: it stays in the registry and keeps counting against running
-capacity (so it is not silently over-provisioned away), but it is invisible
+capacity when it is a virtual device (so it is not silently over-provisioned away; a physical device never counts), but it is invisible
 to every grant path, because `AcquisitionPlanner` and its eviction
 helpers select targets by exact state (`state === "ready"`), never by
 excluding known-bad states. Anything that needs "in the registry, counts
@@ -1315,8 +1315,9 @@ outrun a driver-derived threshold, meaning the driver call meant to resolve
 it never did and the registry's view has diverged from the driver's. Safer
 to quarantine than re-drive: the device may be mid-erase.
 
-`QuarantineCoordinator` retries the triggering operation on a `Clock`-driven
-backoff (`warmPool.quarantine` config: retry count, backoff, multiplier, cap).
+`QuarantineCoordinator` retries the triggering operation of a virtual device on a `Clock`-driven
+backoff (`warmPool.quarantine` config: retry count, backoff, multiplier, cap). A physical
+device is quarantined with no retry armed until the physical reclaim adds one.
 A successful retry returns the device to `ready` (or `shutdown`) and it
 rejoins the warm pool; exhausting the retry budget destroys it
 (registry-only, never merely `shutdown`, since `shutdown` is reusable warm

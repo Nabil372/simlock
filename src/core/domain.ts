@@ -445,7 +445,7 @@ export function isSettled(record: Pick<LeaseRequestRecord<unknown>, "state">): b
 
 /**
  * `quarantined` is the shared "present in the registry, counts against running
- * capacity, but not grantable" disposition: a device the core cannot vouch for
+ * capacity (a virtual device only), but not grantable" disposition: a device the core cannot vouch for
  * right now, sitting outside the `ready`/`shutdown` states every grant and
  * eviction path already selects on. `reclaiming -> quarantined` is its release-time
  * purge-failure entry (see ReclaimCoordinator); `provisioning -> quarantined` is its

@@ -118,7 +118,7 @@ export class LeaseHealthMonitor {
 
   /**
    * One probe pass: poll each affected platform's driver once, classify every
-   * leased device, and kick off (but never await) recovery for the ones that
+   * leased virtual device (a leased physical device is not observed), and kick off (but never await) recovery for the ones that
    * need it. Recovery runs detached so a slow reboot never blocks the next
    * tick -- only per-device dispatch is guarded, via `#inFlight`.
    */

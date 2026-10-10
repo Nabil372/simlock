@@ -59,8 +59,8 @@ const physicalClassSchema = z.enum(["phone", "tablet"]);
  * What a device entry says about its type (ADR 0022 §1): `physical` is always there; a virtual
  * device has a `mode` and no `class`, a physical one a `class` and no `mode`. The schema is the
  * one place the wire holds that rule, for the status entry, the list entry and the grant alike.
- * A grant does not require the class: the record a grant is built from keeps it on its spec, and
- * the physical lease path maps it onto the grant.
+ * A grant does not require the class (`requireClass` is `false` for it), though it may carry
+ * one: the record a grant is built from keeps the class on its spec.
  */
 function checkDeviceType(
   device: { readonly physical: boolean; readonly mode?: unknown; readonly class?: unknown },
@@ -127,7 +127,9 @@ const deviceSpecSchema = z.object({
 });
 
 /** Mirrors `DeviceRecord` (src/core/domain.ts) field for field, except `deferredReclaimLeaseId`,
- * which is internal bookkeeping a response never carries, plus the `status`/`list`
+ * which is internal bookkeeping a response never carries, and `PhysicalDevice.enrolledApps`,
+ * which a response leaves out; `class` sits at the top level here, where core keeps it on the
+ * spec. It adds the `status`/`list`
  * decoration's derived `transitionAgeMs` (see `DaemonServer#decorateDevice`). */
 export const deviceRecordSchema = z
   .object({
@@ -150,7 +152,7 @@ export const deviceRecordSchema = z
     physical: z.boolean(),
     /** Present exactly when `physical` is `false`. */
     mode: deviceModeSchema.optional(),
-    /** Present exactly when `physical` is `true`. */
+    /** Carried by a physical device; the grant does not require it (see `checkDeviceType`). */
     class: physicalClassSchema.optional(),
     leaseIdentity: leaseIdentitySchema.optional(),
     /** Decoration added by `status.get`/`list.get`; absent for a device not mid-transition. */
