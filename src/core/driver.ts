@@ -56,8 +56,8 @@ export interface DriverDevice {
 /**
  * A device the driver may boot, shut down, destroy and erase: one Simlock created in a root it
  * owns (ADR 0022 §5). The core builds it from a `VirtualDevice`, so a driver call that takes it
- * does not compile for a physical record. A physical driver device, and the `reclaim` that takes
- * it, come with the physical reclaim.
+ * does not compile for a physical record. A physical driver device is `PhysicalDriverDevice`,
+ * and only `reclaim`, `reclaimStrategy` and `leaseEnvironment` take one.
  */
 export type VirtualDriverDevice = DriverDevice & { readonly physical: false };
 
