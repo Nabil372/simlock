@@ -132,7 +132,9 @@ export const statusGet = defineOperation({
      * never makes `status.get` wait.
      */
     host: hostFactsSchema,
+    /** The virtual line's waiters; the physical line's are `physicalQueueDepth`. */
     queueDepth: z.number().optional(),
+    physicalQueueDepth: z.number().optional(),
     /**
      * ADR 0010 §3: the component installs waiting or running, the oldest first. A worker always
      * sends it, empty when nothing is installing; a gateway lists its connected workers'
@@ -196,6 +198,11 @@ const leaseRequestBaseSchema = z
     osVersion: z.string().optional(),
     mode: z.enum(["slim", "full"]).optional(),
     imageTag: imageTagSchema.optional(),
+    /**
+     * ADR 0022: asks for an enrolled physical device. `refusePhysicalWithImageFields` below
+     * refuses the fields that mean something only for a simulator or an emulator.
+     */
+    physical: z.boolean().optional(),
     requesterId: z.string().optional(),
     allowDownload: z.boolean().optional(),
     noWait: z.boolean().optional(),
@@ -272,6 +279,39 @@ export function refuseModelWithClass(
   };
 }
 
+/**
+ * Refuses the fields a physical device has no use for (ADR 0022): `mode`, `imageTag` and
+ * `allowDownload: true`. `allowDownload: false` passes because the CLI always sends it.
+ */
+function refusePhysicalWithImageFields(): <
+  T extends {
+    readonly physical?: boolean | undefined;
+    readonly mode?: unknown;
+    readonly imageTag?: unknown;
+    readonly allowDownload?: boolean | undefined;
+  },
+>(
+  input: T,
+  context: z.RefinementCtx,
+) => void {
+  return (input, context) => {
+    if (input.physical !== true) return;
+    const refused = [
+      input.mode === undefined ? undefined : "mode",
+      input.imageTag === undefined ? undefined : "imageTag",
+      input.allowDownload === true ? "allowDownload" : undefined,
+    ];
+    for (const field of refused) {
+      if (field === undefined) continue;
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `\`${field}\` has no meaning for a physical device`,
+        path: [field],
+      });
+    }
+  };
+}
+
 /** Refuses an `osVersion` that is neither an exact version nor a range (ADR 0015 §2); one place, one check. */
 function refuseBadOsVersion(): <T extends { readonly osVersion?: string | undefined }>(
   input: T,
@@ -295,7 +335,8 @@ export const leaseRequestFields = leaseRequestBaseSchema;
 
 const leaseRequestInputSchema = leaseRequestBaseSchema
   .superRefine(refuseModelWithClass())
-  .superRefine(refuseBadOsVersion());
+  .superRefine(refuseBadOsVersion())
+  .superRefine(refusePhysicalWithImageFields());
 
 // fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
 export const leaseRequest = defineOperation({
@@ -337,6 +378,7 @@ export function requestedDevice(input: z.infer<typeof leaseRequestInputSchema>) 
     ...(input.osVersion === undefined ? {} : { osVersion: input.osVersion }),
     ...(input.mode === undefined ? {} : { mode: input.mode }),
     ...(input.imageTag === undefined ? {} : { imageTag: input.imageTag }),
+    ...(input.physical === true ? { physical: true as const } : {}),
   };
 }
 

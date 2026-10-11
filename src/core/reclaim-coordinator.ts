@@ -9,7 +9,7 @@ import {
   type Platform,
   type VirtualDevice,
 } from "./domain.js";
-import type { Driver, VirtualDriverDevice } from "./driver.js";
+import { type Driver, toDriverDevice } from "./driver.js";
 import type { QuarantinePurgeFailure } from "./quarantine-coordinator.js";
 import type { ReleasedLease } from "./registry.js";
 import type { SerializedDecision } from "./serialized-decision.js";
@@ -83,16 +83,15 @@ export class ReclaimCoordinator {
   // Not `async`: returning the inner promise adds no microtask hop to a reclaim's start, and
   // the tests that step a fake clock count those hops.
   reclaim(released: ReleasedLease): Promise<void> {
-    // Simlock cannot erase a physical device. Until the physical reclaim exists the device stays
-    // `reclaiming`, aged from `lastLeaseEndedAt`, and doctor's stalled-transition rule moves it on.
-    if (released.device.physical) return Promise.resolve();
+    // A physical device is never retired: it has no spent state, so only its purge applies.
+    if (released.device.physical) return this.#purge(released.device, released.lease.id);
     if (!mayBeGranted(released.device)) {
       return this.#retireSpent({ device: released.device, lease: released.lease });
     }
     return this.#purge(released.device, released.lease.id);
   }
 
-  async #purge(device: VirtualDevice, leaseId: string): Promise<void> {
+  async #purge(device: DeviceRecord, leaseId: string): Promise<void> {
     const driver = this.options.drivers.get(device.spec.platform);
     const startedAt = this.options.clock.now();
     const attemptedStrategy = driver.reclaimStrategy(toDriverDevice(device), { clean: "standard" });
@@ -111,6 +110,7 @@ export class ReclaimCoordinator {
           deviceId: device.id,
           duration: this.options.clock.now() - startedAt,
           strategy: result.strategy,
+          ...(result.missingApps === undefined ? {} : { missingApps: result.missingApps }),
         },
       });
     });
@@ -292,17 +292,4 @@ export class ReclaimCoordinator {
       leaseId,
     });
   }
-}
-
-/**
- * `address` is never trusted by a driver's `shutdown` / `reclaim` / `makeReady` -- they derive
- * whatever they need from `driverData` -- so a placeholder here is harmless.
- */
-function toDriverDevice(device: VirtualDevice): VirtualDriverDevice {
-  return {
-    address: device.address ?? "",
-    deviceId: device.driverDeviceId,
-    driverData: device.driverData,
-    physical: false,
-  };
 }

@@ -106,6 +106,8 @@ const leaseRequestBodySchema = z
     // may set it (`FORBIDDEN` for non-admin), the same gate every other transport is held to.
     owner: z.string().min(1).optional(),
     os: z.string().min(1).optional(),
+    // ADR 0022: the contract's own refinement refuses it beside `mode`, `imageTag` and `allowDownload: true`.
+    physical: z.boolean().optional(),
     platform: z.enum(["ios", "android"]),
     timeoutMs: z.number().int().positive().optional(),
     ttlMs: z.number().int().positive().optional(),
@@ -190,6 +192,7 @@ function leaseRequestOptionFields(body: z.infer<typeof leaseRequestBodySchema>) 
     ...(body.allowDownload === undefined ? {} : { allowDownload: body.allowDownload }),
     ...(body.mode === undefined ? {} : { mode: body.mode }),
     ...(body.imageTag === undefined ? {} : { imageTag: body.imageTag }),
+    ...(body.physical === undefined ? {} : { physical: body.physical }),
   };
 }
 

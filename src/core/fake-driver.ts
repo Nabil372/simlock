@@ -27,12 +27,15 @@ import {
   type PassthroughCommand,
   PassthroughRefusedError,
   type PassthroughContext,
+  isPhysicalDriverDevice,
+  type PhysicalDriverDevice,
   type PhysicalInspection,
   type PresentPhysical,
   type ReclaimResult,
   removeListedComponent,
   RuntimeMissingError,
   UnknownModelError,
+  uninstallPlan,
 } from "./driver.js";
 
 export type FakeDriverOperation =
@@ -491,16 +494,26 @@ export class FakeDriver implements Driver {
     options: { readonly clean: "standard" | "full" },
   ): Promise<ReclaimResult> {
     await this.#beforeCall("reclaim", device, options);
+    if (isPhysicalDriverDevice(device)) return this.#reclaimPhysical(device);
     this.#requireDevice(device);
     this.#devices.set(device.deviceId, this.#reclaimResult);
     return { state: this.#reclaimResult, strategy: this.#reclaimStrategy };
   }
 
+  /** The physical reclaim reports what the enrolment list leaves to uninstall, as a driver would. */
+  #reclaimPhysical(device: PhysicalDriverDevice): ReclaimResult {
+    const scripted = (this.#physicalDevices ?? this.#scriptedPhysicalDevices ?? []).find(
+      (candidate) => candidate.ids.includes(device.deviceId),
+    );
+    const plan = uninstallPlan(scripted?.apps ?? [], device.enrolledApps);
+    return { missingApps: plan.missing, state: "ready", strategy: "uninstall" };
+  }
+
   reclaimStrategy(
-    _device: DriverDevice,
+    device: DriverDevice,
     _options: { readonly clean: "standard" | "full" },
-  ): "erase" | "snapshot" | "wipe" {
-    return this.#reclaimStrategy;
+  ): "erase" | "snapshot" | "wipe" | "uninstall" {
+    return isPhysicalDriverDevice(device) ? "uninstall" : this.#reclaimStrategy;
   }
 
   async shutdown(device: DriverDevice): Promise<void> {
@@ -599,7 +612,9 @@ export class FakeDriver implements Driver {
     };
   }
 
-  estimate(estimate: DriverEstimate, _spec: DeviceSpec): number {
+  estimate(estimate: DriverEstimate, spec: DeviceSpec): number {
+    // One 30 s read limit plus one 60 s uninstall limit, at both clean levels (ADR 0022 §4).
+    if (estimate.operation === "reclaim" && spec.physical) return PHYSICAL_RECLAIM_ESTIMATE_MS;
     if (estimate.operation === "reclaim" && estimate.clean === "full") {
       return this.#fullCleanReclaimEstimateMs ?? this.#estimateMs?.reclaim ?? 0;
     }
@@ -687,6 +702,9 @@ export class FakeDriver implements Driver {
     }
   }
 }
+
+/** One 30 s read limit plus one 60 s uninstall limit: what the real physical drivers will answer. */
+const PHYSICAL_RECLAIM_ESTIMATE_MS = 90_000;
 
 function preinstalledReceipts(versions: ReadonlySet<string>): Map<string, ComponentReceipt> {
   return new Map([...versions].map((version) => [version, { preinstalled: version }]));

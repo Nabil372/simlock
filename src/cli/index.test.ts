@@ -5756,7 +5756,7 @@ describe("simlock list --requests", () => {
             id: "req_2",
             queuePosition: 2,
             requesterId: "local-agent",
-            spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+            spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" },
             stage: "queued",
             workerId: "wrk_1",
           },

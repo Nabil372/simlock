@@ -74,7 +74,7 @@ export interface WaitingRequest {
   readonly id: string;
   readonly requesterId: string;
   /** The device as the request named it, with every field it left out left out. */
-  readonly spec: DeviceRequest;
+  readonly spec: Omit<DeviceRequest, "physical"> & { readonly physical?: true };
   readonly createdAt: number;
   readonly stage: "queued" | "starting";
   readonly queuePosition?: number;
@@ -88,11 +88,13 @@ function waitingRequest(
   record: Pick<LeaseRequestRecord<unknown>, "createdAt" | "id" | "request" | "requesterId">,
   place: QueuePlace,
 ): WaitingRequest {
+  // A virtual request has no `physical` on the wire, whatever a caller stored for it.
+  const { physical, ...named } = record.request;
   return {
     createdAt: record.createdAt,
     id: record.id,
     requesterId: record.requesterId,
-    spec: { ...record.request },
+    spec: { ...named, ...(physical === true ? { physical: true as const } : {}) },
     ...(place.queuePosition === undefined
       ? { stage: "starting" }
       : { queuePosition: place.queuePosition, stage: "queued" }),
@@ -426,6 +428,7 @@ function sameDeviceRequest(left: DeviceRequest, right: DeviceRequest): boolean {
     left.class === right.class &&
     left.osVersion === right.osVersion &&
     left.mode === right.mode &&
-    left.imageTag === right.imageTag
+    left.imageTag === right.imageTag &&
+    (left.physical === true) === (right.physical === true)
   );
 }

@@ -1637,10 +1637,17 @@ function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
 }
 
-/** A stored request written before ADR 0007 may carry `full`; it is dropped, not written back. */
+/**
+ * A stored request written before ADR 0007 may carry `full`; it is dropped, not written back.
+ * `physical` loads as `true` or not at all: a request without it, or with anything else, is virtual.
+ */
 function withoutRetiredRequestKeys(request: DeviceRequest): DeviceRequest {
-  const { full: _retired, ...current } = request as DeviceRequest & { readonly full?: unknown };
-  return current;
+  const {
+    full: _retired,
+    physical,
+    ...current
+  } = request as DeviceRequest & { readonly full?: unknown };
+  return physical === true ? { ...current, physical: true } : current;
 }
 
 function isLeaseRequestState(value: unknown): value is LeaseRequestState {

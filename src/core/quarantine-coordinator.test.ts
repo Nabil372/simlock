@@ -48,8 +48,12 @@ class FakeRegistry implements QuarantineRegistry {
     this.#devices = [...devices];
   }
 
-  get snapshot(): { readonly virtualDevices: readonly VirtualDevice[] } {
-    return { virtualDevices: this.#devices.map((device) => ({ ...device })) };
+  get snapshot(): {
+    readonly devices: readonly VirtualDevice[];
+    readonly virtualDevices: readonly VirtualDevice[];
+  } {
+    const copies = this.#devices.map((device) => ({ ...device }));
+    return { devices: copies, virtualDevices: copies };
   }
 
   async enterQuarantine(deviceId: string, nextRetryAt: number): Promise<VirtualDevice> {

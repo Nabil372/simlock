@@ -303,6 +303,8 @@ const requestedDeviceSchema = z.object({
   osVersion: z.string().optional(),
   mode: deviceModeSchema.optional(),
   imageTag: imageTagSchema.optional(),
+  /** Present only for a physical request (ADR 0022); a virtual one has none. */
+  physical: z.literal(true).optional(),
 });
 
 /**
@@ -1081,6 +1083,8 @@ export const workerViewSchema = z.object({
   /** The worker's *own* queue depth -- local agents on that machine. The gateway's fleet queue
    * is reported separately by `status.get` and arrives with #118. */
   queueDepth: z.number().optional(),
+  /** The worker's physical line (ADR 0022); `queueDepth` counts the virtual line only. */
+  physicalQueueDepth: z.number().optional(),
   leases: z.array(leaseRecordSchema).optional(),
   devices: z.array(statusDeviceSchema).optional(),
   catalog: z.array(platformCatalogSchema).optional(),

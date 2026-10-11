@@ -1,4 +1,9 @@
-import { type OsConstraint as RequestedOs, satisfies } from "../contract/os-range.js";
+import { requestedClass } from "../contract/operations.js";
+import {
+  type OsConstraint as RequestedOs,
+  parseOsConstraint,
+  satisfies,
+} from "../contract/os-range.js";
 import type { DeviceRequest } from "./driver.js";
 
 export type Platform = "ios" | "android";
@@ -636,10 +641,51 @@ export interface FittablePhysical {
   readonly class?: PhysicalClass;
 }
 
-export function fitsPhysical(_device: FittablePhysical, _request: PhysicalRequest): boolean {
-  return false;
+/**
+ * The one place a physical request meets an enrolled device (ADR 0022 §3; architecture rule 10):
+ * the platform, the model ignoring letter case or the class (`phone` when the request names
+ * neither), and the OS as `satisfies` reads it, an exact version or a range as for a simulator.
+ */
+export function fitsPhysical(device: FittablePhysical, request: PhysicalRequest): boolean {
+  const { spec } = device;
+  if (spec.platform !== request.platform) return false;
+  if (request.model === undefined) {
+    if ((device.class ?? spec.class) !== requestedClass({ class: request.class })) return false;
+  } else if (spec.model.toLowerCase() !== request.model.toLowerCase()) {
+    return false;
+  }
+  if (request.osVersion === undefined) return true;
+  const constraint = parseOsConstraint(request.osVersion);
+  return constraint.ok && satisfies(spec.osVersion, constraint.constraint);
 }
 
+/**
+ * An exact `--os` is echoed. A range is not: its text is what the message names as the fix, so a
+ * request that already wrote one is told only that the range matched nothing.
+ */
+function osPhrase(osVersion: string | undefined): readonly string[] {
+  if (osVersion === undefined) return [];
+  const parsed = parseOsConstraint(osVersion);
+  return parsed.ok && parsed.constraint.kind === "range"
+    ? ["os in the requested range"]
+    : [`os ${osVersion}`];
+}
+
+/** `18` and `18.4`: the only OS texts a range can be named for, one or two numbers joined by a dot. */
+const NAMEABLE_OS = /^\d+(\.\d+)?$/;
+
+/** The range that means "any" of an exact `--os` the user most likely wrote loosely: it raises the last number. */
+function rangeAround(osVersion: string): string {
+  const parts = osVersion.split(".").map(Number);
+  const raised = parts.map((part, index) => (index === parts.length - 1 ? part + 1 : part));
+  return `>=${parts.join(".")} <${raised.join(".")}`;
+}
+
+/**
+ * The `UNKNOWN_MODEL` a physical request nothing could match is answered with (ADR 0022 §3). The
+ * worker and, later, the gateway both read it here. The message names a range only on iOS and
+ * only for an `--os` of one or two numbers; an Android API level is exact, so it names none.
+ */
 export function noPhysicalMatch(request: PhysicalRequest): {
   readonly message: string;
   readonly details: {
@@ -649,5 +695,23 @@ export function noPhysicalMatch(request: PhysicalRequest): {
     readonly osVersion?: string;
   };
 } {
-  return { details: { platform: request.platform }, message: "" };
+  const named = [
+    request.model === undefined ? `class ${request.class ?? "phone"}` : `model ${request.model}`,
+    ...osPhrase(request.osVersion),
+  ];
+  const range =
+    request.platform === "ios" &&
+    request.osVersion !== undefined &&
+    NAMEABLE_OS.test(request.osVersion)
+      ? `; --os is exact, for any ${request.osVersion}.x write --os "${rangeAround(request.osVersion)}"`
+      : "";
+  return {
+    details: {
+      platform: request.platform,
+      ...(request.model === undefined ? {} : { model: request.model }),
+      ...(request.class === undefined ? {} : { class: request.class }),
+      ...(request.osVersion === undefined ? {} : { osVersion: request.osVersion }),
+    },
+    message: `no enrolled physical device can match ${request.platform} ${named.join(" ")}${range}`,
+  };
 }

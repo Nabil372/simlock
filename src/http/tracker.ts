@@ -18,6 +18,8 @@ export interface LeaseRequestInput {
   readonly allowDownload?: boolean;
   readonly mode?: "slim" | "full";
   readonly imageTag?: string;
+  /** ADR 0022: asks for an enrolled physical device. */
+  readonly physical?: boolean;
   /** ADR §27a. Threaded straight through to the shared dispatcher's own `lease.request` input --
    * the same gate every other transport is held to (`FORBIDDEN` for a non-admin token) decides
    * this, not this route (H7, round 2 review: before this, `leaseRequestBodySchema` had no
@@ -107,6 +109,7 @@ function leaseRequestDispatchInput(body: LeaseRequestInput, idempotencyKey: stri
     ...(body.os === undefined ? {} : { osVersion: body.os }),
     ...(body.mode === undefined ? {} : { mode: body.mode }),
     ...(body.imageTag === undefined ? {} : { imageTag: body.imageTag }),
+    ...(body.physical === undefined ? {} : { physical: body.physical }),
     ...requestOptions(body),
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
   };

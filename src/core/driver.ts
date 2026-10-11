@@ -8,6 +8,7 @@ import type {
   DeviceSpec,
   DeviceTransitionUpdate,
   PhysicalClass,
+  PhysicalDevice,
   Platform,
   VirtualDevice,
   VirtualSpec,
@@ -65,32 +66,52 @@ export type PhysicalDriverDevice = DriverDevice & {
   readonly enrolledApps: readonly string[];
 };
 
+/** Whether a driver device is an enrolled physical one: the narrowing a driver's `reclaim` branches on. */
+export function isPhysicalDriverDevice(device: DriverDevice): device is PhysicalDriverDevice {
+  return (device as Partial<PhysicalDriverDevice>).physical === true;
+}
+
 export interface PresentPhysical {
   readonly driverDeviceId: string;
   readonly present: boolean;
 }
 
 /**
- * `address` is never trusted by a driver's `shutdown` / `reclaim` / `makeReady` -- they derive
- * whatever they need from `driverData` -- so a placeholder here is harmless.
+ * The one function from a device record to the driver's device (architecture rule 10). A physical
+ * record carries its enrollment app list; a virtual one carries today's fields, so the compile-time
+ * checks that keep a physical device out of a virtual-only call still hold. `address` is never
+ * trusted by a driver's `shutdown` / `destroy` / `reclaim` / `makeReady`: they derive whatever they
+ * need from `driverData`, so a not-yet-booted device's absent address is a harmless placeholder.
  */
 export function toDriverDevice(device: VirtualDevice): VirtualDriverDevice;
+export function toDriverDevice(device: PhysicalDevice): PhysicalDriverDevice;
 export function toDriverDevice(device: DeviceRecord): VirtualDriverDevice | PhysicalDriverDevice;
 export function toDriverDevice(device: DeviceRecord): VirtualDriverDevice | PhysicalDriverDevice {
-  if (device.physical) throw new Error(`toDriverDevice of a physical record is not implemented`);
-  return {
+  const base = {
     address: device.address ?? "",
     deviceId: device.driverDeviceId,
     driverData: device.driverData,
-    physical: false,
   };
+  return device.physical
+    ? { ...base, enrolledApps: device.enrolledApps, physical: true }
+    : { ...base, physical: false };
 }
 
+/**
+ * What a physical reclaim does with the apps a driver can see (ADR 0022 §4): uninstall the ones
+ * listed now that are not on the enrollment list, and report the listed ones it no longer finds.
+ * App ids are opaque strings here; the drivers decide what one is.
+ */
 export function uninstallPlan(
-  _listedNow: readonly string[],
-  _enrolledApps: readonly string[],
+  listedNow: readonly string[],
+  enrolledApps: readonly string[],
 ): { readonly uninstall: readonly string[]; readonly missing: readonly string[] } {
-  return { missing: [], uninstall: [] };
+  const enrolled = new Set(enrolledApps);
+  const listed = new Set(listedNow);
+  return {
+    missing: enrolledApps.filter((app) => !listed.has(app)),
+    uninstall: listedNow.filter((app) => !enrolled.has(app)),
+  };
 }
 
 /**

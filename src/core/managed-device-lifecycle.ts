@@ -13,7 +13,7 @@ import {
   specMode,
   type VirtualDevice,
 } from "./domain.js";
-import { readyTransitionUpdate, type DriverDevice, type VirtualDriverDevice } from "./driver.js";
+import { readyTransitionUpdate, type DriverDevice, toDriverDevice } from "./driver.js";
 import { DriverCatalog } from "./driver-catalog.js";
 import { SerializedDecision } from "./serialized-decision.js";
 
@@ -375,18 +375,4 @@ export class ManagedDeviceLifecycle {
     const lease = this.registry.snapshot.leases.find((candidate) => candidate.id === leaseId);
     return lease === undefined || lease.deviceId !== device.id ? undefined : device;
   }
-}
-
-/**
- * `address` is never trusted by a driver's `shutdown` / `destroy` / `reclaim` / `makeReady` --
- * they derive whatever they need from `driverData` -- so a not-yet-booted device's absent
- * address is a harmless placeholder here, not a lie a driver could act on.
- */
-function toDriverDevice(device: VirtualDevice): VirtualDriverDevice {
-  return {
-    address: device.address ?? "",
-    deviceId: device.driverDeviceId,
-    driverData: device.driverData,
-    physical: false,
-  };
 }

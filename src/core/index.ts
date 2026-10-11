@@ -67,10 +67,12 @@ export {
   type ObservedDevice,
   type ObservedRunState,
   type PassthroughCommand,
+  isPhysicalDriverDevice,
   type PhysicalDriverDevice,
   type PhysicalInspection,
   type PresentPhysical,
   toDriverDevice,
+  uninstallPlan,
   type PrerequisiteCheck,
   PassthroughRefusedError,
   removeListedComponent,
@@ -119,9 +121,13 @@ export {
   type DeviceRequirement,
   type FittableSpec,
   fits,
+  fitsPhysical,
   type LeaseGrant,
+  noPhysicalMatch,
   type PhysicalDevice,
+  type PhysicalRequest,
 } from "./domain.js";
+export { readPhysicalPresence } from "./physical-presence.js";
 export {
   type DriverCatalogImage,
   type MissingPrerequisite,

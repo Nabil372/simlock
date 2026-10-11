@@ -24,6 +24,7 @@ import {
   type DriverEstimate,
   type DriverReality,
   type PhysicalInspection,
+  isPhysicalDriverDevice,
   type PresentPhysical,
   type DriverToolVersion,
   type InstalledComponent,
@@ -636,7 +637,12 @@ export class AndroidDriver implements Driver {
     });
   }
 
-  leaseEnvironment(_device: DriverDevice): Readonly<Record<string, string>> {
+  leaseEnvironment(device: DriverDevice): Readonly<Record<string, string>> {
+    // A physical device is on the default adb server, not Simlock's emulator server, so a plain
+    // `adb` reaches it and never an emulator.
+    if (isPhysicalDriverDevice(device)) {
+      return { ANDROID_ADB_SERVER_PORT: "5037", ANDROID_SERIAL: device.deviceId };
+    }
     // `adb` reads this variable natively, so a lease holder needs nothing else to reach the
     // device: without it their `adb` talks to the shared server, which cannot see it.
     return { ANDROID_ADB_SERVER_PORT: String(this.#adbServerPort) };
@@ -937,6 +943,11 @@ export class AndroidDriver implements Driver {
     device: DriverDevice,
     options: { readonly clean: "standard" | "full" },
   ): Promise<ReclaimResult> {
+    // The physical reclaim comes with the physical handlers (#441); until then a physical device
+    // is refused before anything runs, never wiped as if it were an emulator.
+    if (isPhysicalDriverDevice(device)) {
+      throw new Error("a physical device cannot be reclaimed yet");
+    }
     const data = this.#dataFor(device);
     return this.#withDeviceLock(data.avdName, async () => {
       const state = this.#stateFor(data);
@@ -988,10 +999,11 @@ export class AndroidDriver implements Driver {
   }
 
   reclaimStrategy(
-    _device: DriverDevice,
+    device: DriverDevice,
     options: { readonly clean: "standard" | "full" },
-  ): "snapshot" | "wipe" {
-    return options.clean === "full" ? "wipe" : "snapshot";
+  ): "snapshot" | "wipe" | "uninstall" {
+    if (isPhysicalDriverDevice(device)) return "uninstall";
+    return virtualReclaimStrategy(options.clean);
   }
 
   async shutdown(device: DriverDevice): Promise<void> {
@@ -1019,8 +1031,9 @@ export class AndroidDriver implements Driver {
     });
   }
 
+  /** Reads no device until the physical handlers exist (#441): every ID given reads not present. */
   async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
-    throw new Error(`listPresentPhysical is not implemented (${String(enrolledIds.length)})`);
+    return enrolledIds.map((driverDeviceId) => ({ driverDeviceId, present: false }));
   }
 
   async inspectPhysical(_id: string): Promise<PhysicalInspection> {
@@ -1232,7 +1245,7 @@ export class AndroidDriver implements Driver {
         // the wipe branch when the baseline no longer matches the AVD config, which runs some
         // five times longer; that is the exception rather than the case to quote, and `Doctor`
         // covers it by taking the slower clean level instead of this averaging the two.
-        return this.reclaimStrategy({} as DriverDevice, { clean: estimate.clean }) === "wipe"
+        return virtualReclaimStrategy(estimate.clean) === "wipe"
           ? WIPE_RECLAIM_ESTIMATE_MS
           : SNAPSHOT_RECLAIM_ESTIMATE_MS;
     }
@@ -2480,3 +2493,8 @@ function portAllocatorFor(processRunner: ProcessRunner, adb: string): PortAlloca
   return allocator;
 }
 export { androidPrerequisites } from "./prerequisites.js";
+
+/** What an emulator's reclaim does at each clean level: the one place that says. */
+function virtualReclaimStrategy(clean: "standard" | "full"): "snapshot" | "wipe" {
+  return clean === "full" ? "wipe" : "snapshot";
+}

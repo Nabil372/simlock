@@ -28,6 +28,7 @@ import {
   type PassthroughContext,
   type PhysicalInspection,
   type PresentPhysical,
+  uninstallPlan,
   PassthroughRefusedError,
   removeListedComponent,
   type DeviceClass,
@@ -461,15 +462,15 @@ export class OutOfProcessFakeDriver implements Driver {
       candidate.ids.includes(device.deviceId),
     );
     const installed = scripted?.installedApps ?? scripted?.apps ?? [];
-    const enrolled = new Set(device.enrolledApps);
-    const doomed = installed.filter((app) => !enrolled.has(app));
-    for (const app of doomed) {
+    const plan = uninstallPlan(installed, device.enrolledApps);
+    for (const app of plan.uninstall) {
       await this.#appendLog("uninstall", [device.deviceId, app]);
     }
-    if (doomed.length > 0) await this.#writeInstalledApps(device.deviceId, installed, doomed);
-    const remaining = new Set(installed);
+    if (plan.uninstall.length > 0) {
+      await this.#writeInstalledApps(device.deviceId, installed, plan.uninstall);
+    }
     return {
-      missingApps: device.enrolledApps.filter((app) => !remaining.has(app)),
+      missingApps: plan.missing,
       state: "ready",
       strategy: "uninstall",
     };

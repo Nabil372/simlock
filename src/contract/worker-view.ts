@@ -58,6 +58,7 @@ export type WorkerViewReport = Pick<WorkerView, "health" | "host"> &
       | "installs"
       | "lease"
       | "leases"
+      | "physicalQueueDepth"
       | "queueDepth"
       | "waiting"
       | "warmPool"
@@ -87,6 +88,9 @@ export function workerViewFields(reads: WorkerReads): WorkerViewReport {
     ...(status.warmPool === undefined ? {} : { warmPool: status.warmPool }),
     ...(status.leases === undefined ? {} : { leases: status.leases }),
     ...(status.queueDepth === undefined ? {} : { queueDepth: status.queueDepth }),
+    ...(status.physicalQueueDepth === undefined
+      ? {}
+      : { physicalQueueDepth: status.physicalQueueDepth }),
     ...(devices === undefined ? {} : { devices: viewDevicesSchema.parse(devices) }),
     ...(catalog === undefined ? {} : { catalog: catalog.platforms }),
     ...(config === undefined

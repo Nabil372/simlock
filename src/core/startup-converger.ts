@@ -21,7 +21,7 @@ export interface SpentDeviceDeletion {
 
 /** Re-arms retry timers for devices still `quarantined` at startup, from persisted state. */
 export interface QuarantineRestorer {
-  restore(include: (device: VirtualDevice) => boolean): void;
+  restore(include: (device: DeviceRecord) => boolean): void;
 }
 
 /** Read-only operation claim view used to avoid an in-flight device operation. */

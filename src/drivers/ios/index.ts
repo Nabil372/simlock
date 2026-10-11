@@ -18,6 +18,7 @@ import {
   type DriverEstimate,
   type DriverReality,
   type PhysicalInspection,
+  isPhysicalDriverDevice,
   type PresentPhysical,
   ensureOwnedRoot,
   type EnsureOwnedRootOptions,
@@ -1215,6 +1216,11 @@ export class IosSimctlDriver implements Driver {
     device: DriverDevice,
     _options: { readonly clean: "standard" | "full" },
   ): Promise<{ readonly state: "shutdown"; readonly strategy: "erase" }> {
+    // The physical reclaim comes with the physical handlers (#440); until then a physical device
+    // is refused before anything runs, never erased as if it were a simulator.
+    if (isPhysicalDriverDevice(device)) {
+      throw new Error("a physical device cannot be reclaimed yet");
+    }
     const data = iosDriverData(device);
     await this.#shutdown(data.udid);
     await this.#simctl(["erase", data.udid], COMMAND_TIMEOUT_MS);
@@ -1224,10 +1230,10 @@ export class IosSimctlDriver implements Driver {
   }
 
   reclaimStrategy(
-    _device: DriverDevice,
+    device: DriverDevice,
     _options: { readonly clean: "standard" | "full" },
-  ): "erase" {
-    return "erase";
+  ): "erase" | "uninstall" {
+    return isPhysicalDriverDevice(device) ? "uninstall" : "erase";
   }
 
   async shutdown(device: DriverDevice): Promise<void> {
@@ -1286,8 +1292,9 @@ export class IosSimctlDriver implements Driver {
     await this.#legacySimctl(["delete", udid], COMMAND_TIMEOUT_MS);
   }
 
+  /** Reads no device until the physical handlers exist (#440): every ID given reads not present. */
   async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
-    throw new Error(`listPresentPhysical is not implemented (${String(enrolledIds.length)})`);
+    return enrolledIds.map((driverDeviceId) => ({ driverDeviceId, present: false }));
   }
 
   async inspectPhysical(_id: string): Promise<PhysicalInspection> {
@@ -1534,7 +1541,9 @@ export class IosSimctlDriver implements Driver {
    * custom set a UDID resolves to nothing without it. `docs/CLI.md` publishes the variable
    * name, and `simlock simctl` reads it back.
    */
-  leaseEnvironment(_device: DriverDevice): Readonly<Record<string, string>> {
+  leaseEnvironment(device: DriverDevice): Readonly<Record<string, string>> {
+    // A physical device is addressed by its UDID alone; a simulator device set cannot see it.
+    if (isPhysicalDriverDevice(device)) return { SIMLOCK_DEVICE_UDID: device.deviceId };
     return { SIMLOCK_IOS_DEVICE_SET: this.#deviceRoot };
   }
 
