@@ -109,11 +109,8 @@ class CorePortMissingError extends Error {
 /** Device management, built and ready except for the ports `connect` fills. */
 export interface Core {
   readonly capacity: CapacityCoordinator;
-  /** Read-only capacity view for status, and for the daemon's status reporting. */
   readonly capacityReader: CapacityReader;
-  /** The warm pool's figures, for status and doctor. */
   readonly warmPoolReader: WarmPoolReader;
-  /** The device catalog and the passthrough resolver, both answered by the driver catalog. */
   readonly catalog: CatalogReader & PassthroughResolver;
   readonly claims: DeviceOperationClaims;
   /**
@@ -136,17 +133,7 @@ export interface Core {
   readonly registry: Registry;
   /** Supplies the ports leasing implements. Call it once, before any request is admitted. */
   connect(ports: CorePorts): void;
-  /**
-   * Startup's one read of the machine: every driver's `listManaged` once, each platform bounded
-   * by a fixed limit. Never throws; a platform that could not be listed is left out of it.
-   */
   readStartup(): Promise<StartupRead>;
-  /**
-   * The device steps of startup: quarantine restore, interrupted reclaims, spent devices, none of
-   * them on a platform the read could not list; then it starts the capacity observer and the warm
-   * pool, so the facts convergence commits trigger no pass and the first one follows
-   * `daemon.started`, where a lowered `maxRunning` is converged.
-   */
   converge(read: StartupRead): Promise<void>;
   /**
    * Runs a warm pool pass now. Leasing calls it once a backgrounded reclaim has given up its
@@ -378,7 +365,6 @@ export function createCore(options: CoreOptions): Core {
     async converge(read) {
       await startup.converge(read);
       warmPool.start();
-      // Every run begins with a step in the figures: what they are now.
       capacityObserver.start();
     },
     async passWarmPool() {

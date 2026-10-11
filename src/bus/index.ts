@@ -219,9 +219,7 @@ export interface EventMap {
   };
   "component.install-started": {
     readonly platform: string;
-    /** The component string the install was asked for: a version, or a driver's word for newest. */
     readonly componentId: string;
-    /** The requester whose call started this install, when one is known. */
     readonly requesterId?: string;
   };
   "component.installed": {

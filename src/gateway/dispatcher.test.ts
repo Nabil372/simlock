@@ -891,10 +891,6 @@ describe("GatewayDispatcher", () => {
     it("forwards lease.request through the fleet coordinator and answers UNKNOWN_LEASE for renew/release/exec against an id it never issued", async () => {
       const { dispatcher } = harness();
 
-      // No worker connected at all: a `noWait` request has nowhere to go and is refused
-      // immediately, rather than the pre-#118 permanent `UNSUPPORTED_IN_GATEWAY_MODE`. A plain
-      // `DispatchError("NO_CAPACITY", ...)` (H9, round 2 review) -- no gateway-specific error
-      // class for `daemon/error-code.ts` to import and recognize.
       await expect(
         dispatcher.dispatch(
           "lease.request",

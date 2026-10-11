@@ -85,7 +85,6 @@ describe("the workers views", () => {
       idChosenByRequester: false,
       ttlMs: 185_000,
     };
-    // The worker answered 10 seconds ago, when the provisioning device was 4 seconds in.
     const view = worker({
       devices: [leased, provisioning, ready],
       lastSeenAt: NOW - 10_000,
@@ -135,10 +134,8 @@ describe("the workers views", () => {
       new ApiError(501, "UNSUPPORTED_IN_WORKER_MODE", "worker.drain is not supported"),
     );
     expect(text(unsupported)).toBe("Not available on a single host.");
-    // Not shown as an error.
     expect(unsupported).not.toContain('role="alert"');
 
-    // Any other refusal is an error, with the daemon's message.
     const failed = render(new ApiError(500, "INTERNAL", "Internal error"));
     expect(failed).toContain('role="alert"');
     expect(text(failed)).toBe("Internal error");

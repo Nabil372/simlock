@@ -1,14 +1,3 @@
-/**
- * One error class, a closed set of codes, typed details (ADR 0003 §7).
- *
- * `kind` is `transport` (unavailable, connection lost, startup timeout), `protocol` (version,
- * handshake, bad request, forbidden, authentication), or `domain` (capacity, unknown lease,
- * runtime missing, ...). `cliExitCode`/`httpStatus` are columns of the same table, per the
- * ADR's explicit instruction -- not a second mapping a CLI or HTTP frontend maintains on its
- * own. Nothing in this repo consumes those two columns yet; they land in later PRs (the CLI
- * still has its own `DAEMON_ERROR_EXIT_CODES` map and HTTP its own `mapError`, both untouched
- * by this PR -- wiring them to this table is follow-up work called out in the PR description).
- */
 import type { DeviceClass, Platform } from "./schemas.js";
 
 const DEVICE_NOT_ENROLLABLE_REASONS = [
@@ -28,32 +17,23 @@ export type DeviceNotEnrollableReason = (typeof DEVICE_NOT_ENROLLABLE_REASONS)[n
 
 export type ErrorKind = "transport" | "protocol" | "domain";
 
-/** Per-code `details` shapes. `Record<string, never>` means "no details, an empty object". */
 export interface ErrorDetailsMap {
-  // -- protocol --
   BAD_FRAME: Record<string, never>;
   HANDSHAKE_REQUIRED: Record<string, never>;
   BAD_REQUEST: Record<string, never>;
   UNKNOWN_REQUEST: Record<string, never>;
-  /** ADR §6. Reported by the daemon on a failed `hello` range negotiation, and constructed by
-   * a client mapping a legacy protocol-2 daemon's exact-match mismatch onto this shape. */
   PROTOCOL_VERSION_UNSUPPORTED: {
     readonly client: { readonly min: number; readonly max: number };
     readonly daemon: { readonly min: number; readonly max: number };
     readonly daemonVersion: string;
   };
-  /** ADR §5. Not yet thrown anywhere in this PR -- the credential handshake is PR 2 -- but
-   * part of the closed set from the start, per the ADR's explicit instruction. */
   ADMIN_AUTHENTICATION_FAILED: Record<string, never>;
-  /** ADR §2 (dispatcher role check). Not yet thrown -- PR 2 -- declared for the same reason. */
   FORBIDDEN: Record<string, never>;
 
-  // -- transport --
   DAEMON_STOPPING: Record<string, never>;
   DAEMON_STARTUP_FAILED: Record<string, never>;
   DAEMON_CONNECTION_LOST: Record<string, never>;
 
-  // -- domain --
   NO_CAPACITY: Record<string, never>;
   QUEUE_TIMEOUT: { readonly requestId: string };
   REQUESTER_ALREADY_LEASED: { readonly requesterId: string; readonly existingLeaseId?: string };
@@ -96,25 +76,10 @@ export interface ErrorDetailsMap {
    * no operation overrides that policy, so the install never starts.
    */
   DOWNLOADS_DISABLED: { readonly policy: "never" };
-  /**
-   * ADR 0010 §5/§8: a `component.remove` for a component Simlock did not install -- no record of
-   * installing it, or what is installed now is not what the record names. Nothing was removed.
-   */
   COMPONENT_NOT_OWNED: Record<string, never>;
-  /**
-   * ADR 0010 §8: a `component.remove` for a component a device uses: `devices` of Simlock's own,
-   * in any state but deleted, and `foreignDevices` outside Simlock. Nothing was removed.
-   */
   COMPONENT_IN_USE: { readonly devices: number; readonly foreignDevices: number };
-  /** ADR 0010 §8: a `component.remove` while an install or removal runs or waits on the platform. */
   COMPONENT_BUSY: Record<string, never>;
   UNKNOWN_LEASE: { readonly leaseId: string };
-  /**
-   * ADR 0022 §2: `device.add` of a device that cannot be enrolled. `id` is the ID as typed;
-   * `canonicalId` is set when the core knows it (`enrolled-on-other-platform`, and a refusal of
-   * the second inspection). The driver picks every reason but `enrolled-on-other-platform`, and
-   * `virtual-device` for Simlock's own simulators and emulators is the core's.
-   */
   DEVICE_NOT_ENROLLABLE: {
     readonly platform: Platform;
     readonly id: string;
@@ -123,40 +88,13 @@ export interface ErrorDetailsMap {
   };
   DEVICE_BUSY: { readonly id: string; readonly reason: "leased" | "reclaiming" | "busy" };
   UNKNOWN_DEVICE: { readonly id: string };
-  /** A `simlock <tool>` verb the owning driver will not proxy (ADR 0001, decision 7). Carries
-   * the tool so a caller can say which wrapper refused without re-parsing the message. */
   PASSTHROUGH_REFUSED: { readonly tool: string };
-  /** No registered driver answers to that `simlock <tool>` wrapper -- either the name is wrong
-   * or the platform's driver refused to start. */
   UNKNOWN_PASSTHROUGH_TOOL: { readonly tool: string };
-  /**
-   * ADR 0005 §19e: a `device.exec` command outran `exec.timeoutMs` and was killed. No details:
-   * the timeout that applied is already in the message, and a client that wants the
-   * configured value reads `config.get`. `domain`, not `transport` -- nothing about the
-   * connection failed; the command did.
-   */
   EXEC_TIMEOUT: Record<string, never>;
   DOCTOR_UNAVAILABLE: Record<string, never>;
   NUKE_UNAVAILABLE: Record<string, never>;
   INTERNAL: Record<string, never>;
 
-  // -- domain, gateway mode (ADR 0005) --
-  /**
-   * ADR 0005 §34/§23: the operation exists in the contract, this daemon is a gateway, and a
-   * gateway is not the thing that can answer it. Two populations share the code, and
-   * `details.operation` is what tells them apart for a caller:
-   *
-   * - permanently, by design: `nuke.run`, `cleanup.run`, `doctor.run`, `driver.passthrough` --
-   *   operations that act on one machine's devices as a whole, which stay per-worker
-   *   (§34: "a fleet-wide destructive command from one endpoint is not something v1 should
-   *   offer", and a passthrough command string the client cannot run is worse than an error);
-   * - until #118: the lease family (`lease.request`, `lease.renew`, `lease.release`,
-   *   `lease.cancel`, `lease.list`, `lease.release-all`) and `device.exec`, which the fleet
-   *   queue and the forwarding path implement.
-   *
-   * It is not `UNKNOWN_REQUEST`: the operation is known, and the answer "ask a worker" is a
-   * different instruction from "that is not an operation".
-   */
   UNSUPPORTED_IN_GATEWAY_MODE: { readonly operation: string };
   /**
    * ADR 0012 §2: the mirror of `UNSUPPORTED_IN_GATEWAY_MODE`. The operation exists, this daemon
@@ -205,20 +143,6 @@ type CodeWithDeclaredDetails = {
   [Code in SimlockErrorCode]: ErrorDetailsMap[Code] extends Record<string, never> ? never : Code;
 }[SimlockErrorCode];
 
-/**
- * Hardening: which error codes are declared, in `ErrorDetailsMap` above, to carry a `details`
- * payload onto the wire -- read by `src/http/errors.ts`'s `mapError` so it forwards a
- * `DispatchError`'s `.details` only for a code the contract actually documents as carrying one,
- * rather than for any `DispatchError` whose `.details` happens to be object-shaped. `.details`
- * is `unknown` on `DispatchError` (`dispatch.ts`) -- nothing stops a handler from attaching an
- * object to a code that declares none, and without this gate `mapError` would put it on the
- * wire anyway.
- *
- * Deliberately a `Record<CodeWithDeclaredDetails, true>` rather than a plain array: TypeScript
- * requires this object to have *exactly* `CodeWithDeclaredDetails`'s keys, no more and no
- * fewer, so adding a details shape to `ErrorDetailsMap` without adding it here (or the reverse)
- * is a compile error here -- the two cannot drift apart silently.
- */
 const CODES_WITH_DECLARED_DETAILS_BY_CODE: Record<CodeWithDeclaredDetails, true> = {
   PROTOCOL_VERSION_UNSUPPORTED: true,
   QUEUE_TIMEOUT: true,
@@ -253,12 +177,7 @@ export const CODES_WITH_DECLARED_DETAILS: ReadonlySet<SimlockErrorCode> = new Se
 export interface ErrorTableEntry<Code extends SimlockErrorCode = SimlockErrorCode> {
   readonly code: Code;
   readonly kind: ErrorKind;
-  /** Guessed/placeholder for codes that have no existing CLI mapping today -- see the module
-   * comment. Existing values (e.g. `NO_CAPACITY: 11`) are taken verbatim from
-   * `src/cli/index.ts`'s `DAEMON_ERROR_EXIT_CODES`. */
   readonly cliExitCode: number;
-  /** Same caveat as `cliExitCode` -- existing values taken from `src/http/errors.ts`'s
-   * `mapError`. */
   readonly httpStatus: number;
 }
 
@@ -370,7 +289,6 @@ export const ERROR_TABLE: { readonly [Code in SimlockErrorCode]: ErrorTableEntry
   // out of time" outcome (`QUEUE_TIMEOUT`) already uses -- so a script branching on "timed
   // out" does not need a second number for the second kind of wait.
   EXEC_TIMEOUT: { code: "EXEC_TIMEOUT", kind: "domain", cliExitCode: 10, httpStatus: 504 },
-  // A download that outran its budget: 504 and 10 for the same reason as `EXEC_TIMEOUT`.
   DOWNLOAD_TIMEOUT: {
     code: "DOWNLOAD_TIMEOUT",
     kind: "domain",

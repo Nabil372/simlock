@@ -26,14 +26,12 @@ export interface QuarantineRegistry {
 export interface QuarantinePurgeFailure {
   readonly deviceId: string;
   readonly leaseId: string;
-  /** A reclaim strategy, or `delete` for a spent fresh device's failed lease-end shutdown or delete. */
   readonly attemptedStrategy: "erase" | "snapshot" | "wipe" | "delete";
   readonly duration: number;
   readonly error: string;
 }
 
 export interface QuarantineRetryConfig {
-  /** Failed retries allowed after the triggering purge failure before giving up. */
   readonly maxRetries: number;
   readonly retryBackoffMs: number;
   readonly retryBackoffMultiplier: number;
@@ -52,24 +50,6 @@ export interface QuarantineCoordinatorOptions {
   readonly logger?: Logger;
 }
 
-/**
- * Owns the quarantine lifecycle: entry (release-time purge failure via `enter()`,
- * stalled-transition timeout via `enterFromStalledTransition()`), retry, and give-up.
- * `quarantined` is the shared "present in the registry, not grantable" disposition (for a
- * virtual device it also counts against running capacity; a physical device never counts) (see domain.ts): AcquisitionPlanner and
- * the idle-order eviction helpers already select targets by exact state, so a
- * quarantined device is invisible to every one of them with no special-casing
- * required.
- *
- * A quarantined virtual device retries its purge on a Clock-driven backoff until it
- * either succeeds (the device rejoins the warm pool) or exhausts
- * `config.maxRetries`. A spent fresh device (see `mayBeGranted`) retries its
- * delete instead, never a purge, and success deletes it. Either way, exhausting
- * `config.maxRetries`, at which point it is destroyed -- never merely shut
- * down, since `shutdown` is a state AcquisitionPlanner treats as reusable
- * warm inventory (`boot-shutdown`), which would silently reintroduce the
- * exact dirty-device bug this coordinator exists to prevent.
- */
 export class QuarantineCoordinator {
   readonly #timers = new Map<string, TimerHandle>();
   #disposed = false;

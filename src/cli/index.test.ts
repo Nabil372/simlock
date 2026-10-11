@@ -1578,7 +1578,6 @@ describe("CLI: device add and device remove (ADR 0022 §2)", () => {
 });
 
 describe("CLI: component remove (ADR 0010 §8)", () => {
-  /** A client that records every removal it is asked for and answers it. */
   function removingClient(asked: unknown[]) {
     return fakeClient({
       removeComponent: async (input) => {
@@ -5371,14 +5370,6 @@ interface OutputCapture {
   environmentWith(overrides?: Partial<CliEnvironment>): CliEnvironment;
 }
 
-/**
- * `ports` is `undefined` for the fully-mocked default every other suite uses (a bare object
- * literal, `connectAdmin` etc. never call their argument unless a test's override does).
- * Passing `ports` (built with `realCliEnvironmentPorts`, or by hand for the cold-start/B1
- * suites) routes `environmentWith` through the real `buildCliEnvironment` instead -- the only
- * way to exercise the production credential-resolution ordering (B2) and the real config
- * validator (B9) rather than re-testing a test double.
- */
 function outputCapture(ports?: CliEnvironmentPorts): OutputCapture {
   const capture: OutputCapture = {
     stdout: "",

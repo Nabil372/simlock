@@ -337,7 +337,6 @@ test.describe("the workers views", () => {
           await expect(cells.nth(2), device.id).toHaveText("—");
           continue;
         }
-        // A leased device: in that state since its lease was granted, counting on with no reload.
         await expect(cells.nth(2), device.id).toHaveText(/^\d+ s$/);
         const shown = Number.parseInt((await cells.nth(2).textContent()) ?? "", 10);
         // Within 3 seconds: the Date header counts whole seconds, the page shows whole seconds,

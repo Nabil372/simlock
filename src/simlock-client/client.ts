@@ -287,7 +287,7 @@ export interface SimlockAdminClient extends SimlockClient {
   removeComponent(input: ComponentRemoveInput): Promise<ComponentRemoveOutput>;
 
   /**
-   * ADR 0022 §2: enrols the physical device plugged into the host this daemon runs on, named by
+   * Enrols the physical device plugged into the host this daemon runs on, named by
    * any ID the platform's driver reads. A device it cannot enrol is `DEVICE_NOT_ENROLLABLE` with
    * the driver's reason; a leased, reclaiming or busy one is `DEVICE_BUSY`. A device already
    * enrolled is enrolled again: its record is kept and its model, OS version, class and apps are
@@ -296,17 +296,13 @@ export interface SimlockAdminClient extends SimlockClient {
   addDevice(input: DeviceAddInput): Promise<DeviceAddOutput>;
 
   /**
-   * ADR 0022 §2: forgets an enrolled physical device, named by its canonical ID. Nothing is sent
+   * Forgets an enrolled physical device, named by its canonical ID. Nothing is sent
    * to the device. `UNKNOWN_DEVICE` for an ID with no enrolled device, `DEVICE_BUSY` for a leased
    * or reclaiming one. A gateway answers `UNSUPPORTED_IN_GATEWAY_MODE`.
    */
   removeDevice(input: DeviceRemoveInput): Promise<DeviceRemoveOutput>;
 }
 
-/** Internal: builds either client. `admin` toggles only which methods the returned object
- * carries (an object literal with/without the extra methods) -- the daemon's own role check is
- * what actually stops an agent-role session from calling one of them; this flag exists purely
- * so `simlock/client` doesn't even show the admin methods in a caller's editor. */
 export async function connectSimlockClient(
   options: ConnectOptions,
   admin: false,
@@ -447,14 +443,6 @@ async function resolveConnection(options: ConnectOptions): Promise<IpcConnection
   );
 }
 
-/**
- * The single implementation both `SimlockClient` and `SimlockAdminClient` are backed by --
- * `asAdmin()` returns the same instance typed with the extra methods, since every admin
- * operation is a plain operation call like any other and there is nothing role-specific to
- * duplicate. It tracks no leases at all: ADR 0004 §3 deleted the one reason it used to
- * (synthesizing `onLeaseLost` on connection death), because a lease outlives the connection
- * that asked for it.
- */
 class SimlockClientImpl {
   readonly #wire: SimlockWire;
   readonly #leaseLostListeners = new Set<(push: LeaseLostPush) => void>();
@@ -687,18 +675,6 @@ class SimlockClientImpl {
     return this.#call("device.remove", input);
   }
 
-  // ---- abort (ADR §10) ------------------------------------------------------------------------
-
-  /**
-   * The four behaviours, all funneled through one function once we know the request was sent
-   * and a signal was given:
-   *
-   * - already resolved by the time abort fires -> `#requestDone` guards the raw promise's own
-   *   `.then` from resolving twice; the abort handler itself never runs any cancellation logic
-   *   because `#requestDone` is also checked there.
-   * - queued / in-flight / not-found are all resolved by `#cancelOnAbort`, driven entirely by
-   *   `lease.cancel`'s own three-way result.
-   */
   #requestLeaseWithAbort(
     requestPromise: Promise<LeaseGrant>,
     signal: AbortSignal,

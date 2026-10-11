@@ -50,7 +50,6 @@ const ROLE_MATRIX: ReadonlyArray<{
   },
   { name: "token.list", input: {}, role: "admin" },
   { name: "token.revoke", input: { id: "tok_1" }, role: "admin" },
-  // ADR 0005 §8/§23: gateway-only, admin throughout.
   { name: "worker.list", input: {}, role: "admin" },
   { name: "worker.drain", input: { workerId: "wrk_1" }, role: "admin" },
   { name: "worker.undrain", input: { workerId: "wrk_1" }, role: "admin" },
@@ -85,8 +84,6 @@ describe("operation role matrix", () => {
   });
 });
 
-/** Which calls change state: the daemon log records a `write` at its default level and a
- * `read` only at `debug`. Rows keyed like `ROLE_MATRIX`, input-dependent ones twice. */
 const EFFECT_MATRIX: ReadonlyArray<{
   readonly name: OperationName;
   readonly input: unknown;

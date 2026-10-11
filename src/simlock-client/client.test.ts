@@ -56,14 +56,9 @@ describe("connectSimlock: handshake", () => {
       daemonVersion: "9.9.9",
     });
 
-    // The daemon deliberately keeps this connection open after a failed range negotiation
-    // (ADR §6, see the comments in `daemon/server.ts#handleHello`) so an admin client can
-    // still send `daemon.stop` on it instead of restarting the daemon -- closing here, what
-    // this client used to do unconditionally, made that escape hatch dead on arrival.
     const client = await connectPromise;
     expect(connection.closed).toBe(false);
 
-    // Every other operation rejects with the captured mismatch error, never reaching the wire.
     const before = connection.sent.length;
     await expect(client.getStatus()).rejects.toMatchObject({
       code: "PROTOCOL_VERSION_UNSUPPORTED",

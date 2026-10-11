@@ -144,34 +144,22 @@ export interface DaemonServerEngineOptions {
   readonly warmPool: WarmPoolReader;
   readonly deviceModes: DeviceModeReader;
   readonly catalog: CatalogReader;
-  /** The one component installer (ADR 0010 §3), threaded into the `Dispatcher` for
-   * `component.install`, `component.list`, `component.remove` and `status.get`'s installs; the same
-   * instance leasing downloads through. */
   readonly components: Pick<ComponentInstaller, "install" | "inProgress" | "list" | "remove">;
   readonly doctor?: Doctor;
-  /** What `events.replay` answers from; see `EventHistory`. */
   readonly eventHistory: Pick<EventHistory, "replay">;
   readonly leases: LeaseCommands;
-  /** `status.get`'s host block (ADR 0008 §5); see `DispatcherOptions.hostFacts`. */
   readonly hostFacts: () => HostFacts;
-  /** This daemon's instance id; `worker.list` answers with it (see `DispatcherOptions`). */
   readonly instanceId: string;
   readonly queue: QueueControl;
   readonly reaper: CleanupReaper;
   readonly healthMonitor?: LeaseHealthMonitor | undefined;
   readonly enrollment?: DispatcherOptions["enrollment"];
   readonly nuke?: Nuke;
-  /** Builds the scoped command behind `simlock simctl` / `simlock adb`; absent in tests that never use them. */
   readonly passthrough?: PassthroughResolver;
-  /** Runs what `device.exec` resolves (ADR 0005 §19a); absent in tests that never exec. */
   readonly processRunner?: ProcessRunner;
-  /** Base environment for a `device.exec` child, before the driver's scoping keys (see
-   * `DispatcherOptions.execEnv`). */
   readonly execEnv?: NodeJS.ProcessEnv;
   readonly registry: Registry;
-  /** What a device's `stalled` flag is worked out from; see `DispatcherOptions.stalls`. */
   readonly stalls?: DispatcherOptions["stalls"];
-  /** ADR 0003 §11: threaded straight into the `Dispatcher` for `token.create|list|revoke`. */
   readonly tokens?: TokenStore;
 }
 
@@ -286,15 +274,7 @@ export type DaemonServerOptions =
 
 type DaemonHealth = "starting" | "running" | "failed";
 
-/**
- * Builds the one shared `Dispatcher` (ADR 0003 §2) from this server's options. Extracted from
- * the constructor rather than inlined there because almost all of it is the same conditional
- * spread repeated per optional dependency -- `exactOptionalPropertyTypes` means an absent
- * option must be *absent*, not `undefined` -- and that list grows with every operation that
- * needs a new dependency (`device.exec` added two). The two closures the dispatcher needs from
- * the server's own live state are passed in rather than reached for.
- */
-// fallow-ignore-next-line complexity -- one conditional spread per optional dependency, as the comment above says.
+// fallow-ignore-next-line complexity -- one conditional spread per optional dependency.
 function buildDispatcher(
   options: DaemonServerCommonOptions & DaemonServerEngineOptions,
   hooks: {
@@ -312,9 +292,7 @@ function buildDispatcher(
     components: options.components,
     config: options.config,
     ...(options.doctor === undefined ? {} : { doctor: options.doctor }),
-    // The `operation` log line's error code: the same classifier this server answers with.
     errorCode: classifyError,
-    // `worker.list` drops its kept catalog when a component is installed or removed.
     eventBus: options.eventBus,
     eventHistory: options.eventHistory,
     health: hooks.health,
@@ -1203,17 +1181,6 @@ export class DaemonServer {
     }
   }
 
-  /** Builds the ADR 0003 §2/§4 session for one dispatched call from this connection's fixed
-   * principal and role -- all that is left of it, since ADR 0004 removed the per-connection
-   * lease state that used to travel alongside. `onProgress` is unset here: only `#requestLease`
-   * needs one, and builds its own session inline so the closure can see that specific call's
-   * `requestId`.
-   *
-   * `isGatewayUplink` (ADR §27a, H3, round 3 review; narrowed further, see the `Connection`
-   * field's own doc) reads `connection.isGatewayUplink` directly, not `connection.role` and not
-   * `connection.forcedRole`: `role` itself is always `"admin"` for such a connection, but so is
-   * an ordinary HTTP `operator` token's, which is the very confusion this field exists to stop
-   * propagating into `lease.request`'s `owner` gate. */
   #session(connection: Connection): DispatchSession {
     return {
       isGatewayUplink: connection.isGatewayUplink,

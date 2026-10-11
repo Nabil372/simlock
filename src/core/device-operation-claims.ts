@@ -1,13 +1,3 @@
-/**
- * Operations that must not overlap for a single device: booting, eviction,
- * cleanup, nuke, the lease-scoped crash `recovery` reboot, and a backgrounded
- * `reclaim` -- the last marks the device as a live, in-process operation so
- * `StartupConverger#recoverInterruptedReclaims` (which only recovers *unclaimed*
- * `reclaiming` devices) never mistakes it for one left over from a previous crash,
- * and so `simlock doctor` never reads a long-but-healthy erase as a stalled
- * transition. Every release takes one, since none of them wait for the purge.
- * See `LeaseReleaseCoordinator#reclaimInBackground`.
- */
 export type DeviceOperation =
   | "boot"
   | "eviction"
@@ -17,15 +7,9 @@ export type DeviceOperation =
   | "reclaim"
   | "enrollment";
 
-/** An exclusive, idempotently releasable claim for one device operation. */
 export interface DeviceOperationClaim {
   readonly deviceId: string;
   readonly operation: DeviceOperation;
-  /**
-   * The waiter this claim was taken for, absent when none was: the only ownerless `boot` claim is
-   * the warm pool's (a failed boot's destroy takes `cleanup`, a fence takes its waiter's id). A
-   * request waits only for a `boot` nobody owns, never for the one another request is making.
-   */
   readonly owner?: string | undefined;
   release(): void;
 }

@@ -11,26 +11,11 @@ import type {
   VirtualSpec,
 } from "./domain.js";
 
-/**
- * What a driver resolves (ADR 0015 §5): a request with the exact model the core settled on. A
- * driver never sees a class.
- */
 export interface ExactDeviceRequest {
   readonly platform: Platform;
   readonly model: string;
   readonly osVersion?: string;
-  /**
-   * The device mode the request asked for; absent when it named none (ADR 0007 §1). Transports
-   * carry it as it arrived. `LeaseAcquisitionCoordinator` is the one place an absent mode gets
-   * the worker's default, and a driver's `resolveSpec` always receives it resolved.
-   */
   readonly mode?: DeviceMode;
-  /**
-   * The image type the request names, as the driver's catalog lists it; absent when it names
-   * none. Transports carry it as it arrived. Only a driver knows what a tag is: one that has none
-   * throws `UnsupportedRequestOptionError`, and one that has them resolves only to an installed
-   * image of that tag, never to a download.
-   */
   readonly imageTag?: string;
 }
 
@@ -240,22 +225,12 @@ export interface PrerequisiteCheck {
   check(): Promise<readonly MissingPrerequisite[]>;
 }
 
-/**
- * One platform tool a driver uses and the version installed (ADR 0008 §6). `name` and the
- * version format are the driver's own; the core reports them and reads neither.
- */
 export interface DriverToolVersion {
   readonly name: string;
   readonly version: string;
-  /** A build identifier the tool reports beside its version, when it has one. */
   readonly build?: string;
 }
 
-/**
- * Why a driver refuses to enrol a device (ADR 0022 §2): every `DEVICE_NOT_ENROLLABLE` reason
- * except `enrolled-on-other-platform`, which only the core can know. `virtual-device` is a
- * driver's too, for any virtual device it reads that is not Simlock's own.
- */
 export type DriverRefusalReason =
   | "not-connected"
   | "network-only"
@@ -267,11 +242,6 @@ export type DriverRefusalReason =
   | "unreadable"
   | "virtual-device";
 
-/**
- * What a driver read of a physical device (ADR 0022 §5). `driverDeviceId` is the canonical ID
- * whatever ID was asked. `apps` are the app IDs the enrolment app list holds; which apps, per
- * platform, is the driver's. A refusal carries the driver's reason and its own message.
- */
 export type PhysicalInspection =
   | {
       readonly enrollable: true;
@@ -289,11 +259,6 @@ export type PhysicalInspection =
 
 export interface Driver {
   readonly platform: Platform;
-  /**
-   * ADR 0015 §4: the model names this driver's platform offers for each class, newest first.
-   * The core merges it behind the operator's own list and holds no model name itself; a class
-   * with no list has no entry.
-   */
   readonly defaultModels: Readonly<Partial<Record<DeviceClass, readonly string[]>>>;
   /**
    * Absolute path of the root this driver owns and scopes every platform command to.
@@ -406,12 +371,6 @@ export interface Driver {
   shutdown(device: VirtualDriverDevice): Promise<void>;
   destroy(device: VirtualDriverDevice): Promise<void>;
   listManaged(): Promise<DriverReality>;
-  /**
-   * Reads a physical device by whatever ID an operator typed, for `device add` (ADR 0022 §5). A
-   * read: it changes nothing on the device. A device it cannot enrol is a refusal with the
-   * driver's reason and message, and so is a read that failed or timed out (`unreadable`, naming
-   * the read): the core relays it and a throw is a driver bug.
-   */
   inspectPhysical(id: string): Promise<PhysicalInspection>;
   /** Read-only: must never trigger a runtime / system-image download. */
   listCatalog(): Promise<DriverCatalogEntry>;
