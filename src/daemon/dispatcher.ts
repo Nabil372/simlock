@@ -121,10 +121,7 @@ export interface DispatcherOptions {
   readonly errorCode?: (error: unknown) => string | undefined;
   readonly nuke?: Nuke;
   readonly enrollment?: Pick<PhysicalEnrollment, "add" | "remove">;
-  /**
-   * Builds the scoped command behind `simlock simctl` / `simlock adb` (ADR 0001, decision 7).
-   * Optional so the many tests that never issue a passthrough need not fabricate a resolver.
-   */
+  /** Optional so the many tests that never issue a passthrough need not fabricate a resolver. */
   readonly passthrough?: PassthroughResolver;
   /**
    * Runs the command `device.exec` resolves (ADR 0005 §19a). Optional for the same reason as

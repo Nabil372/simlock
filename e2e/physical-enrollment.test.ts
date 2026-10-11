@@ -338,7 +338,8 @@ describe("simlock device add", () => {
   });
 
   it("naming a Simlock simulator's driverDeviceId, or an emulator's driverDeviceId and, separately, its address, answers virtual-device and the driver log has no inspectPhysical call", async () => {
-    const env = await startDaemon({});
+    const daemon = await httpDaemon({});
+    const env = daemon.env;
     const simulator = await leaseGrant(env, "ios", "sim-agent");
     const emulator = await leaseGrant(env, "android", "emu-agent");
     await env.driverLog.clear();
@@ -352,16 +353,15 @@ describe("simlock device add", () => {
       const result = await env.cli(["device", "add", "--platform", platform, id]);
       expect(result.code, `${id}: ${result.stderr}`).toBe(12);
       expect(result.error?.code).toBe("DEVICE_NOT_ENROLLABLE");
+      expect(result.error?.message).toContain("Simlock");
+      const http = await postDevice(daemon, { id, platform });
+      expect(http.status).toBe(422);
+      expect(http.body.error).toMatchObject({
+        code: "DEVICE_NOT_ENROLLABLE",
+        id,
+        reason: "virtual-device",
+      });
     }
-    const detail = await env.cli([
-      "device",
-      "add",
-      "--platform",
-      "ios",
-      simulator.device.driverDeviceId,
-      "--json",
-    ]);
-    expect(detail.error?.message).toContain("Simlock");
     expect(await inspectCalls(env)).toEqual([]);
   });
 

@@ -422,7 +422,7 @@ describe("PhysicalEnrollment", () => {
     expect(live(harness)).toHaveLength(1);
   });
 
-  it("answers DEVICE_BUSY busy to add and remove of a record in a state that is neither ready nor quarantined", async () => {
+  it("answers DEVICE_BUSY busy to add and remove of a record in a state that is none of ready, quarantined, leased or reclaiming", async () => {
     const harness = await build();
     await harness.core.enrollment.add("ios", UDID);
     const real = harness.registry.snapshot;

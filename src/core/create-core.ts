@@ -113,11 +113,6 @@ export interface Core {
   readonly warmPoolReader: WarmPoolReader;
   readonly catalog: CatalogReader & PassthroughResolver;
   readonly claims: DeviceOperationClaims;
-  /**
-   * Read-only claim view for `Doctor`, which must not read a device a service is actively
-   * operating on as a stalled transition. Exposed as a reader, not the claims themselves, so
-   * a consumer handed only this view cannot take or release a claim.
-   */
   readonly claimReader: Pick<DeviceOperationClaims, "isClaimed">;
   readonly cleanup: CleanupActionExecutor;
   readonly decisions: SerializedDecision;

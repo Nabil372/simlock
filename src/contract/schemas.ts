@@ -167,10 +167,9 @@ export const deviceRecordSchema = z
   .superRefine((device, context) => checkDeviceType(device, context, true));
 
 /**
- * What `status.get` returns to every agent, narrower than `deviceRecordSchema` (no `driverData`,
- * no bookkeeping timestamps). `driverDeviceId` is here only for a physical device: its canonical
- * ID is what an agent names to a command, so every role may see it; a virtual device's driver
- * address is not actionable for a caller that does not hold it, so it is dropped.
+ * `driverDeviceId` is here only for a physical device: its canonical ID is how an operator names
+ * it to `device remove`, so every role may see it; a virtual device's driver address is not
+ * actionable for a caller that does not hold it, so it is dropped.
  */
 export const statusDeviceSchema = z
   .object({
