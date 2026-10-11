@@ -207,6 +207,7 @@ export class FleetLeaseCoordinator {
     return this.#queue.depth;
   }
 
+  // fallow-ignore-next-line unused-class-member -- reached only through `GatewayDispatcher`'s `Pick<FleetLeaseCoordinator, ...>`-typed `coordinator` option.
   get physicalQueueDepth(): number {
     return this.#queue.physicalDepth;
   }
@@ -219,7 +220,6 @@ export class FleetLeaseCoordinator {
 
   /** Every request waiting in the fleet queue, or being dispatched, oldest first. Read by the
    * same function a worker lists its own with (`LeaseRequestBook#waiting`). */
-  // fallow-ignore-next-line unused-class-member -- reached only through `GatewayDispatcher`'s `Pick<FleetLeaseCoordinator, ...>`-typed `coordinator` option.
   waitingRequests(): readonly WaitingRequest[] {
     return this.requests.waiting(this.#queue.places());
   }

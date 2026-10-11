@@ -613,12 +613,15 @@ export class FakeDriver implements Driver {
   }
 
   estimate(estimate: DriverEstimate, spec: DeviceSpec): number {
-    // One 30 s read limit plus one 60 s uninstall limit, at both clean levels (ADR 0022 §4).
-    if (estimate.operation === "reclaim" && spec.physical) return PHYSICAL_RECLAIM_ESTIMATE_MS;
-    if (estimate.operation === "reclaim" && estimate.clean === "full") {
-      return this.#fullCleanReclaimEstimateMs ?? this.#estimateMs?.reclaim ?? 0;
-    }
-    return this.#estimateMs?.[estimate.operation] ?? 0;
+    if (estimate.operation !== "reclaim") return this.#estimateMs?.[estimate.operation] ?? 0;
+    return this.#reclaimEstimate(estimate.clean, spec);
+  }
+
+  /** A physical spec costs one 30 s read limit plus one 60 s uninstall limit, at both clean levels. */
+  #reclaimEstimate(clean: "standard" | "full", spec: DeviceSpec): number {
+    if (spec.physical) return PHYSICAL_RECLAIM_ESTIMATE_MS;
+    if (clean === "full") return this.#fullCleanReclaimEstimateMs ?? this.#estimateMs?.reclaim ?? 0;
+    return this.#estimateMs?.reclaim ?? 0;
   }
 
   leaseEnvironment(_device: DriverDevice): Readonly<Record<string, string>> {

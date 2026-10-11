@@ -144,6 +144,7 @@ export class AcquisitionPlanner {
    * order that nothing holds is claimed for the presence read the caller runs next; none is a
    * wait, or `no-capacity` under `noWait`.
    */
+  // fallow-ignore-next-line unused-class-member -- called through LeaseAcquisitionCoordinator's `AcquisitionPlannerPort`.
   planPhysical(input: PhysicalPlanInput): AcquisitionPlan {
     for (const device of input.snapshot.devices) {
       if (!device.physical || device.state !== "ready") continue;

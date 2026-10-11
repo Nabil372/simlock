@@ -236,7 +236,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
    * and version (ADR 0010 §5). `ComponentInstaller` calls it before it emits
    * `component.installed`, so the event never describes an install the registry does not hold.
    */
-  // fallow-ignore-next-line unused-class-member -- called through ComponentInstaller's registry port.
   async recordComponent(record: ComponentRecord): Promise<void> {
     const components = [
       ...this.#components.filter(
@@ -252,7 +251,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
    * `ComponentInstaller` calls it once the driver removed the component, before it emits
    * `component.removed`. Deleting a record that is not there commits nothing.
    */
-  // fallow-ignore-next-line unused-class-member -- called through ComponentInstaller's registry port.
   async deleteComponent(platform: Platform, version: string): Promise<void> {
     const components = this.#components.filter(
       (existing) => existing.platform !== platform || existing.version !== version,
@@ -364,7 +362,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
   }
 
   /** Records a failed purge retry without leaving `quarantined`; the caller re-arms backoff. */
-  // fallow-ignore-next-line unused-class-member -- called through QuarantineCoordinator's registry port.
   async recordQuarantineRetryFailure(
     deviceId: string,
     attempts: number,
@@ -402,7 +399,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
   }
 
   /** Commits a successful quarantine retry; the device rejoins the warm pool. */
-  // fallow-ignore-next-line unused-class-member -- called through QuarantineCoordinator's registry port.
   async recoverFromQuarantine(deviceId: string, to: "ready" | "shutdown"): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (device.state !== "quarantined") {
@@ -441,7 +437,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated);
   }
 
-  // fallow-ignore-next-line unused-class-member -- called through QuarantineCoordinator's registry port.
   async deleteQuarantined(deviceId: string, initiator: string): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (device.state !== "quarantined") {
@@ -505,7 +500,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
   }
 
   /** Marks a recovery boot attempt; keeps the first-seen start time across retries. */
-  // fallow-ignore-next-line unused-class-member -- called through LeaseHealthMonitor's registry port.
   async markRecoveryAttempt(deviceId: string, at: number): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     const updated = {
@@ -520,7 +514,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
   }
 
   /** Clears recovery markers once recovery has finished, one way or another. */
-  // fallow-ignore-next-line unused-class-member -- called through LeaseHealthMonitor's registry port.
   async clearRecovery(deviceId: string): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (device.recoveringSince === undefined && device.recoveryAttempts === undefined) {
@@ -564,7 +557,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
    * `announceLeaseEnd` runs once the write has committed and before `device.deleted` is emitted,
    * so the lease's own fact precedes the device's. The registry never names a lease event itself.
    */
-  // fallow-ignore-next-line unused-class-member -- called through LeaseLifecycle's registry port.
   async endLeaseAndMarkDeviceMissing(
     leaseId: string,
     initiator: string,
@@ -827,7 +819,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
    * *next* body-less renew re-applies), and `lastRenewedAt`. All three are persisted together,
    * so a daemon restart mid-lease restores the renewed deadline rather than the grant-time one.
    */
-  // fallow-ignore-next-line unused-class-member -- called through LeaseLifecycle's registry port.
   async renewLease(leaseId: string, ttlDeadline: number, ttlMs: number): Promise<LeaseRecord> {
     const index = this.#leases.findIndex((lease) => lease.id === leaseId);
     const lease = this.#leases[index];
