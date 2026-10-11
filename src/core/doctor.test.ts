@@ -443,6 +443,9 @@ describe("Doctor", () => {
       ]),
     });
     expect(registry.snapshot.devices[0]?.state).toBe("deleted");
+    expect(eventBus.replay().filter((entry) => entry.event === "device.deleted")).toMatchObject([
+      { payload: { initiator: "doctor" } },
+    ]);
     expect(driver.calls.filter((call) => call.operation === "destroy")).toHaveLength(0);
     expect(driver.calls.filter((call) => call.operation === "shutdown")).toHaveLength(0);
 

@@ -717,10 +717,7 @@ export class Doctor {
     if (snapshot.leases.some((lease) => lease.deviceId === deviceId)) {
       return;
     }
-    const device = snapshot.devices.find((candidate) => candidate.id === deviceId);
-    if (device !== undefined && device.state !== "deleted") {
-      await this.options.registry.markDeviceMissing(deviceId, "doctor");
-    }
+    await this.options.registry.markDeviceMissing(deviceId, "doctor");
   }
 
   /**
