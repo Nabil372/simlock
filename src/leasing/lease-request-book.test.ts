@@ -17,7 +17,6 @@ import { RequestCancelledError } from "./wait-queue.js";
 
 const statePath = "/home/agent/.simlock/state.json";
 const request = {
-  physical: false,
   model: "iPhone 16",
   osVersion: "26.5",
   platform: "ios",

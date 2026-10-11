@@ -354,6 +354,7 @@ export class Dispatcher {
       host,
       installs: [...this.options.components.inProgress()],
       leases: [...snapshot.leases],
+      physicalQueueDepth: this.options.queue.physicalQueueDepth,
       queueDepth: this.options.queue.queueDepth,
       waiting: [...this.options.queue.waitingRequests()],
       warmPool: this.options.warmPool.figures(),

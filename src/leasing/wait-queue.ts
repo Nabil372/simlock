@@ -112,17 +112,29 @@ interface MutableWaiter extends Waiter {
   deadlineAt: number | undefined;
 }
 
+/**
+ * The two lines a waiter can stand in (ADR 0022): physical requests wait for a device and virtual
+ * ones for a turn, so neither is ever held behind the other.
+ */
+export type QueueLine = "virtual" | "physical";
+
 export interface WaitQueueOptions {
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
   /** Called after a timed-out waiter has been removed and rejected. */
   readonly onTimeout?: (waiter: Waiter) => void;
-  /** Called with the new depth each time a waiter joins or leaves the FIFO. */
-  readonly onDepthChange?: ((depth: number) => void) | undefined;
+  /** Called with the new depth of a line each time a waiter joins or leaves it. */
+  readonly onDepthChange?: ((depth: number, line: QueueLine) => void) | undefined;
+}
+
+/** The line a request waits in: its own, by whether it asked for a physical device. */
+export function lineOf(request: DeviceRequest): QueueLine {
+  return request.physical === true ? "physical" : "virtual";
 }
 
 /**
- * FIFO state and promises for requests that are waiting to acquire a lease.
+ * FIFO state and promises for requests that are waiting to acquire a lease. One arrival order,
+ * counted per line: a position, a depth and the head are each a line's own.
  *
  * This class deliberately does not decide whether capacity exists or perform
  * any lease work. Its owner advances waiters between `new`, `processing`, and
@@ -136,16 +148,18 @@ export class WaitQueue {
 
   constructor(private readonly options: WaitQueueOptions) {}
 
+  /** The virtual line's waiters; the physical line's are `physicalDepth`. */
   get depth(): number {
-    return this.#waiters.length;
+    return this.#line("virtual").length;
   }
 
   get physicalDepth(): number {
-    return 0;
+    return this.#line("physical").length;
   }
 
+  /** The oldest virtual waiter holding a slot: a physical waiter is never the head. */
   get head(): Waiter | undefined {
-    return this.#waiters[0];
+    return this.#line("virtual")[0];
   }
 
   /**
@@ -161,16 +175,16 @@ export class WaitQueue {
   }
 
   /**
-   * Every waiter not yet granted or rejected, oldest first, with its place in the FIFO while it
-   * is `queued`: its 1-based index there, counting the waiters ahead of it that are already being
-   * worked on, which is how a `queued` progress report and `lease.queued` count. A waiter being
+   * Every waiter not yet granted or rejected, oldest first, with its place in its own line while
+   * it is `queued`: its 1-based index there, counting the waiters ahead of it in that line that are
+   * already being worked on, which is how a `queued` progress report and `lease.queued` count. A waiter being
    * worked on (`new` or `processing`) has no place. Read now, not as last reported: a waiter
    * moves up as the ones ahead of it leave.
    */
   places(): readonly QueuePlace[] {
     return [...this.#pendingWaiters].map((waiter) =>
       waiter.state === "queued"
-        ? { id: waiter.id, queuePosition: this.#waiters.indexOf(waiter) + 1 }
+        ? { id: waiter.id, queuePosition: this.#line(lineOf(waiter.request)).indexOf(waiter) + 1 }
         : { id: waiter.id },
     );
   }
@@ -247,8 +261,10 @@ export class WaitQueue {
 
     if (!this.#waiters.includes(mutable)) {
       this.#waiters.push(mutable);
-      this.options.onDepthChange?.(this.#waiters.length);
-      this.notifyProgress(mutable, { queuePosition: this.#waiters.length, stage: "queued" });
+      const line = lineOf(mutable.request);
+      const depth = this.#line(line).length;
+      this.options.onDepthChange?.(depth, line);
+      this.notifyProgress(mutable, { queuePosition: depth, stage: "queued" });
     }
     mutable.state = "queued";
     this.#armTimeout(mutable);
@@ -399,13 +415,18 @@ export class WaitQueue {
     const index = this.#waiters.indexOf(waiter);
     if (index !== -1) {
       this.#waiters.splice(index, 1);
-      this.options.onDepthChange?.(this.#waiters.length);
+      const line = lineOf(waiter.request);
+      this.options.onDepthChange?.(this.#line(line).length, line);
     }
     this.#pendingWaiters.delete(waiter);
     if (waiter.timer !== undefined) {
       this.options.clock.cancel(waiter.timer);
       waiter.timer = undefined;
     }
+  }
+
+  #line(line: QueueLine): MutableWaiter[] {
+    return this.#waiters.filter((waiter) => lineOf(waiter.request) === line);
   }
 
   #mutable(waiter: Waiter): MutableWaiter {

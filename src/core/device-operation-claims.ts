@@ -5,7 +5,9 @@ export type DeviceOperation =
   | "nuke"
   | "recovery"
   | "reclaim"
-  | "enrollment";
+  | "enrollment"
+  /** A physical device being granted: its presence read runs under this claim (ADR 0022 §3). */
+  | "grant";
 
 export interface DeviceOperationClaim {
   readonly deviceId: string;

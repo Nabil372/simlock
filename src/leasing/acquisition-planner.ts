@@ -11,8 +11,11 @@ import {
   type DeviceRequirement,
   exactRequirement,
   fits,
+  fitsPhysical,
   type LeaseRecord,
   mayBeGranted,
+  type PhysicalDevice,
+  type PhysicalRequest,
   type Platform,
   specMode,
   selectIdleRunningVictim,
@@ -47,8 +50,26 @@ export interface AcquisitionPlannerInput {
   readonly classOf?: ((model: string) => DeviceClass | undefined) | undefined;
 }
 
+/** What a physical request plans from: no spec, no catalog, only the enrolled devices. */
+export interface PhysicalPlanInput {
+  readonly request: PhysicalRequest;
+  readonly noWait: boolean;
+  /** The waiter's id, put on the grant claim the plan takes. */
+  readonly owner: string;
+  readonly snapshot: AcquisitionPlannerSnapshot;
+  /** Devices this waiter read not present in the drive that is planning: not tried again. */
+  readonly absent: ReadonlySet<string>;
+  /** Whether an older physical waiter still `queued` matches the device: it has first claim. */
+  readonly heldByOlder: (device: PhysicalDevice) => boolean;
+}
+
 export type AcquisitionPlan =
   | { readonly kind: "grant-ready"; readonly device: DeviceRecord }
+  | {
+      readonly kind: "grant-physical";
+      readonly claim: DeviceOperationClaim;
+      readonly device: PhysicalDevice;
+    }
   | {
       readonly kind: "boot-shutdown";
       readonly capacityReservation: CapacityReservation;
@@ -115,6 +136,23 @@ export class AcquisitionPlanner {
     if (shutdown !== undefined) return this.#planShutdownBoot(input, shutdown);
 
     return this.#planProvision(input);
+  }
+
+  /**
+   * A physical request is granted a device that is `ready`, never one a driver must boot,
+   * provision or evict, and it reserves no capacity (ADR 0022 §3). The first match in snapshot
+   * order that nothing holds is claimed for the presence read the caller runs next; none is a
+   * wait, or `no-capacity` under `noWait`.
+   */
+  planPhysical(input: PhysicalPlanInput): AcquisitionPlan {
+    for (const device of input.snapshot.devices) {
+      if (!device.physical || device.state !== "ready") continue;
+      if (input.absent.has(device.id) || this.claims.isClaimed(device.id)) continue;
+      if (!fitsPhysical(device, input.request) || input.heldByOlder(device)) continue;
+      const claim = this.claims.tryClaim(device.id, "grant", input.owner);
+      if (claim !== undefined) return { claim, device, kind: "grant-physical" };
+    }
+    return blocked(input.noWait);
   }
 
   #isOnItsWay(device: VirtualDevice, serves: (device: DeviceRecord) => boolean): boolean {

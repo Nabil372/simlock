@@ -19,7 +19,9 @@ export interface LeaseCommands {
 
 /** Pending-demand operations used by status and connection cleanup. */
 export interface QueueControl {
+  /** The virtual line's waiters; a physical request waits in its own line. */
   readonly queueDepth: number;
+  readonly physicalQueueDepth: number;
   cancelPending(requesterId: string): Promise<"cancelled" | "not-found" | "not-cancellable">;
   /** ADR §4: the session principal a pending request was created under -- always the creating
    * session's principal (`LeaseRequestOptions.ownerId`), never the caller-suppliable

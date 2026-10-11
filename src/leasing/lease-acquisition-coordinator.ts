@@ -19,6 +19,11 @@ import {
   type DeviceClass,
   type DeviceMode,
   type DeviceRecord,
+  fitsPhysical,
+  noPhysicalMatch,
+  type PhysicalDevice,
+  type PhysicalRequest,
+  readPhysicalPresence,
   type VirtualDevice,
   type DeviceRequirement,
   type DeviceSpec,
@@ -54,12 +59,17 @@ import {
   type TargetResolution,
   type WaitingDemand,
 } from "../core/index.js";
-import { type AcquisitionPlan, type AcquisitionPlanner } from "./acquisition-planner.js";
+import {
+  type AcquisitionPlan,
+  type AcquisitionPlanner,
+  type PhysicalPlanInput,
+} from "./acquisition-planner.js";
 import { emitLeaseRefusal } from "./lease-refusal.js";
 import { type LeaseRequestBook } from "./lease-request-book.js";
 import { type LeaseLifecycle } from "./lease-lifecycle.js";
 import {
   LeaseIdTakenError,
+  lineOf,
   type LeaseRequestOptions,
   RequestCancelledError,
   RequesterAlreadyLeasedError,
@@ -91,10 +101,10 @@ export interface LeaseAcquisitionRegistry {
   };
 }
 
-export type AcquisitionClaims = Pick<DeviceOperationClaims, "isClaimed" | "tryClaim">;
+export type AcquisitionClaims = Pick<DeviceOperationClaims, "isActive" | "isClaimed" | "tryClaim">;
 export type AcquisitionDecision = Pick<SerializedDecision, "run">;
 export type AcquisitionDrivers = Pick<DriverCatalog, "get">;
-export type AcquisitionPlannerPort = Pick<AcquisitionPlanner, "plan">;
+export type AcquisitionPlannerPort = Pick<AcquisitionPlanner, "plan" | "planPhysical">;
 export type AcquisitionQueue = Pick<
   WaitQueue,
   | "create"
@@ -109,6 +119,7 @@ export type AcquisitionQueue = Pick<
   | "markProcessing"
   | "notifyProgress"
   | "pending"
+  | "physicalDepth"
   | "reject"
   | "resolve"
 >;
@@ -161,19 +172,28 @@ interface AcquisitionWaiter extends Waiter {
 }
 
 /** The kinds of plan that end in a grant. An eviction never does: the plan made after it does. */
-type GrantingPlanKind = "grant-ready" | "boot-shutdown" | "provision";
+type GrantingPlanKind = "grant-ready" | "grant-physical" | "boot-shutdown" | "provision";
 
 /** The one place a plan's kind becomes the `source` a `lease.granted` reports. */
 const GRANT_SOURCE: Readonly<Record<GrantingPlanKind, EventMap["lease.granted"]["source"]>> = {
   "boot-shutdown": "booted",
+  "grant-physical": "warm",
   "grant-ready": "warm",
   provision: "provisioned",
 };
 
 type OperationPlan = Exclude<
   AcquisitionPlan,
-  { readonly kind: "grant-ready" | "wait" | "no-capacity" }
+  { readonly kind: "grant-ready" | "grant-physical" | "wait" | "no-capacity" }
 >;
+
+/** A refused physical request names what no enrolled device matches, not a catalog it never read. */
+class PhysicalUnknownModelError extends UnknownModelError {
+  constructor(request: PhysicalRequest) {
+    super(request.platform, request.model, request.model === undefined ? request.class : undefined);
+    this.message = noPhysicalMatch(request).message;
+  }
+}
 
 const noTiming: LeaseTiming = {
   estimatedBootMs: 0,
@@ -194,8 +214,13 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     this.#logger = options.logger?.child("lease-acquisition-coordinator") ?? new NoopLogger();
   }
 
+  /** The virtual line's waiters; physical ones are `physicalQueueDepth`. */
   get queueDepth(): number {
     return this.options.queue.depth;
+  }
+
+  get physicalQueueDepth(): number {
+    return this.options.queue.physicalDepth;
   }
 
   /**
@@ -384,6 +409,12 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
       await this.options.decisions.run(async () => {
         this.#reject(waiter, asError(error), "unresolvable-spec");
       });
+      return;
+    }
+    // A physical request names an enrolled device, so it reads no catalog, defaults no mode and
+    // downloads nothing: it goes straight to the drive, which matches it against the registry.
+    if (request.physical === true) {
+      await this.#drive(waiter);
       return;
     }
     try {
@@ -601,7 +632,9 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
    * the FIFO list at all on a first-attempt direct dispatch) -- the same state the timeout
    * timer leaves untouched -- so this reports `not-cancellable` rather than inventing a new
    * rule for tearing down in-flight driver work; nuke's `cancelAll` already owns that harder
-   * problem, with its own drain of `#activeWorkflows`.
+   * problem, with its own drain of `#activeWorkflows`. A physical waiter has no such work: its
+   * only step in flight is a presence read, which changes nothing and whose grant is refused for
+   * a waiter that has ended, so it is cancellable in any live state.
    */
   async cancelPending(requesterId: string): Promise<"cancelled" | "not-found" | "not-cancellable"> {
     return this.options.decisions.run(async () => {
@@ -609,7 +642,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         | AcquisitionWaiter
         | undefined;
       if (waiter === undefined) return "not-found";
-      if (waiter.state !== "queued") return "not-cancellable";
+      if (waiter.state !== "queued" && waiter.request.physical !== true) return "not-cancellable";
       this.#reject(waiter, new RequestCancelledError(waiter.id), "cancelled");
       return "cancelled";
     });
@@ -676,11 +709,148 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     if (this.#driving.has(waiter)) return;
     this.#driving.add(waiter);
     try {
+      if (waiter.request.physical === true) {
+        await this.#drivePhysical(waiter);
+        return;
+      }
       const action = await this.options.decisions.run(async () => this.#decide(waiter));
       await this.#perform(waiter, action);
     } finally {
       this.#driving.delete(waiter);
     }
+  }
+
+  /**
+   * Drives a physical waiter: plan, read presence outside the serialized decision, grant or plan
+   * again without the device that read not present. Each pass releases its claim before the next
+   * one starts (architecture rule 12); `absent` lives for this drive only, so a later wake reads
+   * the device afresh.
+   */
+  async #drivePhysical(waiter: AcquisitionWaiter): Promise<void> {
+    const absent = new Set<string>();
+    for (;;) {
+      const plan = await this.options.decisions.run(async () =>
+        this.#decidePhysical(waiter, absent),
+      );
+      if (plan === undefined) return;
+      if (!(await this.#grantPhysical(waiter, plan, absent))) return;
+    }
+  }
+
+  /** The one could-match check, run on every drive; then the planner's choice among ready devices. */
+  #decidePhysical(
+    waiter: AcquisitionWaiter,
+    absent: ReadonlySet<string>,
+  ): Extract<AcquisitionPlan, { readonly kind: "grant-physical" }> | undefined {
+    if (waiter.state === "rejected" || waiter.state === "granted") return undefined;
+    if (this.#admissionClosed) {
+      this.#reject(waiter, new NukeCancelledError(), "killed");
+      return undefined;
+    }
+    const request = physicalRequestOf(waiter.request);
+    const enrolled = this.options.registry.snapshot.devices;
+    if (
+      !enrolled.some(
+        (device) => device.physical && device.state !== "deleted" && fitsPhysical(device, request),
+      )
+    ) {
+      this.#reject(waiter, new PhysicalUnknownModelError(request), "unresolvable-spec");
+      return undefined;
+    }
+    const plan = this.options.planner.planPhysical({
+      absent,
+      heldByOlder: this.#heldByOlder(waiter),
+      noWait: waiter.options.noWait ?? false,
+      owner: waiter.id,
+      request,
+      snapshot: this.options.registry.snapshot,
+    });
+    if (plan.kind !== "grant-physical") {
+      this.#defer(waiter);
+      return undefined;
+    }
+    if (!this.options.queue.markProcessing(waiter)) {
+      plan.claim.release();
+      return undefined;
+    }
+    return plan;
+  }
+
+  /**
+   * A device an older physical waiter still `queued` matches is that waiter's to take first. One
+   * mid presence read is `processing`, not `queued`, and holds nothing back: it already has the
+   * device it is reading.
+   */
+  #heldByOlder(waiter: AcquisitionWaiter): PhysicalPlanInput["heldByOlder"] {
+    const older: PhysicalRequest[] = [];
+    for (const other of this.options.queue.pending()) {
+      if (other === waiter) break;
+      if (lineOf(other.request) === "physical" && other.state === "queued") {
+        older.push(physicalRequestOf(other.request));
+      }
+    }
+    return (device: PhysicalDevice) => older.some((request) => fitsPhysical(device, request));
+  }
+
+  /**
+   * Reads the claimed device's presence, then grants it in one decision when the claim is still
+   * active, the device is still `ready` and the waiter is still live. Whether the waiter should
+   * plan again. A read that rejects counts as not present (the driver bounds it); a not-present
+   * read leaves the device as it was and wakes nothing, as the same waiter would read it again at
+   * once.
+   */
+  async #grantPhysical(
+    waiter: AcquisitionWaiter,
+    plan: Extract<AcquisitionPlan, { readonly kind: "grant-physical" }>,
+    absent: Set<string>,
+  ): Promise<boolean> {
+    const { claim, device } = plan;
+    let present = false;
+    try {
+      const reads = await readPhysicalPresence(this.options.drivers.get(device.spec.platform), [
+        device.driverDeviceId,
+      ]);
+      present = reads.get(device.driverDeviceId) === true;
+    } catch (error: unknown) {
+      this.#logFailure(
+        "reading a physical device's presence failed",
+        waiter,
+        device,
+        "presence",
+        error,
+      );
+    }
+    let granted = false;
+    let replan = false;
+    await this.options.decisions.run(async () => {
+      try {
+        // A waiter that timed out, was cancelled or was killed meanwhile is not granted:
+        // `markProcessing` refuses a terminal one and ends one past its deadline.
+        if (!this.options.queue.markProcessing(waiter)) return;
+        const current = this.options.registry.snapshot.devices.find(
+          (candidate) => candidate.id === device.id,
+        );
+        if (
+          !present ||
+          !this.options.claims.isActive(claim) ||
+          current === undefined ||
+          current.state !== "ready"
+        ) {
+          absent.add(device.id);
+          replan = true;
+          return;
+        }
+        await this.#grant(waiter, current, plan.kind);
+        granted = true;
+      } catch (error: unknown) {
+        this.#logFailure("granting a physical device failed", waiter, device, "grant", error);
+        this.#defer(waiter);
+      } finally {
+        claim.release();
+      }
+    });
+    if (granted) this.#wakeQueue();
+    return replan;
   }
 
   async #perform(waiter: AcquisitionWaiter, action: OperationPlan | undefined): Promise<void> {
@@ -1036,7 +1206,13 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     if (this.options.queue.enqueue(waiter) && !alreadyQueued) {
       this.options.eventBus.emit(
         "lease.queued",
-        { queuePosition: this.options.queue.depth, requestId: waiter.id },
+        {
+          queuePosition:
+            lineOf(waiter.request) === "physical"
+              ? this.options.queue.physicalDepth
+              : this.options.queue.depth,
+          requestId: waiter.id,
+        },
         "lease-acquisition-coordinator",
       );
     }
@@ -1073,6 +1249,13 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     void this.options.decisions.run(async () => {
       const next = this.options.queue.head as AcquisitionWaiter | undefined;
       if (next !== undefined && next.state === "queued") this.#track(this.#drive(next));
+      // A physical waiter waits for a device, not for a turn: each one queued is driven, oldest
+      // first, and the planner keeps a device with the oldest waiter that matches it.
+      for (const waiter of this.options.queue.pending() as readonly AcquisitionWaiter[]) {
+        if (lineOf(waiter.request) === "physical" && waiter.state === "queued") {
+          this.#track(this.#drive(waiter));
+        }
+      }
     });
   }
 
@@ -1138,9 +1321,22 @@ function releaseReclaimEstimateMs(driver: Driver, spec: DeviceSpec): number {
 }
 
 function operationPlan(plan: AcquisitionPlan): OperationPlan | undefined {
-  return plan.kind === "grant-ready" || plan.kind === "wait" || plan.kind === "no-capacity"
+  return plan.kind === "grant-ready" ||
+    plan.kind === "grant-physical" ||
+    plan.kind === "wait" ||
+    plan.kind === "no-capacity"
     ? undefined
     : plan;
+}
+
+/** What a physical request asks of a device: the fields it set, and none it left out. */
+function physicalRequestOf(request: DeviceRequest): PhysicalRequest {
+  return {
+    platform: request.platform,
+    ...(request.model === undefined ? {} : { model: request.model }),
+    ...(request.class === undefined ? {} : { class: request.class }),
+    ...(request.osVersion === undefined ? {} : { osVersion: request.osVersion }),
+  };
 }
 
 /** The spec without a planned mode: the full spec of the same model and runtime. */

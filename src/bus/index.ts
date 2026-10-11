@@ -131,7 +131,11 @@ export interface EventMap {
   };
   /** The depth of a wait queue changed (a worker's, or a gateway's fleet queue), and once at
    * startup. */
-  "queue.changed": { readonly depth: number };
+  "queue.changed": {
+    readonly depth: number;
+    /** Present only when the physical line changed; `depth` is then that line's (ADR 0022). */
+    readonly physical?: true;
+  };
   "device.provisioned": {
     readonly deviceId: string;
     readonly spec: unknown;

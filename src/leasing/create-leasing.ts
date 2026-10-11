@@ -150,7 +150,12 @@ export function createLeasing(options: LeasingOptions): Leasing {
   const queue = new WaitQueue({
     clock: options.clock,
     idGenerator: options.idGenerator,
-    onDepthChange: (depth) => options.eventBus.emit("queue.changed", { depth }, "wait-queue"),
+    onDepthChange: (depth, line) =>
+      options.eventBus.emit(
+        "queue.changed",
+        line === "physical" ? { depth, physical: true } : { depth },
+        "wait-queue",
+      ),
     onTimeout: (waiter) => {
       emitLeaseRefusal(
         options.eventBus,
@@ -272,6 +277,9 @@ export function createLeasing(options: LeasingOptions): Leasing {
     },
     get queueDepth(): number {
       return acquisition.queueDepth;
+    },
+    get physicalQueueDepth(): number {
+      return acquisition.physicalQueueDepth;
     },
     waitingRequests: () => requests.waiting(queue.places()),
     cancelPending: async (requesterId: string) => acquisition.cancelPending(requesterId),
