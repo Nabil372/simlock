@@ -261,9 +261,9 @@ path that no longer exists, a behaviour, order, owner, default or limit that
 changed. Blocking: a false claim. Note: a claim that is true but misleading.
 ```
 
-**Comment review**: `subagent_type: "comment-reviewer"`, with `rules:
-$R/rules`, `comments: $R/comments.txt` (from round 2, `$R/comments-fix.txt`)
-and `worktree:` the claims worktree. Nothing else.
+**Comment review**: `subagent_type: "comment-reviewer"`, with
+`rules: $R/rules`, `comments: $R/comments.txt` (from round 2,
+`$R/comments-fix.txt`) and `worktree:` the claims worktree. Nothing else.
 
 **Common tail** (every brief but the comment review's):
 

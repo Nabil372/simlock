@@ -150,10 +150,10 @@ built.
   mode, with the head you started from in place of `origin/main`):
   `node .agents/scripts/comments.mjs origin/main`. It lists every comment
   the diff adds or edits, and every comment within 20 lines of code it
-  adds. Hand it to a `comment-reviewer` agent with `rules:
-docs/internal/agent-rules`, `comments: <that file>` and `worktree: <your
-worktree>`. Delete each part it flags; never reword one into a new
-  comment.
+  adds. Hand it to a `comment-reviewer` agent with
+  `rules: docs/internal/agent-rules`, `comments: <that file>` and
+  `worktree: <your worktree>`. Delete each part it flags; never reword one
+  into a new comment.
 - **Promised.** For every Scope and Done when line, name the hunk or test
   that delivers it. None: do it, or leave the line unticked and say why
   under `open`. Never tick a box on intent.
