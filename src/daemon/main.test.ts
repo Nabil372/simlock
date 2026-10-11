@@ -634,11 +634,18 @@ describe("startDaemon wires core and leasing together", () => {
     const writeHeld = new Promise<void>((resolve) => {
       releaseWrite = resolve;
     });
+    let reachWrite: () => void = () => undefined;
+    const writeReached = new Promise<void>((resolve) => {
+      reachWrite = resolve;
+    });
     class HoldingFilesystem extends MemoryFilesystem {
       async writeFileAtomic(
         ...arguments_: Parameters<MemoryFilesystem["writeFileAtomic"]>
       ): Promise<void> {
-        if (holdWrites && arguments_[0] === statePath) await writeHeld;
+        if (holdWrites && arguments_[0] === statePath) {
+          reachWrite();
+          await writeHeld;
+        }
         return super.writeFileAtomic(...arguments_);
       }
     }
@@ -678,7 +685,9 @@ describe("startDaemon wires core and leasing together", () => {
     const starting = startDaemon(
       options(new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" })),
     );
-    await settleRealTime();
+    // Waits on the write itself, not on real time: how long startup takes to reach it depends on
+    // the machine's load. The race lets a startup that never writes fail on the count below.
+    await Promise.race([writeReached, starting]);
     const timersWhileLeasingStartupPending = clock.pendingTimerCount;
     releaseWrite();
     runningDaemons.push(await starting);
