@@ -173,7 +173,7 @@ describe("createCore", () => {
     after.core.connect({ ...ports(), physicalDeviceReady: (id) => void ready.push(id) });
     const result = await after.core.enrollment.add("ios", "UDID-1");
 
-    expect(ready).toEqual([(result as unknown as { created: { id: string } }).created.id]);
+    expect(ready).toEqual([(result as unknown as { device: { id: string } }).device.id]);
   });
 
   it("after connect, nuke fences acquisition, then release, releases every lease, and lifts both fences in reverse", async () => {
