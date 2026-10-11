@@ -459,6 +459,63 @@ describe("Doctor", () => {
     expect(driver.calls.filter((call) => call.operation === "shutdown")).toHaveLength(0);
   });
 
+  it("--fix marks a missing device deleted although another device holds a lease", async () => {
+    const clock = new FakeClock(10_000);
+    const eventBus = new EventBus(clock);
+    const registry = await Registry.load({
+      clock,
+      eventBus,
+      filesystem: new MemoryFilesystem(),
+      idGenerator: sequence(),
+      statePath: "/state.json",
+    });
+    const spec = { physical: false, model: "Phone", osVersion: "1", platform: "ios" } as const;
+    const ids: string[] = [];
+    for (const name of ["live", "gone"]) {
+      const device = await registry.registerDevice({
+        driverData: { fakeDeviceId: name },
+        driverDeviceId: name,
+        provisionDuration: 0,
+        spec,
+      });
+      await registry.transitionDevice(device.id, "ready", {
+        event: "device.ready",
+        payload: { bootDuration: 0, deviceId: device.id },
+      });
+      ids.push(device.id);
+    }
+    await registry.createLease({
+      deviceId: ids[0] ?? "",
+      requesterId: "agent",
+      ownerId: "agent",
+      ttlMs: 60_000,
+      ttlDeadline: 90_000,
+    });
+    const driver = new FakeDriver({ clock, platform: "ios" });
+    driver.setManagedReality({
+      devices: [
+        {
+          address: "live-address",
+          deviceId: "live",
+          driverData: { fakeDeviceId: "live" },
+          runState: "running",
+        },
+      ],
+      processes: [],
+    });
+
+    await new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile({ fix: true });
+
+    expect(registry.snapshot.devices.map((device) => device.state)).toEqual(["leased", "deleted"]);
+  });
+
   it.each([
     {
       name: "--fix marking a missing device deleted",
