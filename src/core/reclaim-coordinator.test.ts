@@ -233,10 +233,14 @@ describe("ReclaimCoordinator", () => {
   it("asks the driver for the strategy of a standard clean before it reclaims", async () => {
     const harness = await createHarness();
     const strategy = vi.spyOn(harness.driver, "reclaimStrategy");
+    const reclaim = vi.spyOn(harness.driver, "reclaim");
 
     await harness.coordinator.reclaim(released(harness.reclaiming));
 
     expect(strategy.mock.calls.map((call) => call[1])).toEqual([{ clean: "standard" }]);
+    expect(strategy.mock.invocationCallOrder[0]).toBeLessThan(
+      reclaim.mock.invocationCallOrder[0] as number,
+    );
   });
 
   it("emits device.reclaimed for a virtual device without a missingApps field", async () => {

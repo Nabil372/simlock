@@ -384,7 +384,7 @@ describe("createLeasing with physical devices", () => {
     expect(stateOf(harness, device)).toBe("reclaiming");
   });
 
-  it("grants both of two queued physical requests that match two devices that become ready at once: the first grant wakes the queue", async () => {
+  it("grants both of two queued physical requests that match two devices that become ready at once: two devices, two waiters, one wake", async () => {
     const harness = await createHarness();
     const first = await enrollIphone(harness, "UDID-A");
     const second = await enrollIphone(harness, "UDID-B");
@@ -428,6 +428,23 @@ describe("createLeasing with physical devices", () => {
     expect(killed.harness.registry.snapshot.leases).toEqual([]);
     expect(stateOf(killed.harness, killed.device)).toBe("ready");
     expect(killed.harness.engine.core.claims.isClaimed(killed.device.id)).toBe(false);
+  });
+
+  it("grants the next queued physical request the device that a cancelled waiter held a grant claim on during its presence read", async () => {
+    const harness = await createHarness();
+    const device = await enrollIphone(harness, "UDID-A");
+    harness.driver.holdPresenceReads("UDID-A");
+    const cancelled = harness.engine.request(physicalRequest, asking("cancelled"));
+    await flush();
+    expect(claimKind(harness, device)).toBe("grant");
+    const next = harness.engine.request(physicalRequest, asking("next"));
+    await flush();
+
+    expect(await harness.engine.cancelPending("cancelled")).toBe("cancelled");
+    harness.driver.releasePresenceReads();
+
+    expect(await outcome(cancelled)).toBeInstanceOf(RequestCancelledError);
+    expect(await outcome(next)).toMatchObject({ device: { id: device.id } });
   });
 
   it("releases the grant claim and leaves the device ready when the lease write of a physical grant throws", async () => {

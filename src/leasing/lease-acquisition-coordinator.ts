@@ -744,7 +744,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         error,
       );
     }
-    let granted = false;
     let replan = false;
     await this.options.decisions.run(async () => {
       try {
@@ -758,7 +757,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
           return;
         }
         await this.#grant(waiter, current, plan.kind);
-        granted = true;
       } catch (error: unknown) {
         this.#logFailure("granting a physical device failed", waiter, device, "grant", error);
         this.#defer(waiter);
@@ -766,7 +764,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         claim.release();
       }
     });
-    if (granted) this.#wakeQueue();
+    if (!replan) this.#wakeQueue();
     return replan;
   }
 

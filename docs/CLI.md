@@ -288,7 +288,7 @@ granted.
   simulator or emulator. See [Leasing a physical device](#leasing-a-physical-device).
   A lease without it never gets one. `--mode`, `--image-tag` and
   `--allow-download` mean nothing for a physical device, so naming any of them
-  with `--physical` is a `BAD_REQUEST` (exit 2) whose message names the option.
+  with `--physical` is a `BAD_REQUEST` (exit 2) whose message names the request field (`imageTag`, `allowDownload`).
 - `--detach` — print the lease result (the same JSON shape as the grant line
   below, including `device.mode`) and exit instead of staying
   alive. Nothing then renews the lease on your behalf: keep it with
@@ -533,8 +533,8 @@ waits, and the device stays `ready`. The grant is checked against the device
 when it is made, so nothing is granted that is unplugged.
 
 Physical and simulator requests wait in separate lines. A simulator request is
-never held behind a physical one, nor the reverse, and a request for one
-model never waits behind a request for another. `queuePosition` and the
+never held behind a physical one, nor the reverse, and a physical request for one
+model never waits behind a physical request for another. `queuePosition` and the
 `queued at` place count within the request's own line, `queueDepth` in
 `status` counts the simulator line, and `physicalQueueDepth` the physical one.
 A physical request in `list --requests` is marked `physical`.

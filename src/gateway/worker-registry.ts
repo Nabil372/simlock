@@ -100,6 +100,7 @@ function withoutReadFields(view: WorkerView): WorkerView {
     devices: _devices,
     installs: _installs,
     leases: _leases,
+    physicalQueueDepth: _physicalQueueDepth,
     queueDepth: _queueDepth,
     waiting: _waiting,
     warmPool: _warmPool,

@@ -77,8 +77,8 @@ export interface RegistrySnapshot {
   /**
    * The virtual read: every record that is not physical, in snapshot order. The paths that boot,
    * shut down, destroy or count devices read this instead of writing the filter themselves
-   * (ADR 0022 §4). Three paths still test `device.physical` themselves: `LeaseReconciler`,
-   * `ReclaimCoordinator` and `QuarantineCoordinator#armUnlessPhysical`. Doctor's orphan key set
+   * (ADR 0022 §4). Paths that still test `device.physical` themselves: `LeaseReconciler`,
+   * `ReclaimCoordinator` and `QuarantineCoordinator`. Doctor's orphan key set
    * reads every device and filters none.
    */
   readonly virtualDevices: readonly VirtualDevice[];

@@ -59,7 +59,7 @@ export class QuarantineCoordinator {
     this.#logger = options.logger?.child("quarantine-coordinator") ?? new NoopLogger();
   }
 
-  // No `notifyAvailability`: a quarantined device still counts as running, so no waiter can be satisfied by this.
+  // No `notifyAvailability`: a quarantined virtual device still counts as running, and a physical device counts toward no capacity, so no waiter can be satisfied by this.
   // fallow-ignore-next-line unused-class-member -- called through ReclaimCoordinator's quarantine port.
   async enter(failure: QuarantinePurgeFailure): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
@@ -271,7 +271,7 @@ export class QuarantineCoordinator {
     this.#abandoned(device, attempts, claim);
   }
 
-  /** A physical device is the owner's: running out of retries unenrols it and never destroys it (safety rule 2). */
+  /** A physical device is the owner's: running out of retries unenrols it and never destroys it (safety rule 1). */
   async #unenroll(
     device: DeviceRecord,
     attempts: number,
