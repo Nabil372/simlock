@@ -181,6 +181,7 @@ export class ReclaimCoordinator {
    * means there is nothing to do: undefined. The returned promise settles once the reclaim has
    * started; `settled` is the reclaim itself, and `settle` awaits it too.
    */
+  // fallow-ignore-next-line unused-class-member -- called through LeaseReleaseCoordinator's reclaim port.
   async reclaimReturned(
     deviceId: string,
     osVersion?: string,

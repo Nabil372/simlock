@@ -589,6 +589,7 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
    * `reclaiming` state stands between. `announceLeaseEnd` runs once the write has committed and
    * before `device.absence-detected` is emitted, so the lease's own fact precedes the device's.
    */
+  // fallow-ignore-next-line unused-class-member -- called through LeaseLifecycle's registry port.
   async endLeaseAndMarkDeviceAbsent(
     leaseId: string,
     absentReason: AbsentReason,
@@ -623,6 +624,7 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
    * Rewrites why an `absent` device is absent. One write, no event: the device was already
    * reported absent, and only the reason it is read with changed.
    */
+  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's registry port.
   async rewriteAbsentReason(deviceId: string, absentReason: AbsentReason): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (!device.physical || device.state !== "absent") {
@@ -1398,9 +1400,8 @@ function parsePhysicalDevice(
   const { absentReason, enrolledApps, reclaimingSince } = value;
   if (
     !isPhysicalState(state) ||
-    (state === "absent") !== (absentReason !== undefined) ||
-    (absentReason !== undefined && !isAbsentReason(absentReason)) ||
-    (reclaimingSince !== undefined && typeof reclaimingSince !== "number") ||
+    !hasValidAbsence(state, absentReason) ||
+    !isOptionalNumber(reclaimingSince) ||
     value.physical !== true ||
     value.mode !== undefined ||
     value.leaseIdentity !== undefined ||
@@ -1418,6 +1419,11 @@ function parsePhysicalDevice(
     state,
     ...(state === "absent" ? { absentReason: absentReason as AbsentReason } : {}),
   };
+}
+
+/** A record is `absent` exactly when it carries one of the three reasons. */
+function hasValidAbsence(state: PhysicalState, absentReason: unknown): boolean {
+  return state === "absent" ? isAbsentReason(absentReason) : absentReason === undefined;
 }
 
 function parsePhysicalSpec(value: Record<string, unknown>): PhysicalSpec {
@@ -1695,6 +1701,10 @@ function hasOptionalRequestFields(value: Record<string, unknown>): boolean {
     (value.mode === undefined || value.mode === "slim" || value.mode === "full") &&
     isOptionalString(value.imageTag)
   );
+}
+
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || typeof value === "number";
 }
 
 function isOptionalString(value: unknown): value is string | undefined {

@@ -2442,11 +2442,7 @@ function formatStatus(status: StatusGetOutput, now: number): string {
     ].filter((marker) => marker !== undefined);
     const suffix = markers.length === 0 ? "" : ` (${markers.join(", ")})`;
     const where = device.workerId === undefined ? "" : ` on ${device.workerId}`;
-    const state =
-      device.state === "absent" && device.absentReason !== undefined
-        ? `absent (${device.absentReason})`
-        : device.state;
-    return `Device ${device.id}${where}: ${state}, ${deviceKind(device)}${suffix}`;
+    return `Device ${device.id}${where}: ${stateLabel(device)}, ${deviceKind(device)}${suffix}`;
   });
   // ADR 0004: `lastRenewedAt` is a stored field written at grant and on every renew, so unlike
   // the derived `lastHeartbeatAt` it replaces, every lease has one to render.
@@ -2468,6 +2464,13 @@ function formatStatus(status: StatusGetOutput, now: number): string {
     ...(installs ?? []).map((install) => formatInstall(install, now)),
     `Queue depth: ${queueDepth}`,
   ].join("\n");
+}
+
+/** The state word, and for an absent device the reason it is absent. */
+function stateLabel(device: NonNullable<StatusGetOutput["devices"]>[number]): string {
+  return device.state === "absent" && device.absentReason !== undefined
+    ? `absent (${device.absentReason})`
+    : device.state;
 }
 
 /** What a device line says it is: a physical device's class, or a virtual one's mode and pool. */

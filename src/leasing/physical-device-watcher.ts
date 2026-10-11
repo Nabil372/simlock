@@ -182,33 +182,45 @@ export class PhysicalDeviceWatcher {
     leaseId: string | undefined,
   ): Promise<void> {
     if (read.present) {
-      const missed = (this.#counts.get(device.id) ?? 0) > 0;
-      this.#counts.delete(device.id);
-      if (device.state === "ready" && missed) this.options.kick();
-      if (device.state === "absent") {
-        await this.options.releaser.reclaimReturned(
-          device.id,
-          read.osVersion ?? device.spec.osVersion,
-        );
-      } else if (device.state === "reclaiming" && this.#interrupted.has(device.id)) {
-        if (await this.options.releaser.reclaimReturned(device.id)) {
-          this.#interrupted.delete(device.id);
-        }
-      }
+      await this.#present(device, read);
       return;
     }
     if (device.state === "ready" || device.state === "leased") {
-      if (!readIsCurrent) return;
-      const count = (this.#counts.get(device.id) ?? 0) + 1;
-      this.#counts.set(device.id, count);
-      if (count < this.options.config.health.stableObservations) return;
-      if (device.state === "leased") await this.#endLease(leaseId, read.reason);
-      else await this.#markAbsent(device, read.reason);
+      if (readIsCurrent) await this.#missed(device, read.reason, leaseId);
       return;
     }
     if (device.state === "absent" && read.reason !== device.absentReason) {
       await this.#rewriteReason(device, read.reason);
     }
+  }
+
+  async #present(device: PhysicalDevice, read: PhysicalRead & { present: true }): Promise<void> {
+    const missed = (this.#counts.get(device.id) ?? 0) > 0;
+    this.#counts.delete(device.id);
+    if (device.state === "ready" && missed) this.options.kick();
+    if (device.state === "absent") {
+      await this.options.releaser.reclaimReturned(
+        device.id,
+        read.osVersion ?? device.spec.osVersion,
+      );
+    } else if (device.state === "reclaiming" && this.#interrupted.has(device.id)) {
+      if (await this.options.releaser.reclaimReturned(device.id)) {
+        this.#interrupted.delete(device.id);
+      }
+    }
+  }
+
+  /** One more not-present read of a `ready` or `leased` device; at the grace period it acts. */
+  async #missed(
+    device: PhysicalDevice,
+    absentReason: AbsentReason,
+    leaseId: string | undefined,
+  ): Promise<void> {
+    const count = (this.#counts.get(device.id) ?? 0) + 1;
+    this.#counts.set(device.id, count);
+    if (count < this.options.config.health.stableObservations) return;
+    if (device.state === "leased") await this.#endLease(leaseId, absentReason);
+    else await this.#markAbsent(device, absentReason);
   }
 
   async #endLease(leaseId: string | undefined, absentReason: AbsentReason): Promise<void> {

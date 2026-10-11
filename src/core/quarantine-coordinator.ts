@@ -214,6 +214,15 @@ export class QuarantineCoordinator {
       return;
     }
 
+    await this.#recovered(device, result, attempts, claim);
+  }
+
+  async #recovered(
+    device: DeviceRecord,
+    result: Awaited<ReturnType<Driver["reclaim"]>>,
+    attempts: number,
+    claim: DeviceOperationClaim,
+  ): Promise<void> {
     await this.options.decisions.run(() =>
       this.options.registry.recoverFromQuarantine(device.id, result.state),
     );

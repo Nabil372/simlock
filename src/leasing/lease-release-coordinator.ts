@@ -180,6 +180,7 @@ export class LeaseReleaseCoordinator
    * Admitted like every release, so it waits out nuke maintenance. A lease that is already gone
    * is not an error: the release that took it came first.
    */
+  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<boolean> {
     return this.#runNormal(() =>
       this.options.decisions.run(async () => {
@@ -197,6 +198,7 @@ export class LeaseReleaseCoordinator
    * presence, rewriting a reason) under the same maintenance admission as every release, so none
    * of it lands while an operator reset walks the devices.
    */
+  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async admit<Result>(work: () => Promise<Result>): Promise<Result> {
     return this.#runNormal(work);
   }
@@ -206,6 +208,7 @@ export class LeaseReleaseCoordinator
    * `reclaiming`, under the same admission. The reclaim joins the background reclaims, so nuke's
    * `beginMaintenance` and a graceful stop wait for it.
    */
+  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async reclaimReturned(deviceId: string, osVersion?: string): Promise<boolean> {
     return this.#runNormal(async () => {
       const started = await this.options.reclaim.reclaimReturned(deviceId, osVersion);
