@@ -904,7 +904,6 @@ describe("Doctor", () => {
           now,
         });
 
-      // threshold = (provision 1_000 + boot 2_000) * thresholdMultiplier 3 = 9_000
       expect(stalled(10_000 + 9_000)).toBe(false);
       expect(stalled(10_000 + 9_001)).toBe(true);
       // No driver for the platform: nothing to measure against, so no stall.
@@ -992,7 +991,6 @@ describe("Doctor", () => {
           (finding) => finding.kind === "stalled-transition",
         );
 
-      // Provisioning threshold: (1_000 + 2_000) * 3 = 9_000. Reclaim: 4_000 * 3 = 12_000.
       clock.advance(9_000);
       expect(await stalls()).toEqual([]);
       clock.advance(1);
@@ -1043,7 +1041,6 @@ describe("Doctor", () => {
         provisionDuration: 0,
         spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
       });
-      // threshold = (provision 1_000 + boot 2_000) * thresholdMultiplier 3 = 9_000
       clock.advance(9_001);
 
       const report = await new Doctor({
@@ -1183,11 +1180,8 @@ describe("Doctor", () => {
         ttlDeadline: 999_999,
       });
       await registry.beginRelease(lease.id);
-      // The emulator process is gone entirely -- not `stopped`, not `transitioning`,
-      // absent from reality altogether -- exactly what `kill -9` on the process leaves
-      // behind. The stall check never consults driver reality: the registry's own clock bounds it.
+      // `kill -9` on the emulator leaves it absent from reality altogether, not `stopped`.
       driver.setManagedReality({ devices: [], processes: [] });
-      // threshold = reclaim 2_000 * thresholdMultiplier 3 = 6_000
       clock.advance(6_001);
 
       const report = await new Doctor({
@@ -1245,7 +1239,6 @@ describe("Doctor", () => {
         registry,
       });
 
-      // Past the `standard` threshold (2_000 * 3) but inside the `full` one (20_000 * 3).
       clock.advance(6_001);
       const early = await doctor.reconcile();
       expect(early.findings.filter((finding) => finding.kind === "stalled-transition")).toEqual([]);

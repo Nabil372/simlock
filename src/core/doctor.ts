@@ -124,16 +124,6 @@ export type DoctorFinding =
       readonly remedy: string;
     };
 
-/**
- * `erased` -- the durable mark stands but the erasable one is gone: the device
- * was erased or wiped outside Simlock.
- * `mark-mismatch` -- both regions carry a token but they disagree, so
- * something re-marked one region independently.
- * `durable-mark-missing` -- the durable region carries no token at all: the
- * device definition was recreated, or foreign tooling rewrote it. On Android
- * that also catches an `avdmanager create` reusing a `simlock_` name, which
- * the prefix match in `listManaged` would otherwise adopt silently.
- */
 export type ProvenanceDrift = "erased" | "mark-mismatch" | "durable-mark-missing";
 
 type OrphanDeviceFinding = Extract<DoctorFinding, { readonly kind: "orphan-device" }>;
@@ -165,13 +155,7 @@ export interface DoctorOptions {
     readonly figures: WarmPoolReader["figures"];
     readonly runningCapacity: () => CapacityReader["runningCapacity"];
   };
-  /** One per platform this host could run, whether or not its driver started. */
   readonly prerequisiteChecks?: readonly PrerequisiteCheck[];
-  /**
-   * The platforms whose driver is serving. Defaults to the platforms of `drivers`. A platform
-   * outside it gets the restart sentence on every prerequisite finding, because only a daemon
-   * restart retries driver discovery.
-   */
   readonly runningPlatforms?: () => readonly Platform[];
   readonly registry: Registry;
 }
