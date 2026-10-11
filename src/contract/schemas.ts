@@ -1074,11 +1074,6 @@ export const workerViewSchema = z.object({
   waiting: z.array(waitingRequestSchema).optional(),
 });
 
-/**
- * `status.get`'s lease shape. Identical to `leaseRecordSchema` plus the gateway's additive
- * `workerId` (ADR 0005 §20) -- an extension rather than a change to `leaseRecordSchema` itself,
- * so `lease.renew`/`lease.list`'s shapes are untouched by this PR.
- */
 export const statusLeaseSchema = leaseRecordSchema.extend({
   /** Which worker holds this lease; absent on a worker's own answer, set by a gateway. */
   workerId: z.string().optional(),

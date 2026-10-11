@@ -106,10 +106,6 @@ export interface EventMap {
     readonly requestSpec: unknown;
     readonly reason: EventMap["lease.rejected"]["reason"];
   };
-  /**
-   * ADR 0021 §4: the gateway handed a fleet request's grant to its caller. Emitted by the
-   * gateway only, after its lease index accepted the grant. `worker`, never `workerId`.
-   */
   "request.granted": {
     readonly requestId: string;
     readonly worker: string;

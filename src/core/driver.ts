@@ -31,7 +31,6 @@ export interface DeviceRequest extends Omit<ExactDeviceRequest, "model"> {
 export interface DriverDevice {
   readonly deviceId: string;
   readonly driverData: unknown;
-  /** Can change across a boot, unlike `deviceId`; see `Driver.makeReady`. */
   readonly address: string;
   readonly mode?: DeviceMode;
 }
@@ -52,7 +51,6 @@ export interface PresentPhysical {
   readonly present: boolean;
 }
 
-/** `address` is never trusted by `shutdown` / `destroy` / `reclaim` / `makeReady`: they derive what they need from `driverData`, so a not-yet-booted device's absent address is a harmless placeholder. */
 export function toDriverDevice(device: VirtualDevice): VirtualDriverDevice;
 export function toDriverDevice(device: PhysicalDevice): PhysicalDriverDevice;
 export function toDriverDevice(device: DeviceRecord): VirtualDriverDevice | PhysicalDriverDevice;

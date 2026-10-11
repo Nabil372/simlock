@@ -163,13 +163,6 @@ export interface FittableSpec {
   readonly imageTag?: string | undefined;
 }
 
-/**
- * The one place a requirement meets a device (ADR 0015 §6; architecture rule 10). Holds when the
- * platform is equal, the model is equal or `classOf` says the device's model is the requested
- * class, the OS satisfies the constraint, and the image tag is equal or both absent. It does not
- * read the mode. `sameSpec` stays what names pool identity everywhere else. A physical spec fits
- * no requirement here: a physical request is matched by `fitsPhysical` and never reaches this.
- */
 export function fits(
   requirement: DeviceRequirement,
   spec: FittableSpec,

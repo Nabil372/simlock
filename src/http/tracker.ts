@@ -35,10 +35,6 @@ export interface LeasePayload {
   readonly expiresAt: string;
   readonly ttlMs: number;
   readonly dataPlane: null;
-  /**
-   * The mode the granted device actually has -- see `DeviceRecord.mode`. Absent for a physical
-   * device, which has none.
-   */
   readonly mode?: "slim" | "full";
   /** The image tag the device was created from, on a device whose request named one. */
   readonly imageTag?: string;

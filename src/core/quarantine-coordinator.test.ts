@@ -310,7 +310,6 @@ describe("QuarantineCoordinator", () => {
       leaseId: "lease-1",
     });
 
-    // First retry (attempt 1) fails; backoff grows to retryBackoffMs * multiplier^1 = 2_000.
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
     expect(harness.registry.snapshot.virtualDevices[0]).toMatchObject({

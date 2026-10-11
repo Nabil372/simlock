@@ -24,12 +24,6 @@ function buildTracker() {
 const identity = { requesterId: "tok_agent", role: "agent" as const };
 const body = { device: "iPhone 17 Pro", platform: "ios" as const };
 
-/**
- * `submit`'s returned promise never settles until the `lease.request` dispatch's first
- * `onProgress` call (or its own grant/rejection) -- see `tracker.ts`'s class doc.
- * `FakeDispatcher.dispatch` runs synchronously enough that it's recorded before `submit`
- * returns, but a caller must still pump the microtask queue for it to show up in `calls`.
- */
 async function createTracked(
   tracker: LeaseRequestTracker,
   dispatcher: FakeDispatcher,

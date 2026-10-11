@@ -93,11 +93,6 @@ export const statusGet = defineOperation({
   effect: "read",
   input: z.object({}),
   output: z.object({
-    // Agent-role, no ownership check (ADR §3) -- every device in the registry, not just ones
-    // the caller leases. `statusDeviceSchema`, not `deviceRecordSchema`, is what keeps
-    // `driverData` and reclamation/recovery bookkeeping off this response; see its doc comment
-    // in schemas.ts. `list.get` (admin-only) is the operation that returns the full record.
-    //
     // `devices`, `leases`, `capacity` and `queueDepth` are absent while `daemon.health` is
     // `starting`: the registry has not been checked yet, so a reader sees a daemon that says
     // it is starting and what host it runs on, and nothing it could mistake for an empty fleet.
@@ -126,19 +121,6 @@ export const statusGet = defineOperation({
   }),
 });
 
-// ---- lease.request --------------------------------------------------------------------------
-
-/**
- * No `device`/`os` legacy aliases and no nested `request` wrapper -- both accepted by the
- * pre-ADR-0003 daemon, neither carried forward. `.strict()` on top of dropping the fields: an
- * old client sending `device`/`os`/`request` gets a clear `BAD_REQUEST` instead of those keys
- * silently vanishing. `mode` is the device mode the request asks for (ADR 0007 §1), absent
- * when it names none so the worker's default applies; any value but `slim` or `full` -- the
- * lease mode ADR 0004 retired included -- is a `BAD_REQUEST`. `full` was replaced by `mode`
- * with no alias, so `.strict()` turns a request that still sends it into a `BAD_REQUEST` too.
- * `imageTag` names the type of installed image the device is created from, as the catalog lists
- * it; a request that names one never downloads, and a platform without image types refuses it.
- */
 /**
  * The lease ID a requester may choose (ADR 0020 §1): ASCII, 1 to 64 characters, starting with a
  * letter or digit, then letters, digits, `-` and `_`, case-sensitive. It has no `.`, so it can
@@ -147,7 +129,6 @@ export const statusGet = defineOperation({
  */
 export const LEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
-/** `leaseId` on the wire: a string of that shape, for every transport that takes one. */
 export const leaseIdSchema = z.string().regex(LEASE_ID_PATTERN);
 
 const leaseRequestBaseSchema = z
@@ -198,11 +179,6 @@ const leaseRequestBaseSchema = z
   })
   .strict();
 
-/**
- * Refuses a request that names both a model and a class (ADR 0015 §1); one place, one check.
- * `modelField` is what the caller's transport calls the model (HTTP's body says `device`), so
- * the message names the fields that caller can actually send.
- */
 export function refuseModelWithClass(
   modelField = "model",
 ): <T extends { readonly model?: unknown; readonly class?: unknown }>(
@@ -312,8 +288,6 @@ export function requestedClass(request: {
   if (request.class !== undefined) return request.class;
   return request.model === undefined ? "phone" : undefined;
 }
-
-// ---- lease.cancel (new, ADR §9) --------------------------------------------------------------
 
 // fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
 export const leaseCancel = defineOperation({

@@ -65,7 +65,6 @@ function isKnown(worker: WorkerView): boolean {
   return worker.connection !== "incompatible";
 }
 
-/** A model no worker lists, or, for a class request, a class none lists a model of. */
 function unknownModel(request: RoutableRequest): Rejection {
   const { platform } = request;
   if (request.model === undefined) {

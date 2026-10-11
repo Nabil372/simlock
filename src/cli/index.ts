@@ -1095,10 +1095,7 @@ async function runLease(
     );
     ourLeaseId = grant.lease.id;
     ourLeaseDeadline = grant.lease.ttlDeadline;
-    // Owed from here on, whatever happens next -- see `releaseHeldLease`.
     if (!detached) heldLeaseId = grant.lease.id;
-    // ADR §5: "simlock lease output includes the resolved role" -- the one field this CLI
-    // adds on top of the contract's `LeaseGrant` shape, everything else passed through as-is.
     const result = { ...grant, role: client.role };
     // A holder keeps holding after this line, whichever shape its output took: `--export-env`
     // only changes what stdout carries, never how long the lease lives.

@@ -111,14 +111,12 @@ export interface GatewayDispatcherOptions {
    * not supply one -- revocation still writes the store either way.
    */
   readonly closeUplinksForToken?: (tokenId: string) => Promise<void>;
-  /** Times each call for its `operation` log line. */
   readonly clock: Clock;
   readonly logger?: Logger;
   /** Classifies a thrown error for the `operation` log line (`classifyError` in production),
    * injected because `src/gateway` imports nothing from `src/core`. Unset or `undefined`:
    * `INTERNAL`. */
   readonly errorCode?: (error: unknown) => string | undefined;
-  /** The gateway's own health, for `status.get`. */
   readonly health: () => "starting" | "running" | "failed";
   readonly host: AggregateStatusOptions["host"];
   readonly awaitReady: () => Promise<void>;

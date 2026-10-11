@@ -158,11 +158,7 @@ export class FleetLeaseCoordinator {
    * identity on the notification itself. */
   readonly #lastReconciledLeases = new Map<string, NonNullable<WorkerView["leases"]>>();
   readonly #unsubscribeViews: () => void;
-  /** C2 (round 2 review): when each waiter was created (`#queue.create`, in `request` below),
-   * for `request.dispatched`'s `queuedMs` field -- a `WeakMap` rather than a `Map<string, number>`
-   * so a waiter that never gets there (rejected at admission, cancelled, timed out) needs no
-   * explicit clean-up call on every one of those exits to avoid an unbounded leak; the entry is
-   * reclaimable the moment nothing else still references the waiter. */
+  /** A `WeakMap` so a waiter that never dispatches (rejected, cancelled, timed out) leaks no entry. */
   readonly #createdAt = new WeakMap<FleetWaiter, number>();
   /** A `WeakMap` so the memo dies with the waiter. */
   readonly #refusals = new WeakMap<FleetWaiter, Map<string, string>>();
@@ -178,8 +174,6 @@ export class FleetLeaseCoordinator {
       idGenerator: options.idGenerator,
       onDepthChange: (depth, line) =>
         this.#emit("queue.changed", line === "physical" ? { depth, physical: true } : { depth }),
-      // The rejection itself already happened inside `WaitQueue#armTimeout` by the time this
-      // fires (see `queue.ts`); this only reports the gateway's own fact for it.
       onTimeout: (waiter) => this.#emitRejected(waiter, "timeout"),
     });
     this.requests = new LeaseRequestBook({
@@ -881,8 +875,6 @@ export class FleetLeaseCoordinator {
     const announceDispatched = (): void => {
       if (announced) return;
       announced = true;
-      // C2 (round 2 review): the full payload `docs/internal/EVENTS.md` always specified for this row --
-      // see `bus/index.ts`'s own doc comment on why it was narrowed and then restored.
       const createdAt = this.#createdAt.get(waiter);
       this.#emit("request.dispatched", {
         ...(waiter.request.model === undefined ? {} : { model: waiter.request.model }),
