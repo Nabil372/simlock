@@ -4,6 +4,7 @@ description: Runs the blind pre-merge reviews from delivery rule 14 on a PR, ver
 model: opus
 effort: medium
 background: true
+tools: Bash, Read, Write, Grep, Glob, Agent, SendMessage
 ---
 
 # Review a change before it is marked ready
@@ -106,12 +107,12 @@ This is review round <n>. Earlier rounds reviewed the whole diff. Review
 only this:
 
 1. Each line in <previous-fixes.md> tagged with your review: is it resolved
-   at this commit? Cite the hunk of <fix.patch> that resolves it, or say
-   "not resolved".
+   at this commit? One line each: `<its path:line> resolved <fix.patch
+hunk path:line>` or `<its path:line> not resolved`.
 2. <fix.patch>: apply the questions below to its hunks only. A fix can break
    what it touches.
-3. Each line in <previous-fixes.md> tagged with your review names a Class:
-   search the whole of <diff.patch> for another instance of that class.
+3. Each line in <previous-fixes.md> tagged with your review names a class
+   in brackets: search the whole of <diff.patch> for another instance of that class.
 
 Anything else you notice is a note, whatever its severity.
 ```
@@ -134,13 +135,14 @@ includes without its specification asking; treat each item as asked for.
 Answer four questions, and only these:
 
 1. Is every line of Scope and Done when (for a bug: the Simplest fix; for a
-   feature: every Completion condition) delivered by the diff? For each
-   line, name the hunk that delivers it, or say "not delivered", or
-   "delivered differently: <how the diff departs from the line>".
+   feature: every Completion condition) delivered by the diff? One line
+   each, by position: `Done when 3: <hunk path:line>`, `Done when 3: not
+delivered`, or `Done when 3: differently: <how, at most 15 words>`.
 2. Does the diff do anything the specification did not ask for? Anything
    `always-in-scope.md` lists is asked for: never a finding.
-3. For every test the diff adds or changes: does its title state a claim
-   the specification made, and does its body assert that claim? A title
+3. For every test the diff adds or changes, by `file:line`: does its title
+   state a claim the specification made, and does its body assert that
+   claim? A title
    that promises more than the body proves is a defect. For every change in
    Tests after red that deletes a test or removes or loosens an assertion:
    which line of the specification is no longer proven?
@@ -167,7 +169,7 @@ behaviour worktree. It reads `$R/diff.patch` and `$R/rules/` only.
 You are reviewing a diff for correctness. You have no other context and
 have not seen the issue it implements; judge the code, not the intent.
 
-Rules: <rules/>. Diff: <diff.patch>. Repository: <worktree>, checked out at
+Rules: every file in <rules/> but delivery.md. Diff: <diff.patch>. Repository: <worktree>, checked out at
 the reviewed commit. Prove a claim with the affected test file only, using
 the one-file commands under "Tests agents run" in `rules/toolchain.md`. Run
 nothing listed there under "Checks agents never run", and never the slow
@@ -176,8 +178,8 @@ edit, one run of its test file, then `git checkout .`. Restore the tree
 before you report.
 
 First list every function whose body the diff adds or changes, one line
-each: `path:function — ok` or `— finding <n>`. A moved file with no other
-change is one line.
+per file: `path: fnA ok, fnB F2`. A moved file with no other change is
+`path: moved`.
 
 Then answer, for each of them:
 
@@ -200,7 +202,7 @@ You are reviewing a diff's tests, and its conformance to the rules of this
 repository. You have no other context and have not seen the issue it
 implements.
 
-Rules: <rules/>. Diff: <diff.patch>. Repository: <worktree>, checked out at
+Rules: every file in <rules/> but delivery.md. Diff: <diff.patch>. Repository: <worktree>, checked out at
 the reviewed commit. Prove a claim with the affected test file only, using
 the one-file commands under "Tests agents run" in `rules/toolchain.md`. Run
 nothing listed there under "Checks agents never run", and never the slow
@@ -208,8 +210,9 @@ lane. You may break code to see what a test catches at most six times: one
 edit, one run of its test file, then `git checkout .`. Restore the tree
 before you report.
 
-First list every test the diff adds or changes, one line each:
-`file: title — probed | read — ok` or `— finding <n>`.
+First list every test the diff adds or changes by line, never by title,
+one line per file: `file: 12 read ok, 40 probed ok, 88 probed F3`. A file
+whose tests only gained a fixture field: `file: fixture only`.
 
 Then answer:
 
@@ -231,14 +234,14 @@ worktree. It reads `$R/diff.patch`, `$R/stale-refs.txt` and `$R/rules/`.
 You are checking that what the repository says is true of its code. You
 have no other context and have not seen the issue the diff implements.
 
-Rules: <rules/>. Diff: <diff.patch>. Sweep: <stale-refs.txt>: lines anywhere
+Rules: every file in <rules/> but delivery.md. Diff: <diff.patch>. Sweep: <stale-refs.txt>: lines anywhere
 in the repository that still name a path, declaration or quoted string the
 diff removed. Repository: <worktree>, checked out at the reviewed commit.
 Read and search it; edit nothing and run no tests.
 
 A claim is any statement of fact in a comment, a doc, a test title, help
-text or an error message. Check, and list each place you checked as one
-line, `path:line — true` or `— finding <n>`:
+text or an error message. Check, and list what you checked, one line per
+file: `path: 12 34-40 true, 56 F3`:
 
 1. Every claim the diff adds or changes.
 2. Every line in the sweep.
@@ -270,27 +273,28 @@ checked out at the reviewed commit: read it only to see what a comment sits
 on, or whether a declaration is exported from an entry point the rule
 names. Edit nothing and run nothing.
 
-For each block, one line: `path:line — keep: <the why it gives>` or
-`— finding <n>`. A block stays only when the rule allows all of it. A block
-or part of a block the rule does not allow is blocking, Class: "a comment
-says what, not why".
+For each block, one line: `path:line keep <the why, at most 8 words>` or
+`path:line F<n>`. A block stays only when the rule allows all of it. A block
+or part of a block the rule does not allow is blocking, class `architecture
+17`.
 ```
 
 **Common tail** (every brief):
 
 ```markdown
-Report every finding; there is no limit on how many. One finding per
-defect, in this form and no other:
+Output only your list, then your findings: no preamble, no headings, no
+summary, no narration. Report every finding; there is no limit on how many.
+One line per defect, in this form and no other:
 
-- [blocking|note] <claim in one sentence>. Class: <the general rule the
-  defect breaks, one line>. Evidence: `<file>:<line>`, or a fenced block
-  with the command you ran and its output.
+F<n> B|N <path:line> <the defect, at most 25 words> [<class>] ev: <path:line, ...> | <command> => <the output line that shows it>
 
-A finding counts only with a concrete failure (this input or state gives
-this wrong result) or a named cost and who pays it. Drop style, naming and
-"could be simpler" with no defect. Whether the suite passes is not yours to
-judge: CI runs it on every push. Do not suggest fixes. Do not praise. No
-findings: say "No findings." after your list.
+B is blocking, N a note. `<class>` is the rule it breaks (`testing 2`,
+`architecture 13`), or the general rule in at most 8 words when no rule
+file states it. A finding counts only with a concrete failure (this input
+or state gives this wrong result) or a named cost and who pays it. Drop
+style, naming and "could be simpler" with no defect. Whether the suite
+passes is not yours to judge: CI runs it on every push. Do not suggest
+fixes. No findings: `F0`.
 ```
 
 ## 4. Verify the blocking findings
@@ -299,13 +303,14 @@ A blocking finding is a claim, not a fact. Reproduce its evidence yourself:
 read the cited lines, or run the cited command in its worktree, one test
 file at a time with the commands in `toolchain.md`. Then:
 
-- **Confirmed**: a Fix line, written to make sense without the PR open:
-  `<review>: path:line what is wrong. Class: <class>`. `<review>` is
+- **Confirmed**: a Fix line that makes sense without the PR open:
+  `<review>: <path:line> <the defect, at most 25 words> [<class>]`. `<review>` is
   `spec`, `code` or `claims`. A finding whose fix changes only a comment or
   a doc is `claims`, whichever review raised it. A comment review finding is
   confirmed when the rule does not allow the comment; its fix deletes it.
   Its Rejected and Notes lines are tagged `comments`.
-- **Rejected**: `<review>: <claim> — <why it is wrong>`, with `<review>`
+- **Rejected**: `<review>: <path:line> <claim> — <why it is wrong, at most
+15 words>`, with `<review>`
   `spec`, `code`, `claims` or `comments`. The weekly delivery
   stats count rejections per review from that tag.
 - **True but not blocking** (breaks no behaviour, leaves no wrong state,
@@ -354,15 +359,16 @@ and `Rerun: none` on `after-pass 2`.
 
 ## 6. Report
 
-End with exactly this block, nothing after it:
+End with exactly this block and nothing else: no summary before it, no
+note after it.
 
 ```
 PR: #M  Round: <n | claims-only>  Kind: code | adr-only  Commit: <sha reviewed>
 Spec review: n findings (b blocking) | skipped  Code review: n findings (b blocking) | skipped  Claims review: n findings (b blocking) | skipped  Comment review: n findings (b blocking) | skipped
-Fix: <one per line, `spec|code|claims: path:line what is wrong. Class: <class>`, or "none">
-Out of scope: <one per line, `path:line what is wrong`, or "none">
-Notes: <one per line, `spec|code|claims|comments: path:line what could be better`, or "none">
-Rejected: <one per line, `spec|code|claims|comments: claim — reason`, or "none">
+Fix: <one per line, `spec|code|claims: <path:line> <defect> [<class>]`, or "none">
+Out of scope: <one per line, `<path:line> <defect>`, or "none">
+Notes: <one per line, `spec|code|claims|comments: <path:line> <what could be better>`, or "none">
+Rejected: <one per line, `spec|code|claims|comments: <path:line> <claim> — <reason>`, or "none">
 Spec needs: <the line the spec is missing, or "none">
 Rerun: <spec, code, claims: those to run next round> | claims-only | none
 ```

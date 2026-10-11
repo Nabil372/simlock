@@ -149,9 +149,12 @@ wrappers that start those agents when a person invokes them, after renaming the 
 so its title names the issue or PR. `deliver` and `spec-session` run in
 the session that invoked them; their frontmatter pins Opus only until the
 next message, so an unattended run keeps it and an attended one returns to
-the session's model after the first reply. `implement` commits the spec's
-tests red first and opens a draft PR, so CI runs from the first push; it
-then turns them green in commits that each lower the failing count. It
+the session's model after the first reply. `implement` runs as a fresh
+agent per phase, so no context grows past one phase: one commits the spec's
+tests red and opens a draft PR, so CI runs from the first push; the next
+turns them green in commits that each lower the failing count, starting
+from a map of which files each test needs; the last audits the diff with
+fresh eyes. Agents pass each other `key: value` lines, not prose. It
 runs only the tests its change can reach — `pnpm test:changed` and the e2e
 files it touched. Every other check runs on its own: format, lint and
 typecheck on commit; Fallow, the e2e typecheck and `pnpm mutate` (mutants
@@ -345,6 +348,7 @@ To move it: copy the agents, skills, scripts, workflow, labels,
 ## Pointers
 
 - Rules: [agent-rules/delivery.md](agent-rules/delivery.md),
+  [agent-rules/coding.md](agent-rules/coding.md),
   [agent-rules/always-in-scope.md](agent-rules/always-in-scope.md)
 - Templates: [templates/feature.md](templates/feature.md),
   [templates/task.md](templates/task.md)

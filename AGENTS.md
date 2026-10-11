@@ -28,11 +28,15 @@ changes in this repo:
 - [delivery.md](docs/internal/agent-rules/delivery.md) — GitHub Issues as
   spec and queue: one `<kind>:<state>` label per issue, agents act only on
   `*:ready` and `bug:triage`, the body is the spec and comments are
-  discussion, reporters' issues are never rewritten, branches are
-  `<kind>/<n>`, handoffs are one `## Handoff` comment per stop, every PR
+  discussion, reporters' issues are never rewritten, handoffs are one
+  `## Handoff` comment per stop, every PR
   gets a spec, a code, a claims and a comment review before it leaves draft, agents merge
   only through `.agents/scripts/merge-pr.sh`, and the slow lane runs one
   at a time through its script.
+- [coding.md](docs/internal/agent-rules/coding.md) — what an agent
+  building a change needs: the body is the spec, small gaps are
+  `Assumption:` lines, branches are `<kind>/<n>`, every agent is in a
+  worktree, the PR proves its Done when.
 - [toolchain.md](docs/internal/agent-rules/toolchain.md) — the commands
   agents run and the checks they leave to hooks and CI; the slow lane
   (real devices); project-only checks. Agents and skills take every command

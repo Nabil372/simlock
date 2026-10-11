@@ -15,9 +15,11 @@ rules 1, 2, 3, 9, 14, 15 and 16.
 **Delegating.** Start each stage with the Agent tool, in the background:
 `subagent_type` `implementer`, `reviewer` or `hardware-verifier`; a short
 `description` naming the issue and stage (`#362 implement`); and a prompt
-with everything the stage needs: the issue, the branch, the PR once there is
-one, the one thing to do, and anything pasted from an earlier report. Never
-pass a model. Never invoke the stage skills from here: a skill waits for an
+of `key: value` lines and nothing else: `issue`, `branch`, `pr` once there
+is one, `mode` or `round`, and what the stage works on, pasted from the last
+report (`map`, `fixes`, the reviewer's arguments). No prose, and no
+reminders of what the agent's own instructions already say. Never pass a
+model. Never invoke the stage skills from here: a skill waits for an
 earlier run of itself, so two implements would run one after the other.
 
 Every stage is a new agent. Never send a finished agent its next stage
@@ -62,7 +64,7 @@ status lines so far. To look inside a running agent, ask it with
 SendMessage.
 
 **Ask once, then run.** With a person in the session, ask one question, the
-first time a report lists Hardware lines: may the slow lane run for every PR
+first time a report lists `hardware` lines: may the slow lane run for every PR
 of this run (rule 16). Record the answer in that PR's `### Status`. Then
 never stop to ask: post PR bodies and comments directly, merge every PR the
 gate accepts, and apply rule 14's round cap. Ask a person only about what
@@ -107,15 +109,18 @@ Claim it: `gh issue edit <N> --add-assignee @me`. Its branch is
 section and the latest `## Handoff` comment, and go on from the next stage
 they name; never build again or restart review at round 1.
 
-1. **Implement**: `implementer` with the issue, the branch and
-   `mode build`. `spec needs` under Open: park (step 6).
+1. **Implement**, one fresh `implementer` per mode: `mode: red`; then
+   `mode: green` with the report's `map`; while a `green` report still lists
+   `failing` and turned at least one test green since the last, another
+   `green` with its `map`; then `mode: audit`. `spec needs` under `open`
+   in any report: park (step 6).
 2. **Review**: `reviewer` with the PR number. Before every review round,
    read `gh pr checks <M>` and `gh pr view <M> --json mergeable` once. A
    failed check no open `flaky-test` issue names, or a conflict, goes into
    one `implementer` fix run first.
 3. **Decide** on the review report:
-   - Fix lines: one `implementer` run in mode `fix` with the Fix lines
-     pasted, then the next round: `reviewer` with `round <n+1>`, the
+   - Fix lines: one `implementer` run with `mode: fix` and the Fix lines
+     pasted under `fixes`, then the next round: `reviewer` with `round <n+1>`, the
      report's Rerun value, `previous <Commit>`, and the Fix lines pasted.
    - `Rerun: claims-only`: the same, with `claims-only` as the Rerun value,
      once per PR. Claims Fix lines it still reports: one more `implementer`
@@ -135,7 +140,7 @@ they name; never build again or restart review at round 1.
      park. When a person answers a Spec needs, write the answer into the
      issue body, with a Tests line that pins it (delivery rule 3), before
      the fix run.
-   - No Fix lines, and implement reported Hardware lines:
+   - No Fix lines, and the audit reported `hardware` lines:
      `hardware-verifier` with the PR, the branch and those lines, on the
      commit the review passed (rule 16). On `fail`: one `implementer` fix
      run with the Evidence lines, then `reviewer` with the next round,
@@ -209,7 +214,7 @@ stage works on, if any.
 ### Status
 Implement: done (5/5 green)  Review: round 2, 2 open  Mutate: 0 alive  Hardware: n/a  Gate: not run
 Next: implement fix, then review round 3
-- code: src/x.ts:12 ... Class: ...
+- code: src/x.ts:12 <defect> [testing 2]
 ```
 
 ## 4. Walk a feature's tasks

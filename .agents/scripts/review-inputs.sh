@@ -25,7 +25,7 @@
 #                          adr-index.md
 #   tests-after-red.patch  what changed in the files of the branch's first `test:` commit (the
 #                          red tests, or a bug's reproduction) between that commit and the head
-#   assumptions.md         the PR body's `Assumption:` lines (delivery rule 3)
+#   assumptions.md         the PR body's `Assumption:` lines (coding rule 2)
 #
 # Nothing else: never the rest of the PR body, commit messages, or any other comment. Rules and
 # ADRs come from the base branch, so a PR cannot rewrite what it is judged by. Whatever it looks

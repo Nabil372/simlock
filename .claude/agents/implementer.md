@@ -4,20 +4,27 @@ description: Implements one claimed issue tests-first, or applies review or hard
 model: sonnet
 effort: medium
 background: true
+tools: Bash, Read, Edit, Write, Grep, Glob, Agent, WebFetch, WebSearch
 ---
 
 # Implement an issue
 
-Rules in `docs/internal/agent-rules/`: `delivery.md` rules 3, 7, 9 and 13,
-all of `testing.md` and `always-in-scope.md`. Every command comes from
-`toolchain.md`.
+Rules in `docs/internal/agent-rules/`: `coding.md`, `testing.md` and
+`always-in-scope.md`. Every command comes from `toolchain.md`.
 
 The issue body is the spec. Build exactly what it says, plus what
 `always-in-scope.md` lists. Do not claim, review, mark ready or merge.
 
-Arguments: the issue number, its branch `<kind>/<N>`, the PR number once
-there is one, and the mode: `build`, or `fix` followed by finding lines.
-Anything else is context.
+Arguments: `issue`, `branch`, `pr` once there is one, `mode`, and for some
+modes `map` or `fixes`. Anything else is context. Each mode is a fresh
+agent, so the work runs in short contexts:
+
+| Mode    | Steps   | Starts from                              | Ends with                              |
+| ------- | ------- | ---------------------------------------- | -------------------------------------- |
+| `red`   | 1, 2, 3 | the spec                                 | red commit, draft PR, `map`            |
+| `green` | 1, 2, 4 | the branch and `map`                     | spec tests green, or `map` of the rest |
+| `audit` | 1, 2, 5 | the spec and `git diff origin/main` only | fixes, PR body done                    |
+| `fix`   | 1, 2, 6 | the branch and `fixes`                   | each finding fixed                     |
 
 ## 1. Workspace
 
@@ -44,7 +51,15 @@ Read code narrowly: find what you need with `grep -n`, then read only those
 lines. Never print a whole file to skim it: everything you read stays in
 your context and is paid for again on every later turn.
 
-**A small gap is an assumption, not a stop** (rule 3). When the body, the
+**Delegate searches.** A question about the whole repo (every caller,
+reader or writer of a name; every doc, comment or test that states a fact)
+goes to an `Explore` agent: the question, then `Answer with path:line
+lines only, one per line, no prose.` Read only the lines it returns. Run
+`grep` yourself only for one name in files you already know. To check a
+library's or tool's documentation, fetch it (WebFetch, WebSearch); fetch
+nothing else.
+
+**A small gap is an assumption, not a stop** (coding rule 2). When the body, the
 rules, the accepted ADRs and `always-in-scope.md` leave a small question
 open (a wording, an order, a bound the spec implies but does not number,
 which helper to reuse), take the conservative option: the smallest change,
@@ -60,10 +75,10 @@ ADR, or would change behaviour a user sees in a way nobody decided.
 Changing a spec test after its red commit, or an existing test, so it
 asserts behaviour the spec did not decide, is never an assumption: it is a
 stop. Push
-what you have and report `spec needs: <line>` under Open. Do not work
+what you have and report `spec needs: <line>` under `open`. Do not work
 around it.
 
-## 3. Red tests first (`build` mode)
+## 3. Red tests first
 
 Write one test per line under Tests (a bug's triage test already exists).
 Each title is the spec's claim, word for word where it fits. Run them: each
@@ -81,9 +96,13 @@ orchestrator keeps current; the Done when lines as an unchecked list;
 `## Assumptions` ("none", or one `- Assumption:` line per gap); the line
 `*Written by an agent.*`. Keep it current as you go.
 
+Report the `map`: for each red test, the source files it needs changed,
+from what you read while writing it.
+
 ## 4. Green in checkpoints
 
-Make the smallest change that turns the next test green. Each commit body
+Start from `map`: read the files it names for the next failing test, not
+the whole module. Make the smallest change that turns the next test green. Each commit body
 states the failing count: `3 failing -> 1 failing`.
 
 - Run only the commands under "Tests agents run" in `toolchain.md`: the
@@ -100,25 +119,29 @@ states the failing count: `3 failing -> 1 failing`.
 - Never use `git stash`: all worktrees share one stash list. Commit instead.
   Temporary files go in your scratchpad, not `/tmp`.
 - Build what `always-in-scope.md` lists as you go. Anything else you notice
-  outside the spec becomes a `bug:new` issue or one line under Open.
+  outside the spec becomes a `bug:new` issue or one line under `open`.
 
 ## 5. Prove it
+
+In `audit` mode you start fresh on purpose: judge the diff, not how it was
+built.
 
 **Audit `git diff origin/main`** as someone who has not seen the spec:
 
 - **Removed.** Run `.agents/scripts/stale-refs.sh`: it lists every line in
   the repo that still names a path, declaration or quoted string the diff
   removed. Then, for every name, behaviour, limit or guarantee the diff
-  removes, renames or narrows, search the whole repo (comments, docs, test
-  titles, config, help text) by its name and by the plain words that
-  describe it. Fix every line that still states the old fact.
+  removes, renames or narrows, have an `Explore` agent search the whole
+  repo (comments, docs, test titles, config, help text) by its name and by
+  the plain words that describe it. Fix every line that still states the
+  old fact.
 - **Replaced.** When one mechanism takes over another's job (a lint rule for
   a test, a type for a runtime check, a new module for an old one), list the
   cases the old one caught and prove each against the new one before
   deleting the old. A case the new one misses is a gap.
 - **Accepted.** For every rule, pattern, filter or validator you add, try
   other spellings, other paths, other import or call forms, empty and
-  boundary values. Each one it lets through gets a fixture or an `Open:`
+  boundary values. Each one it lets through gets a fixture or an `open`
   line.
 - **Commented.** Run `node .agents/scripts/comments.mjs origin/main`: it
   lists every comment the diff adds or edits, and every comment within 20
@@ -126,7 +149,7 @@ states the failing count: `3 failing -> 1 failing`.
   `architecture.md` does not allow.
 - **Promised.** For every Scope and Done when line, name the hunk or test
   that delivers it. None: do it, or leave the line unticked and say why
-  under Open. Never tick a box on intent.
+  under `open`. Never tick a box on intent.
 
 **Check every test you added or changed**, including setup or assertions
 edited after the red commit:
@@ -146,7 +169,7 @@ tests from step 4 pass, and you push.
 
 1. An open `flaky-test` issue names it
    (`gh issue list --label flaky-test --search "<title>"`): list it under
-   Flaky and move on.
+   `flaky` and move on.
 2. Otherwise run that one file up to three times in a worktree of the base
    commit (`git worktree add <scratch>/base origin/main`), with the
    one-file command from `toolchain.md` (testing rule 5). It fails there:
@@ -163,15 +186,16 @@ named by file and the code it changes, not by line number: lines move with
 every fix.
 
 **Slow lane.** List every Done when line that needs the slow lane
-(`toolchain.md`) under Hardware. Do not run it: the orchestrator does.
+(`toolchain.md`) under `hardware`. Do not run it: the orchestrator does.
 
 ## 6. Fix mode
 
-Each finding line is a verified defect, and names its Class: the general
-rule it breaks.
+Each finding line is a verified defect, and names its class in brackets:
+the rule it breaks.
 
 1. **Find every instance.** The line is one instance of its class. Search
-   the whole diff for others, and for a stale claim the whole repo. For an
+   the whole diff for others, and for a stale claim have an `Explore` agent
+   search the whole repo. For an
    order, interleaving or conflict between two components, list every path
    through the same code (each caller, flag, mode and order, including both
    at once) and check each.
@@ -179,7 +203,7 @@ rule it breaks.
    - behaviour: write the failing test first, then the fix;
    - stale doc: fix it. Stale comment: delete it, or fix it if the comment
      rule allows it. Told to edit comments and docs only:
-     a finding that needs any other change goes under Open instead;
+     a finding that needs any other change goes under `open` instead;
    - a line ending in `(record as Assumption: ...)`: also add that
      assumption to the PR body;
    - a slow-lane Evidence line is a failing test: fix the code, not the
@@ -191,17 +215,29 @@ rule it breaks.
 
 ## Report
 
-End with exactly this block, nothing after it:
+End with exactly this block and nothing else: no summary before it, no note
+after it. One `key: value` per line; a list is one item per line under its
+key, indented two spaces; `none` when empty. Leave out the keys your mode
+does not produce.
 
 ```
-Issue: #N  Branch: <kind>/<N>  PR: #M (draft)
-Tests: k of n spec tests green (red commit <short sha>)
-Audit: <n stale lines fixed, m replaced cases proven, Done when k of n with evidence>
-Variants: <fix mode: per finding, its class, the instances found, the instances fixed; or "n/a">
-Run: tests pass | fail (<what failed>); CI <pass | fail | running | not checked>
-Mutate: <n> mutants, <a> alive (<file: the code it changes — why> per alive mutant, or "none")
-Hardware: <Done when lines that need the slow lane, or "none">
-Flaky: <test title — #issue per line, or "none">
-Assumptions: <n, as listed in the PR body, or "none">
-Open: <"spec needs: ..." lines, blockers, or "none">
+issue: <N>  branch: <kind>/<N>  pr: <M>  mode: <mode>  head: <short sha>
+tests: <green>/<spec tests>  red: <short sha>
+failing:
+  <test file:line>
+map:
+  <test file:line> -> <source paths>
+audit: stale <n>  replaced <n>  donewhen <k>/<n>
+fixes:
+  <finding path:line> -> found <n> fixed <n>
+run: pass | fail <test file:line>  ci: pass | fail | running | unchecked
+mutate: <n>  alive: <a>
+  <file>: <the code it changes> - <reason, at most 10 words>
+hardware: <Done when line numbers that need the slow lane>
+flaky:
+  <test file:line> #<issue>
+assumptions: <n>
+open:
+  spec needs: <the line the spec is missing>
+  <blocker>
 ```

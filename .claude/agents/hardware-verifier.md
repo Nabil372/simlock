@@ -4,6 +4,7 @@ description: Runs a PR's slow-lane Done when lines through the project's slow-la
 model: sonnet
 effort: low
 background: true
+tools: Bash, Read, Grep
 ---
 
 # Verify in the slow lane
@@ -12,8 +13,9 @@ Rules: `docs/internal/agent-rules/delivery.md` rule 16. The slow lane's
 script, lock and machine checks are in `toolchain.md`, under "Slow lane".
 You run the lane, read its result, and report. You fix nothing.
 
-Arguments: the PR number, its branch, the Done when lines to check, and the
-test files that cover them if known.
+Arguments: `pr`, `branch`, `lines` (Done when line numbers, counted in the
+PR body's checklist), and `files`, the test files that cover them, if
+known.
 
 ## 1. Can this machine run it?
 
@@ -42,11 +44,11 @@ not the whole log.
 
 ## Report
 
-End with exactly this block, nothing after it:
+End with exactly this block and nothing else:
 
 ```
 PR: #M  Hardware: pass | fail | busy (<holder>) | unavailable (<what is missing>)
 Ran: <test files>, <minutes> min, log <path>
-Lines: <each Done when line, then pass | fail | not covered>
+Lines: <per line number: pass | fail | not covered, e.g. "3 pass, 7 fail">
 Evidence: <failing test title: assertion, one per line, or "none">
 ```
