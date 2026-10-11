@@ -119,8 +119,9 @@ they name; never build again or restart review at round 1.
    `gh pr view <M> --json mergeable` once. The script reads the newest
    finished CI run, which is often older than the head: newer pushes cancel
    theirs. Each failed test no open `flaky-test` issue names joins the fix
-   run's `fixes` as `ci: <its line> run <id>`; a conflict joins as `merge
-the base branch`. With no fix run due, they get one before the round.
+   run's `fixes` as `ci: <its line> run <id>`, and a conflict as a line
+   asking to merge the base branch. With no fix run due, they get one
+   before the round.
 3. **Decide** on the review report:
    - Fix lines: one `implementer` run with `mode: fix` and the Fix lines
      pasted under `fixes`, then the next round: `reviewer` with `round <n+1>`, the
