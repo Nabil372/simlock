@@ -66,6 +66,14 @@ export interface ScriptedSeed {
   readonly script?: DeviceScript;
 }
 
+function scriptedExtras(script: DeviceScript | undefined) {
+  return {
+    ...(script?.installed === undefined ? {} : { installedApps: script.installed }),
+    ...(script?.present === undefined ? {} : { present: script.present }),
+    ...(script?.absentReason === undefined ? {} : { absentReason: script.absentReason }),
+  };
+}
+
 export function iosScript(
   devices: readonly ScriptedSeed[],
   options: { readonly failReclaim?: boolean } = {},
@@ -78,9 +86,7 @@ export function iosScript(
       ids: [seed.driverDeviceId],
       model: PHYSICAL_MODEL,
       osVersion: script?.osVersion ?? PHYSICAL_OS,
-      ...(script?.installed === undefined ? {} : { installedApps: script.installed }),
-      ...(script?.present === undefined ? {} : { present: script.present }),
-      ...(script?.absentReason === undefined ? {} : { absentReason: script.absentReason }),
+      ...scriptedExtras(script),
     }));
   return {
     availableOsVersions: [PHYSICAL_OS],
