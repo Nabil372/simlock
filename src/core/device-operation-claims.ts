@@ -6,7 +6,6 @@ export type DeviceOperation =
   | "recovery"
   | "reclaim"
   | "enrollment"
-  /** A physical device being granted: its presence read runs under this claim (ADR 0022 §3). */
   | "grant";
 
 export interface DeviceOperationClaim {
@@ -16,10 +15,6 @@ export interface DeviceOperationClaim {
   release(): void;
 }
 
-/**
- * Tracks exclusive per-device operations only. It intentionally contains no
- * device lifecycle, cleanup, or leasing policy.
- */
 export class DeviceOperationClaims {
   readonly #claims = new Map<string, DeviceOperationClaim>();
 

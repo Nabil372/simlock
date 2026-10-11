@@ -1,40 +1,22 @@
-/**
- * The composition rule of ADR 0009 §1: a routing policy is an ordered list of stages, each a pure
- * function over worker views. This module knows how stages combine and nothing about what any
- * one stage checks -- that lives in `stages/`, one file per stage, so adding or removing a stage
- * touches that stage and the list in `routing.ts`, and no other stage.
- */
 import type { Platform } from "../../contract/index.js";
 import type { DeviceClass } from "../../core/index.js";
 import type { WorkerView } from "../worker-registry.js";
 
 export interface RoutableRequest {
   readonly platform: Platform;
-  /** The exact model the request names; absent for a class request or one naming neither. */
   readonly model?: string;
-  /** The class the request names; with no `model` either, the request means `phone`. */
   readonly class?: DeviceClass;
-  /** The OS constraint as typed: an exact version or a range (`os-range`). */
   readonly osVersion?: string;
-  /** The image tag the request names, matched against the catalog's `images`; absent for none. */
   readonly imageTag?: string;
-  /** The mode the request names; absent for none, which the worker answers with its default. */
   readonly mode?: "slim" | "full";
-  /** ADR 0022: asks for an enrolled physical device, which the gateway cannot yet see (#442). */
   readonly physical?: boolean;
 }
 
-/** Drops every worker `keeps` answers `false` for. Never decides a pick on its own. */
 export interface FilterStage {
   readonly kind: "filter";
   keeps(worker: WorkerView, request: RoutableRequest): boolean;
 }
 
-/**
- * Scores the remaining workers. When the best score is zero or less the stage abstains and
- * changes nothing; otherwise it decides and keeps only its best scorers, which may be all of
- * them. A settling rank ends the walk when it decides.
- */
 export interface RankStage {
   readonly kind: "rank";
   readonly name: string;

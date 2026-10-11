@@ -47,7 +47,6 @@ const adbServerPid = 4242;
 const adbRecordPath = `${simlockHome}/adb-server.json`;
 /** The AVD home this driver owns and proves ownership from, not the user's own. */
 const avdDirectory = `${simlockHome}/devices/android`;
-/** What every invocation the driver makes must be scoped with; see `AndroidDriver#env`. */
 const scopedEnv = {
   ANDROID_ADB_SERVER_PORT: String(adbServerPort),
   ANDROID_AVD_HOME: avdDirectory,

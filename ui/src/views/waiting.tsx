@@ -57,7 +57,6 @@ export function WaitingView() {
 export function WaitingTable(props: {
   readonly requests: readonly WaitingRequest[];
   readonly workers: readonly WorkerView[];
-  /** The daemon's time now, for how long each request has waited. */
   readonly now: number;
 }) {
   const { now, requests, workers } = props;
@@ -94,7 +93,6 @@ export function WaitingTable(props: {
   );
 }
 
-/** A place counts within the request's own line, so a physical request's says which one it is. */
 function queuePlace(request: WaitingRequest): string {
   if (request.queuePosition === undefined) return "—";
   return request.spec.physical === true

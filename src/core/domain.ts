@@ -8,10 +8,6 @@ import type { DeviceRequest } from "./driver.js";
 
 export type Platform = "ios" | "android";
 
-/**
- * ADR 0015 §3: the kind of device a model is. Declared here beside `Platform` rather than
- * imported from the contract; which family or tag is which class is the driver's to say.
- */
 export const DEVICE_CLASSES = [
   "phone",
   "tablet",
@@ -23,7 +19,6 @@ export const DEVICE_CLASSES = [
 ] as const;
 export type DeviceClass = (typeof DEVICE_CLASSES)[number];
 
-/** The mode a device actually has: slimmed by its driver, or not. */
 export type DeviceMode = "slim" | "full";
 
 /**
@@ -604,14 +599,8 @@ export function transitionEnteredAt(record: DeviceRecord): number | undefined {
   }
 }
 
-/** Request-scoped progress for the lease action currently being performed. */
 export type LeaseProgress =
   | { readonly stage: "queued"; readonly queuePosition: number }
-  /**
-   * The request waits on a component download (ADR 0010 §3). `component` is the string the
-   * driver named, carried unread. `waiting` is true while another install on the platform runs
-   * ahead of it. `percent`, a whole number from 0 to 100, is there when the installer printed one.
-   */
   | {
       readonly stage: "downloading";
       readonly component: string;
@@ -622,7 +611,6 @@ export type LeaseProgress =
   | { readonly stage: "booting"; readonly etaMs: number }
   | { readonly stage: "reclaiming"; readonly etaMs: number };
 
-/** What a physical request asks of an enrolled device: `osVersion` is the raw `--os` text. */
 export interface PhysicalRequest {
   readonly platform: Platform;
   readonly model?: string;
@@ -630,7 +618,6 @@ export interface PhysicalRequest {
   readonly osVersion?: string;
 }
 
-/** What `fitsPhysical` reads of a device: a worker view's entry carries `class` at the top. */
 export interface FittablePhysical {
   readonly spec: {
     readonly platform: Platform;
@@ -641,11 +628,6 @@ export interface FittablePhysical {
   readonly class?: PhysicalClass;
 }
 
-/**
- * The one place a physical request meets an enrolled device (ADR 0022 §3; architecture rule 10):
- * the platform, the model ignoring letter case or the class (`phone` when the request names
- * neither), and the OS as `satisfies` reads it, an exact version or a range as for a simulator.
- */
 export function fitsPhysical(device: FittablePhysical, request: PhysicalRequest): boolean {
   const { spec } = device;
   if (spec.platform !== request.platform) return false;
@@ -659,10 +641,7 @@ export function fitsPhysical(device: FittablePhysical, request: PhysicalRequest)
   return constraint.ok && satisfies(spec.osVersion, constraint.constraint);
 }
 
-/**
- * An exact `--os` is echoed. A range is not: its text is what the message names as the fix, so a
- * request that already wrote one is told only that the range matched nothing.
- */
+/** A range is not echoed: its text is what the message names as the fix. */
 function osPhrase(osVersion: string | undefined): readonly string[] {
   if (osVersion === undefined) return [];
   const parsed = parseOsConstraint(osVersion);
@@ -671,21 +650,14 @@ function osPhrase(osVersion: string | undefined): readonly string[] {
     : [`os ${osVersion}`];
 }
 
-/** `18` and `18.4`: the only OS texts a range can be named for, one or two numbers joined by a dot. */
 const NAMEABLE_OS = /^\d+(\.\d+)?$/;
 
-/** The range that means "any" of an exact `--os` the user most likely wrote loosely: it raises the last number. */
 function rangeAround(osVersion: string): string {
   const parts = osVersion.split(".").map(Number);
   const raised = parts.map((part, index) => (index === parts.length - 1 ? part + 1 : part));
   return `>=${parts.join(".")} <${raised.join(".")}`;
 }
 
-/**
- * The `UNKNOWN_MODEL` a physical request nothing could match is answered with (ADR 0022 §3). The
- * worker and, later, the gateway both read it here. The message names a range only on iOS and
- * only for an `--os` of one or two numbers; an Android API level is exact, so it names none.
- */
 export function noPhysicalMatch(request: PhysicalRequest): {
   readonly message: string;
   readonly details: {

@@ -1628,10 +1628,6 @@ function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
 }
 
-/**
- * A stored request written before ADR 0007 may carry `full`; it is dropped, not written back.
- * `physical` loads as `true` or not at all: a request without it, or with anything else, is virtual.
- */
 function withoutRetiredRequestKeys(request: DeviceRequest): DeviceRequest {
   const {
     full: _retired,

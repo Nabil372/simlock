@@ -163,7 +163,6 @@ async function flush(): Promise<void> {
   }
 }
 
-/** The grant or error `promise` settles with within a flush, or "pending". */
 async function outcome(promise: Promise<LeaseGrant>): Promise<LeaseGrant | Error | "pending"> {
   return Promise.race([
     promise.catch((error: unknown) => (error instanceof Error ? error : new Error(String(error)))),
@@ -189,10 +188,6 @@ function claimKind(harness: Harness, device: PhysicalDevice): string | undefined
   return harness.engine.core.claims.claim(device.id)?.kind;
 }
 
-/**
- * A request queued behind a reclaiming device, whose device then turns ready and whose queue
- * wake-up starts a presence read that is held.
- */
 async function waiterMidPresenceRead(options: { readonly timeoutMs?: number } = {}) {
   const harness = await createHarness();
   const device = await enrollIphone(harness, "UDID-A");

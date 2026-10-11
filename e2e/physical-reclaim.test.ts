@@ -24,13 +24,6 @@ import {
   type SeededLease,
 } from "./helpers/physical-state.js";
 
-/**
- * A released physical device is cleaned by uninstalling every app the enrolment did not list
- * (ADR 0022). The fake driver's `installedApps` is what is on the phone now; a reclaim writes the
- * apps it removed out of it and logs one `uninstall` call per app with the device's canonical ID
- * and the app ID.
- */
-
 const ENROLLED = ["com.example.mail", "com.example.maps"] as const;
 const AGENT_APPS = ["com.agent.one", "com.agent.two"] as const;
 const RECLAIM_FAILURE: FakeDriverErrorSpec = { message: "device busy", type: "generic" };

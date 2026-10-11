@@ -53,7 +53,6 @@ export type FakeDriverOperation =
   | "listCatalog"
   | "listComponents"
   | "removeComponent"
-  /** Recorded like every other call, so a test can pin that it precedes the first destroy. */
   | "revalidateRoot"
   | "findLegacy"
   | "destroyLegacy";
@@ -500,7 +499,6 @@ export class FakeDriver implements Driver {
     return { state: this.#reclaimResult, strategy: this.#reclaimStrategy };
   }
 
-  /** The physical reclaim reports what the enrolment list leaves to uninstall, as a driver would. */
   #reclaimPhysical(device: PhysicalDriverDevice): ReclaimResult {
     const scripted = (this.#physicalDevices ?? this.#scriptedPhysicalDevices ?? []).find(
       (candidate) => candidate.ids.includes(device.deviceId),
@@ -550,11 +548,6 @@ export class FakeDriver implements Driver {
     this.#physicalDevices = devices;
   }
 
-  /**
-   * Answers only for the IDs it is given, as a real driver does: an ID no test marked present
-   * reads not present. `failOn("listPresentPhysical", n, error)` makes the nth read reject, and
-   * `holdPresenceReads` keeps a read of a held ID waiting.
-   */
   async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
     await this.#beforeCall("listPresentPhysical", enrolledIds);
     if (enrolledIds.some((id) => this.#heldPresenceReads.has(id))) {
@@ -573,7 +566,6 @@ export class FakeDriver implements Driver {
     else this.#presentPhysical.delete(driverDeviceId);
   }
 
-  /** A read naming any of these IDs waits, answering from the presence at its end, until released. */
   holdPresenceReads(...driverDeviceIds: readonly string[]): void {
     for (const id of driverDeviceIds) this.#heldPresenceReads.add(id);
   }
@@ -617,7 +609,6 @@ export class FakeDriver implements Driver {
     return this.#reclaimEstimate(estimate.clean, spec);
   }
 
-  /** A physical spec costs one 30 s read limit plus one 60 s uninstall limit, at both clean levels. */
   #reclaimEstimate(clean: "standard" | "full", spec: DeviceSpec): number {
     if (spec.physical) return PHYSICAL_RECLAIM_ESTIMATE_MS;
     if (clean === "full") return this.#fullCleanReclaimEstimateMs ?? this.#estimateMs?.reclaim ?? 0;

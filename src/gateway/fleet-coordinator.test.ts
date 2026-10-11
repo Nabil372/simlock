@@ -4332,7 +4332,6 @@ describe("FleetLeaseCoordinator routes a physical request to its workers in id o
     return client.calls.filter((call) => call.startsWith("lease.request"));
   }
 
-  /** Starts the request and lets it settle as far as it will without the clock moving. */
   async function start(
     coordinator: FleetLeaseCoordinator,
     request: Parameters<FleetLeaseCoordinator["request"]>[0],

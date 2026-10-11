@@ -606,13 +606,6 @@ describe("POST /v1/lease-requests", () => {
   });
 
   it("forwards a body's owner field to the dispatched lease.request rather than silently dropping it (ADR §27a, H7)", async () => {
-    // Before this, `leaseRequestBodySchema` had no `owner` field at all, so a caller naming one
-    // was answered as though it had named none -- the same anti-pattern this codebase's own
-    // `device.exec`'s `requesterId` precedent already rejected: an identity named and answered
-    // as if it had not is the kind of silence that reads like authorization. The gate itself
-    // (FORBIDDEN for a non-admin token) lives in the shared dispatcher, exercised once for every
-    // transport in `daemon/dispatcher.test.ts`/`gateway/dispatcher.test.ts` -- this only proves
-    // the field actually reaches that dispatcher from HTTP instead of being dropped in transit.
     const { app, dispatcher } = buildHarness();
     void postLeaseRequest(app, { ...defaultBody, owner: "someone-else" });
     const call = await waitForDispatch(dispatcher, "lease.request");

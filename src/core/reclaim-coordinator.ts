@@ -45,13 +45,11 @@ export interface ReclaimRegistry {
   completeReclaimWithoutPurge(deviceId: string): Promise<DeviceRecord>;
 }
 
-/** Where a release-time purge failure is handed off once the reclaim attempt commits. */
 export interface ReclaimQuarantine {
   enter(failure: QuarantinePurgeFailure): Promise<void>;
 }
 
 export interface ReclaimCoordinatorOptions {
-  /** Marks a background wipe as a live in-process operation, as every release's reclaim is. */
   readonly claims: Pick<DeviceOperationClaims, "tryClaim">;
   readonly clock: Clock;
   readonly decisions: Pick<SerializedDecision, "run">;
@@ -63,17 +61,11 @@ export interface ReclaimCoordinatorOptions {
   readonly registry: ReclaimRegistry;
 }
 
-/**
- * Reclaims released devices and commits the state the driver's reclaim returns. Driver
- * work remains outside the serialized registry decision sections.
- */
 export class ReclaimCoordinator {
-  /** The deferred wipes `recoverInterrupted` started and has not seen settle. */
   readonly #backgroundWipes = new Set<Promise<void>>();
 
   constructor(private readonly options: ReclaimCoordinatorOptions) {}
 
-  /** Awaits every deferred wipe running in the background, for a graceful shutdown. */
   async settle(): Promise<void> {
     while (this.#backgroundWipes.size > 0) {
       await Promise.allSettled(this.#backgroundWipes);
@@ -117,16 +109,7 @@ export class ReclaimCoordinator {
     this.options.notifyAvailability();
   }
 
-  /**
-   * Safely finishes an unleased reclaim interrupted before its disposition commit.
-   *
-   * A reusable device whose wipe a daemon start put off (`deferredReclaimLeaseId`, ADR 0019 §2)
-   * gets the full reclaim instead, purge included: it still holds its last holder's data, and a
-   * reusable device never returns to the pool with it. That wipe starts in the background under
-   * a claim, as every release's reclaim does (#43), and this returns once it has started: an
-   * erase runs tens of seconds, and startup waits for none. A spent fresh device, which is never
-   * purged, takes the shutdown path either way.
-   */
+  /** The wipe starts in the background under a claim and this returns once it has started: an erase runs tens of seconds, and startup waits for none. */
   async recoverInterrupted(deviceId: string): Promise<boolean> {
     const device = await this.options.decisions.run(async () => {
       const current = this.options.registry.snapshot.virtualDevices.find(

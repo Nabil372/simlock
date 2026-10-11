@@ -113,27 +113,17 @@ export interface EventMap {
   "request.granted": {
     readonly requestId: string;
     readonly worker: string;
-    /** The gateway's lease id. */
     readonly leaseId: string;
-    /** The worker's lease id. */
     readonly workerLeaseId: string;
   };
-  /**
-   * A worker's capacity figures changed. Emitted after every registry commit and every
-   * reservation taken or released that changes them, and once at startup; never twice in a
-   * row with equal figures. `ramBudget` is there only under a strategy that keeps one.
-   */
   "capacity.changed": {
     readonly ios: CapacityFiguresPayload;
     readonly android: CapacityFiguresPayload;
     readonly global: CapacityFiguresPayload;
     readonly ramBudget?: { readonly usedBytes: number; readonly limitBytes: number };
   };
-  /** The depth of a wait queue changed (a worker's, or a gateway's fleet queue), and once at
-   * startup. */
   "queue.changed": {
     readonly depth: number;
-    /** Present only when the physical line changed; `depth` is then that line's (ADR 0022). */
     readonly physical?: true;
   };
   "device.provisioned": {

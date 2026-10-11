@@ -1,9 +1,5 @@
-// Shapes shared by the scriptable fake driver, its script file, and its call log.
-// These are hand-declared rather than imported from src/core/driver.ts because the
-// structural pieces (ObservedDevice, DriverReality, ...) are simple enough to duplicate
-// and doing so keeps this file free of any value-level coupling to the src tree beyond
-// the four error classes declared in driver-errors.d.ts. Type-only imports would also
-// work, but duplicating here makes it obvious at a glance what the JSON script format is.
+// Hand-declared rather than imported from src/core/driver.ts, to keep this file free of
+// value-level coupling to the src tree and to show the JSON script format at a glance.
 
 export type FakeDriverPlatform = "ios" | "android";
 
@@ -53,14 +49,7 @@ export interface ScriptedPhysicalDevice {
   readonly osVersion?: string;
   readonly class?: "phone" | "tablet";
   readonly apps?: readonly string[];
-  /**
-   * What is installed on the device now, as a presence-less list the reclaim reads: absent means
-   * `apps`. A test changes it between calls to play an agent installing or removing an app. A
-   * reclaim writes the apps it uninstalled out of it and logs one `uninstall` entry per app, with
-   * the device's canonical ID and the app ID as its arguments.
-   */
   readonly installedApps?: readonly string[];
-  /** Whether `listPresentPhysical` reports the device present; absent means present. */
   readonly present?: boolean;
   readonly refusal?: { readonly reason: FakeDriverRefusalReason; readonly message: string };
 }

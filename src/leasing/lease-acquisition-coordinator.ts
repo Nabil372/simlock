@@ -125,19 +125,10 @@ export type AcquisitionQueue = Pick<
 >;
 
 export interface LeaseAcquisitionCoordinatorOptions {
-  /** Read for a request that names a class: which models the host lists, and which runtimes. */
   readonly catalog: Pick<CatalogReader, "listCatalog">;
   readonly claims: AcquisitionClaims;
-  /**
-   * The one installer in the core (ADR 0010 §3). A request whose runtime is missing and that
-   * may download calls it directly (architecture rule 5); nothing else on this path installs.
-   */
   readonly components: Pick<ComponentInstaller, "install">;
   readonly decisions: AcquisitionDecision;
-  /**
-   * The worker's default device mode per platform, built from config at the composition root
-   * (ADR 0007 §2). A platform it does not name defaults to `"full"`.
-   */
   readonly defaultModes: Readonly<Partial<Record<Platform, DeviceMode>>>;
   readonly drivers: AcquisitionDrivers;
   readonly eventBus: Pick<EventBus, "emit">;
@@ -158,23 +149,19 @@ export interface LeaseAcquisitionCoordinatorOptions {
   readonly queue: AcquisitionQueue;
   readonly registry: LeaseAcquisitionRegistry;
   readonly logger?: Logger;
-  /** Stores each request before it is queued and answers repeats of it (`LeaseRequestBook`). */
   readonly requests: Pick<LeaseRequestBook<LeaseGrant>, "admit" | "holdsLeaseId" | "replay">;
 }
 
 interface AcquisitionWaiter extends Waiter {
   failures: number;
-  /** What an idle device must satisfy besides its pool mode, kept beside `spec` (ADR 0015 §5). */
   classOf?: ((model: string) => DeviceClass | undefined) | undefined;
   requirement?: DeviceRequirement | undefined;
   spec?: VirtualSpec;
   timing: LeaseTiming;
 }
 
-/** The kinds of plan that end in a grant. An eviction never does: the plan made after it does. */
 type GrantingPlanKind = "grant-ready" | "grant-physical" | "boot-shutdown" | "provision";
 
-/** The one place a plan's kind becomes the `source` a `lease.granted` reports. */
 const GRANT_SOURCE: Readonly<Record<GrantingPlanKind, EventMap["lease.granted"]["source"]>> = {
   "boot-shutdown": "booted",
   "grant-physical": "warm",
@@ -187,7 +174,6 @@ type OperationPlan = Exclude<
   { readonly kind: "grant-ready" | "grant-physical" | "wait" | "no-capacity" }
 >;
 
-/** A refused physical request names what no enrolled device matches, not a catalog it never read. */
 class PhysicalUnknownModelError extends UnknownModelError {
   constructor(request: PhysicalRequest) {
     super(request.platform, request.model, request.model === undefined ? request.class : undefined);
@@ -202,7 +188,6 @@ const noTiming: LeaseTiming = {
   estimatedReadyMs: 0,
 };
 
-/** Coordinates admission, planning, device work, and queue settlement for acquisition only. */
 export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
   readonly #activeWorkflows = new Set<Promise<void>>();
   readonly #driving = new WeakSet<AcquisitionWaiter>();
@@ -214,7 +199,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     this.#logger = options.logger?.child("lease-acquisition-coordinator") ?? new NoopLogger();
   }
 
-  /** The virtual line's waiters; physical ones are `physicalQueueDepth`. */
   get queueDepth(): number {
     return this.options.queue.depth;
   }
@@ -223,32 +207,18 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     return this.options.queue.physicalDepth;
   }
 
-  /**
-   * Whether a device with this spec is in the pool a request naming no mode draws from: its pool
-   * mode (the spec's mode, full when it names none) is the platform's default mode (ADR 0009 §6).
-   * A physical spec is in none.
-   */
   servesDefaultMode(spec: DeviceSpec): boolean {
-    // A physical device has no mode, so it is in no pool a request draws from by default.
     if (spec.physical) return false;
     return specMode(spec) === this.defaultMode(spec.platform);
   }
 
-  /** The one place a platform's default mode is read (ADR 0007 §2): full when none is set. */
   defaultMode(platform: Platform): DeviceMode {
     return this.options.defaultModes[platform] ?? "full";
   }
 
   /**
-   * The session principal a pending request was created under (ADR §4: `ownerId` on
-   * `LeaseRequestOptions`, always the session principal, never the caller-suppliable
-   * `requesterId`). `undefined` when no pending request exists for this requester id --
-   * `cancelPending`'s own `not-found` outcome is what surfaces that, not this lookup, so a
-   * caller cancelling a request that already settled (or never existed) is not authorized on
-   * a manufactured owner. A synchronous read like `queueDepth`, not routed through
-   * `decisions.run`: no state is asserted or mutated, and `#leaseCancel`'s contract-level
-   * `authorize` hook (ADR §2 step 3) runs before the handler, so it cannot go through the
-   * handler's own serialized decision anyway.
+   * Synchronous and not routed through `decisions.run`: `lease.cancel`'s `authorize` hook runs
+   * before the handler, so it cannot go through the handler's serialized decision.
    */
   pendingRequestOwner(requesterId: string): string | undefined {
     return this.options.queue.findPendingWaiter(requesterId)?.options.ownerId;
@@ -411,8 +381,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
       });
       return;
     }
-    // A physical request names an enrolled device, so it reads no catalog, defaults no mode and
-    // downloads nothing: it goes straight to the drive, which matches it against the registry.
     if (request.physical === true) {
       await this.#drive(waiter);
       return;
@@ -434,12 +402,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     await this.#drive(waiter);
   }
 
-  /**
-   * The one place a request becomes the spec its device will have: the mode defaulted (ADR 0007
-   * §2), a class or a range settled against the catalog (ADR 0015 §5), the runtime resolved by the
-   * driver, and a missing one installed when the request may download. `resolve` runs it with
-   * downloads off for the warm pool's targets, so a target and a request cannot disagree.
-   */
   async #resolveSpec(
     driver: Driver,
     request: DeviceRequest,
@@ -626,15 +588,9 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
   }
 
   /**
-   * Cancels a single pending request. Reuses the queue timeout's safety envelope exactly:
-   * only a waiter still in `queued` state is safe to reject here. `processing` means device
-   * work already claimed it (provision/boot/evict in flight, possibly never having touched
-   * the FIFO list at all on a first-attempt direct dispatch) -- the same state the timeout
-   * timer leaves untouched -- so this reports `not-cancellable` rather than inventing a new
-   * rule for tearing down in-flight driver work; nuke's `cancelAll` already owns that harder
-   * problem, with its own drain of `#activeWorkflows`. A physical waiter has no such work: its
-   * only step in flight is a presence read, which changes nothing and whose grant is refused for
-   * a waiter that has ended, so it is cancellable in any live state.
+   * Only a `queued` waiter is safe to reject: `processing` means device work already claimed it,
+   * which `cancelAll` owns tearing down. A physical waiter's only in-flight step is a presence
+   * read, so it is cancellable in any live state.
    */
   async cancelPending(requesterId: string): Promise<"cancelled" | "not-found" | "not-cancellable"> {
     return this.options.decisions.run(async () => {
@@ -648,12 +604,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     });
   }
 
-  /**
-   * The requests that have no device yet, oldest first, whose spec has resolved: those in state
-   * `new` or `queued` are waiting; one in `processing` has device work in flight, a provision, boot
-   * or eviction, and is marked `inFlight`. The warm pool's read port; the wire-shaped
-   * `Leasing#waitingRequests` is a different view and does not change.
-   */
   waitingDemand(): readonly WaitingDemand[] {
     return (this.options.queue.pending() as readonly AcquisitionWaiter[]).flatMap((waiter) =>
       waiter.spec === undefined
@@ -695,12 +645,10 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     }
   }
 
-  /** Whether an administrative reset holds acquisition closed; the warm pool does nothing meanwhile. */
   get maintenanceActive(): boolean {
     return this.#admissionClosed;
   }
 
-  /** Direct availability notification for release, cleanup, and queue-timeout callers. */
   kick(): void {
     this.#wakeQueue();
   }
@@ -720,12 +668,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     }
   }
 
-  /**
-   * Drives a physical waiter: plan, read presence outside the serialized decision, grant or plan
-   * again without the device that read not present. Each pass releases its claim before the next
-   * one starts (architecture rule 12); `absent` lives for this drive only, so a later wake reads
-   * the device afresh.
-   */
   async #drivePhysical(waiter: AcquisitionWaiter): Promise<void> {
     const absent = new Set<string>();
     for (;;) {
@@ -737,7 +679,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     }
   }
 
-  /** The one could-match check, run on every drive; then the planner's choice among ready devices. */
   #decidePhysical(
     waiter: AcquisitionWaiter,
     absent: ReadonlySet<string>,
@@ -776,11 +717,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     return plan;
   }
 
-  /**
-   * A device an older physical waiter still `queued` matches is that waiter's to take first. One
-   * mid presence read is `processing`, not `queued`, and holds nothing back: it already has the
-   * device it is reading.
-   */
   #heldByOlder(waiter: AcquisitionWaiter): PhysicalPlanInput["heldByOlder"] {
     const older: PhysicalRequest[] = [];
     for (const other of this.options.queue.pending()) {
@@ -792,13 +728,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     return (device: PhysicalDevice) => older.some((request) => fitsPhysical(device, request));
   }
 
-  /**
-   * Reads the claimed device's presence, then grants it in one decision when the claim is still
-   * active, the device is still `ready` and the waiter is still live. Whether the waiter should
-   * plan again. A read that rejects counts as not present (the driver bounds it); a not-present
-   * read leaves the device as it was and wakes nothing, as the same waiter would read it again at
-   * once.
-   */
   async #grantPhysical(
     waiter: AcquisitionWaiter,
     plan: Extract<AcquisitionPlan, { readonly kind: "grant-physical" }>,
@@ -824,8 +753,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     let replan = false;
     await this.options.decisions.run(async () => {
       try {
-        // A waiter that timed out, was cancelled or was killed meanwhile is not granted:
-        // `markProcessing` refuses a terminal one and ends one past its deadline.
         if (!this.options.queue.markProcessing(waiter)) return;
         const current = this.options.registry.snapshot.devices.find(
           (candidate) => candidate.id === device.id,
@@ -977,12 +904,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     });
   }
 
-  /**
-   * Hands the waiter the grant `LeaseLifecycle.grant` returns, which is why the lease
-   * environment is read here: every acquisition path -- ready device, fresh provision, boot,
-   * eviction -- funnels through it. The grant is built in `LeaseLifecycle.grant` from the same
-   * fields `Registry.createLease` stores for a repeat of the request, so the two must stay equal.
-   */
   async #grant(
     waiter: AcquisitionWaiter,
     device: DeviceRecord,
@@ -1249,8 +1170,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     void this.options.decisions.run(async () => {
       const next = this.options.queue.head as AcquisitionWaiter | undefined;
       if (next !== undefined && next.state === "queued") this.#track(this.#drive(next));
-      // A physical waiter waits for a device, not for a turn: each one queued is driven, oldest
-      // first, and the planner keeps a device with the oldest waiter that matches it.
       for (const waiter of this.options.queue.pending() as readonly AcquisitionWaiter[]) {
         if (lineOf(waiter.request) === "physical" && waiter.state === "queued") {
           this.#track(this.#drive(waiter));
@@ -1310,12 +1229,7 @@ function grantReadyTiming(driver: Driver, spec: DeviceSpec): LeaseTiming {
   };
 }
 
-/**
- * What this device's reclaim will cost once the lease is released -- the one part of a
- * grant's timing that describes work still ahead of the holder rather than work already
- * done. `standard` because that is what every release path asks for (`ReclaimCoordinator
- * #reclaim`, `QuarantineCoordinator`); a holder cannot request a different clean level.
- */
+/** `standard`: every release path asks for it; a holder cannot request another clean level. */
 function releaseReclaimEstimateMs(driver: Driver, spec: DeviceSpec): number {
   return driver.estimate({ clean: "standard", operation: "reclaim" }, spec);
 }
@@ -1329,7 +1243,6 @@ function operationPlan(plan: AcquisitionPlan): OperationPlan | undefined {
     : plan;
 }
 
-/** What a physical request asks of a device: the fields it set, and none it left out. */
 function physicalRequestOf(request: DeviceRequest): PhysicalRequest {
   return {
     platform: request.platform,
@@ -1339,7 +1252,6 @@ function physicalRequestOf(request: DeviceRequest): PhysicalRequest {
   };
 }
 
-/** The spec without a planned mode: the full spec of the same model and runtime. */
 function fullSpec(spec: VirtualSpec): VirtualSpec {
   if (spec.mode === undefined) return spec;
   const { mode: _mode, ...full } = spec;
@@ -1348,11 +1260,6 @@ function fullSpec(spec: VirtualSpec): VirtualSpec {
 
 type DownloadingProgress = Extract<LeaseProgress, { readonly stage: "downloading" }>;
 
-/**
- * The installer's report in the requester's words. `waiting` is a request still behind another
- * install; `downloading` is its own install running, with the installer's percentage (already
- * within 0..100) rounded down to a whole number.
- */
 function downloadingProgress(
   component: string,
   progress: ComponentInstallerProgress,

@@ -59,14 +59,7 @@ export class QuarantineCoordinator {
     this.#logger = options.logger?.child("quarantine-coordinator") ?? new NoopLogger();
   }
 
-  /**
-   * Commits quarantine entry for a device whose release-time purge just
-   * failed, emits the (unchanged) `device.purge-failed` fact alongside the
-   * new `device.quarantined` fact, and arms the first retry. Capacity
-   * accounting does not change here -- a virtual device in `reclaiming` and `quarantined` both
-   * counts as running -- so no queued waiter can be satisfied by this alone
-   * and `notifyAvailability` is not called.
-   */
+  // No `notifyAvailability`: a quarantined device still counts as running, so no waiter can be satisfied by this.
   // fallow-ignore-next-line unused-class-member -- called through ReclaimCoordinator's quarantine port.
   async enter(failure: QuarantinePurgeFailure): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
@@ -92,15 +85,6 @@ export class QuarantineCoordinator {
     this.#arm(failure.deviceId, nextRetryAt);
   }
 
-  /**
-   * Commits quarantine entry for a device Doctor found stuck mid-transition past its
-   * driver-derived stall threshold (`provisioning -> quarantined`; see domain.ts and
-   * doctor.ts). Distinct from `enter()`: there is no purge failure, no lease, and no
-   * `attemptedStrategy` to report, so only `device.quarantined` fires here --
-   * `device.purge-failed` stays specific to the release-time path. Retry/give-up
-   * thereafter is identical: `#retry` treats every quarantined device the same regardless of
-   * how it arrived.
-   */
   async enterFromStalledTransition(deviceId: string): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
     await this.options.decisions.run(async () => {
@@ -114,13 +98,7 @@ export class QuarantineCoordinator {
     this.#arm(deviceId, nextRetryAt);
   }
 
-  /**
-   * Re-arms retry timers for devices still `quarantined` after a daemon
-   * restart, using the persisted `quarantineNextRetryAt` (a retry already due
-   * fires immediately, same as `LeaseExpiryScheduler.restore`). `include` leaves out the devices
-   * a daemon start must not act on: a retry that is due drives the driver at once, and startup
-   * does not drive a platform it could not read (ADR 0019 §1 step 5).
-   */
+  /** `include` skips devices a daemon start must not act on: a due retry drives the driver at once. */
   restore(include: (device: DeviceRecord) => boolean = () => true): void {
     for (const device of this.options.registry.snapshot.devices) {
       if (device.state !== "quarantined" || !include(device)) continue;
@@ -156,9 +134,7 @@ export class QuarantineCoordinator {
 
   async #retry(deviceId: string): Promise<void> {
     if (this.#disposed) return;
-    // A device leaves `quarantined` only through this coordinator (recovered or
-    // abandoned), so a re-read that finds it gone or moved on means a stale
-    // timer fired after the fact -- nothing to do.
+    // A re-read that finds the device gone or moved on means a stale timer fired: nothing to do.
     const device = await this.options.decisions.run(() =>
       this.options.registry.snapshot.devices.find(
         (candidate) => candidate.id === deviceId && candidate.state === "quarantined",
@@ -216,11 +192,7 @@ export class QuarantineCoordinator {
     this.options.notifyAvailability();
   }
 
-  /**
-   * A spent fresh device already served its one lease, so a successful reclaim would put it
-   * back in the pool for a second one. It retries the delete instead, and success is
-   * `device.deleted`, not `device.quarantine-recovered`: nothing rejoined the pool.
-   */
+  /** A spent fresh device already served its one lease, so a successful reclaim would put it back in the pool for a second one. */
   async #retryDelete(
     driver: Driver,
     device: VirtualDevice,
@@ -280,12 +252,8 @@ export class QuarantineCoordinator {
     try {
       await driver.destroy(toDriverDevice(device));
     } catch (error: unknown) {
-      // Destroy itself failed: leave the device quarantined -- still uncounted
-      // against a grant, still counted against capacity -- rather than either
-      // reusing a dirty device or losing track of one that never got cleaned
-      // up. No further retry is scheduled, so this is a terminal state that
-      // only an operator (`simlock doctor` / `nuke`) leaves; emit it as its own
-      // fact rather than letting a device strand itself in silence.
+      // Leave it quarantined and counted against capacity: reusing a dirty device or losing
+      // track of one is worse. No retry is scheduled; only an operator leaves this state.
       await this.options.decisions.run(() =>
         this.options.registry.strandQuarantine(device.id, attempts),
       );
@@ -303,10 +271,7 @@ export class QuarantineCoordinator {
     this.#abandoned(device, attempts, claim);
   }
 
-  /**
-   * A physical device is the owner's, so running out of retries unenrols it and never destroys it
-   * (safety rule 2); `device.quarantine-stranded` cannot happen to it, as nothing here can fail.
-   */
+  /** A physical device is the owner's: running out of retries unenrols it and never destroys it (safety rule 2). */
   async #unenroll(
     device: DeviceRecord,
     attempts: number,

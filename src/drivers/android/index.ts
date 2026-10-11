@@ -623,12 +623,8 @@ export class AndroidDriver implements Driver {
   }
 
   /**
-   * Deletes a pre-root AVD through the AVD home it actually lives in. Permitted despite
-   * sitting outside this driver's root because the registry names it: registry-only
-   * destruction (safety rule 1) is satisfied by the record, not by the root. The
-   * environment points at the legacy home and deliberately not at Simlock's adb server --
-   * an AVD that is somehow still running is running on the user's, and stopping devices on
-   * a server Simlock does not own is not something this may do.
+   * Permitted outside this driver's root because the registry names the AVD (safety rule 1). The
+   * environment omits Simlock's adb server: stopping devices on a server it does not own is off limits.
    */
   async destroyLegacy(device: DriverDevice): Promise<void> {
     const { avdName } = this.#dataFor(device);
@@ -638,24 +634,17 @@ export class AndroidDriver implements Driver {
   }
 
   leaseEnvironment(device: DriverDevice): Readonly<Record<string, string>> {
-    // A physical device is on the default adb server, not Simlock's emulator server, so a plain
-    // `adb` reaches it and never an emulator.
+    // A physical device is on the default adb server, not Simlock's emulator server.
     if (isPhysicalDriverDevice(device)) {
       return { ANDROID_ADB_SERVER_PORT: "5037", ANDROID_SERIAL: device.deviceId };
     }
-    // `adb` reads this variable natively, so a lease holder needs nothing else to reach the
-    // device: without it their `adb` talks to the shared server, which cannot see it.
+    // Without this their `adb` talks to the shared server, which cannot see the emulator.
     return { ANDROID_ADB_SERVER_PORT: String(this.#adbServerPort) };
   }
 
   readonly passthroughTool = ANDROID_PASSTHROUGH_TOOL;
 
-  /**
-   * `adb -P <port> <args...>` against Simlock's own server, which is the only one that can
-   * see a Simlock emulator at all. `ANDROID_ADB_SERVER_PORT` rides along as well so any adb
-   * that re-execs itself stays on the same server; it says the same thing `-P` does, and
-   * saying it twice costs nothing.
-   */
+  /** `ANDROID_ADB_SERVER_PORT` rides along so an adb that re-execs itself stays on the same server. */
   passthrough(args: readonly string[], context?: PassthroughContext): PassthroughCommand {
     this.#assertProxyable(args, context);
     return {
@@ -928,11 +917,7 @@ export class AndroidDriver implements Driver {
     return this.#onReservedPort(data, state);
   }
 
-  /**
-   * The device's data on the port this process reserved for it, if it has one. That port is
-   * the truth; the data a caller passes is only what the registry last committed, which a
-   * `makeReady` that failed after its boot never updated.
-   */
+  /** The reserved port is the truth; `data` is only what the registry last committed. */
   #onReservedPort(data: AndroidDriverData, state: DeviceState): AndroidDriverData {
     return state.port === undefined
       ? data
@@ -943,8 +928,6 @@ export class AndroidDriver implements Driver {
     device: DriverDevice,
     options: { readonly clean: "standard" | "full" },
   ): Promise<ReclaimResult> {
-    // The physical reclaim comes with the physical handlers (#441); until then a physical device
-    // is refused before anything runs, never wiped as if it were an emulator.
     if (isPhysicalDriverDevice(device)) {
       throw new Error("a physical device cannot be reclaimed yet");
     }
@@ -953,9 +936,7 @@ export class AndroidDriver implements Driver {
       const state = this.#stateFor(data);
 
       if (options.clean === "full") {
-        // No mark write here: `-wipe-data` hasn't happened yet -- it's deferred to the next
-        // `makeReady` (`state.needsWipe`) -- so there is no post-erase moment on this path to
-        // mark. The next `makeReady` call covers it via its unconditional tail write.
+        // No mark write: `-wipe-data` is deferred to the next `makeReady`, which writes the mark.
         await this.#shutdown(data, state);
         state.needsWipe = true;
         state.snapshotExpected = false;
@@ -990,9 +971,8 @@ export class AndroidDriver implements Driver {
         return { state: "shutdown", strategy: "wipe" };
       }
       await this.#waitForReadiness(data, this.#clock.now());
-      // Snapshot restore reverts the erasable half of the mark to whatever it was at capture
-      // time, and this path returns "ready" directly without going through `makeReady` --
-      // skipping this write would leave the mark frozen at a stale generation forever.
+      // Snapshot restore reverts the mark to its capture-time value and this path skips `makeReady`,
+      // so the mark is written here.
       await this.#writeMark(data);
       return { state: "ready", strategy: "snapshot" };
     });
@@ -1017,9 +997,8 @@ export class AndroidDriver implements Driver {
     const data = this.#dataFor(device);
     await this.#withDeviceLock(data.avdName, async () => {
       const state = this.#stateFor(data);
-      // Only an emulator this driver started can still be running here. After a restart the
-      // port a stopped device's record names may be another device's (#52), so it is never
-      // sent a kill.
+      // After a restart a stopped device's recorded port may be another device's (#52), so only
+      // an emulator this driver started is sent a kill.
       if (state.handle !== undefined) {
         await this.#shutdown(this.#onReservedPort(data, state), state);
       }
@@ -1031,7 +1010,6 @@ export class AndroidDriver implements Driver {
     });
   }
 
-  /** Reads no device until the physical handlers exist (#441): every ID given reads not present. */
   async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
     return enrolledIds.map((driverDeviceId) => ({ driverDeviceId, present: false }));
   }
@@ -1241,10 +1219,8 @@ export class AndroidDriver implements Driver {
       case "boot":
         return COLD_BOOT_ESTIMATE_MS;
       case "reclaim":
-        // `standard` is priced as the snapshot restore it selects. It can still fall back to
-        // the wipe branch when the baseline no longer matches the AVD config, which runs some
-        // five times longer; that is the exception rather than the case to quote, and `Doctor`
-        // covers it by taking the slower clean level instead of this averaging the two.
+        // `standard` can still fall back to the wipe branch (about five times longer); `Doctor`
+        // takes the slower clean level instead of averaging the two.
         return virtualReclaimStrategy(estimate.clean) === "wipe"
           ? WIPE_RECLAIM_ESTIMATE_MS
           : SNAPSHOT_RECLAIM_ESTIMATE_MS;
@@ -1257,7 +1233,6 @@ export class AndroidDriver implements Driver {
     );
   }
 
-  /** See the seed-device comment at its `provision` call site. */
   async #defaultAvdmanagerDeviceId(): Promise<string> {
     const result = await this.#runOrThrow(this.#sdk.avdmanager, ["list", "device"]);
     const [first] = parseAvdmanagerDeviceProfiles(result.stdout);
@@ -2474,10 +2449,7 @@ function defaultDeviceProfileSources(
 ): readonly DeviceProfileSource[] {
   const devicesXmlPath = `${options.env.ANDROID_SDK_HOME ?? options.homeDirectory}/.android/devices.xml`;
   return [
-    // Scoped like every other invocation this driver makes: `avdmanager` is the tool that
-    // both lists profiles and creates AVDs, and leaving one of its calls pointed at the
-    // user's own `~/.android` is the exception that makes "every call is scoped" untrue
-    // (ADR 0001, decision 4).
+    // Scoped like every other call: an unscoped `avdmanager` would read the user's `~/.android`.
     new BuiltinDeviceProfileSource(sdk.avdmanager, options.processRunner, env),
     new UserDeviceProfileSource(devicesXmlPath, options.filesystem, onDiagnostic),
   ];
@@ -2494,7 +2466,6 @@ function portAllocatorFor(processRunner: ProcessRunner, adb: string): PortAlloca
 }
 export { androidPrerequisites } from "./prerequisites.js";
 
-/** What an emulator's reclaim does at each clean level: the one place that says. */
 function virtualReclaimStrategy(clean: "standard" | "full"): "snapshot" | "wipe" {
   return clean === "full" ? "wipe" : "snapshot";
 }

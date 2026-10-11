@@ -294,24 +294,17 @@ export const leaseGrantSchema = z.object({
   timing: leaseTimingSchema,
 });
 
-/** The device a lease request named, with every field it left out left out. */
 const requestedDeviceSchema = z.object({
   platform: platformSchema,
-  /** Present only when the request named a model; one that named a class or nothing has none. */
   model: z.string().optional(),
   class: deviceClassSchema.optional(),
   osVersion: z.string().optional(),
   mode: deviceModeSchema.optional(),
   imageTag: imageTagSchema.optional(),
-  /** Present only for a physical request (ADR 0022); a virtual one has none. */
   physical: z.literal(true).optional(),
 });
 
-/**
- * One stored lease request (`LeaseRequestRecord`, src/core/domain.ts): the shape a frontend reads
- * a request back in, whichever frontend sent it. `grant` is the grant the request was answered
- * with, stored as granted -- a later renew does not move its `ttlDeadline`.
- */
+/** `grant` is stored as granted -- a later renew does not move its `ttlDeadline`. */
 export const leaseRequestRecordSchema = z.object({
   id: z.string(),
   requesterId: z.string(),
@@ -1063,48 +1056,21 @@ export const workerViewSchema = z.object({
   downloads: z
     .object({
       policy: z.enum(["never", "on-request", "always"]),
-      /** The worker's own `downloads.timeoutMs`, read with the policy (ADR 0010 §7). Optional
-       * so a gateway on an older build still parses a view. */
+      /** Optional so a gateway on an older build still parses a view. */
       timeoutMs: z.number().optional(),
     })
     .optional(),
-  /**
-   * The worker's own `lease.maxTtlMs`, read once with `config.get` when the uplink connects
-   * (and again on the periodic backstop tick, alongside the catalog and `downloads.policy`
-   * above -- see `WorkerLink#rebuildView`). ADR 0005 §15: a fleet lease's width is decided at
-   * the gateway's own `lease.maxTtlMs`, but what the gateway dispatches is an ordinary
-   * `lease.request`, so a worker whose own cap is lower still refuses a request the gateway
-   * already accepted -- this field is what lets the gateway notice that at the worker, rather
-   * than only in the operator's documentation. Absent for a worker whose `config.get` the
-   * gateway could not read (an incompatible worker, a call that failed, or one older than this
-   * field).
-   */
+  /** A worker whose own cap is lower still refuses a request the gateway accepted; this lets the gateway notice. */
   lease: z.object({ maxTtlMs: z.number() }).optional(),
-  /** The worker's *own* queue depth -- local agents on that machine. The gateway's fleet queue
-   * is reported separately by `status.get` and arrives with #118. */
   queueDepth: z.number().optional(),
-  /** The worker's physical line (ADR 0022); `queueDepth` counts the virtual line only. */
   physicalQueueDepth: z.number().optional(),
   leases: z.array(leaseRecordSchema).optional(),
   devices: z.array(statusDeviceSchema).optional(),
   catalog: z.array(platformCatalogSchema).optional(),
-  /**
-   * ADR 0009 §4: when the gateway last read `catalog` from this worker in its current session.
-   * Cleared when the worker connects and set again by the first refresh that reads a catalog, so
-   * a worker that has just connected has none: its `catalog` is the last session's, or absent.
-   * It is what tells a catalog read and found empty from one that has not arrived. Absent on a
-   * view no gateway built.
-   */
+  /** Cleared on connect, so a just-connected worker has none: it tells a catalog read and found empty from one not yet arrived. */
   catalogReadAt: z.number().optional(),
-  /** ADR 0008 §8: the `host` block of the worker's last `status.get`. Absent for a worker the
-   * gateway has not read status from, and for an `incompatible` one. */
   host: hostFactsSchema.optional(),
-  /** ADR 0010 §7: the `installs` of the worker's last `status.get`. Empty for a worker whose
-   * status lists none, including one too old to list them. */
   installs: workerInstallsSchema.optional(),
-  /** The `waiting` of the worker's last `status.get`: the requests waiting in its own queue,
-   * copied as `installs` is. Empty for a worker too old to list them; absent for a
-   * disconnected or incompatible one, which the gateway cannot ask. */
   waiting: z.array(waitingRequestSchema).optional(),
 });
 

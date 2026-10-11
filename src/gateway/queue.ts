@@ -61,26 +61,12 @@ export interface FleetWaiter {
 export interface FleetQueueOptions {
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
-  /** Called after a timed-out waiter has been removed and rejected -- the rejection itself
-   * already happened inside `WaitQueue#armTimeout` by the time this fires; `FleetLeaseCoordinator`
-   * uses it only to report the gateway's own `lease.rejected` fact for that already-committed
-   * timeout (H10, round 2 review: this comment used to say it wakes the dispatch loop the same
-   * way a release or worker-view change does -- it does not; the timed-out waiter is already
-   * terminal and gone from the queue, and nothing here re-runs `#dispatch` for the *other*
-   * waiters still behind it). */
+  /** Reports the timeout only; it does not wake the dispatch loop for the waiters behind. */
   readonly onTimeout?: (waiter: FleetWaiter) => void;
-  /** Called with a line's new depth each time a waiter joins or leaves that line. */
   readonly onDepthChange?: ((depth: number, line: "virtual" | "physical") => void) | undefined;
 }
 
-/**
- * Casts a `WaitQueue`-native value to its fleet-shaped counterpart. `WaitQueue` itself has no
- * fleet awareness (by design -- it stays platform-agnostic and worker-agnostic alike), so the
- * cast is this module's whole job: every fleet-facing method below either takes a `FleetWaiter`
- * and hands `WaitQueue` back exactly what it minted (never a waiter from a different `FleetQueue`
- * or from the worker's own acquisition path, so the shapes always agree at runtime even though
- * `WaitQueue`'s own types do not know that).
- */
+/** `WaitQueue` has no fleet awareness; every waiter reaching here was minted by this queue, so the cast holds. */
 function asFleet<Value>(value: Value): Value extends undefined ? undefined : FleetWaiter {
   return value as never;
 }
@@ -99,7 +85,6 @@ export class FleetQueue {
     });
   }
 
-  /** The virtual line's waiters; a physical request waits in its own line (ADR 0022). */
   get depth(): number {
     return this.#queue.depth;
   }
@@ -108,13 +93,10 @@ export class FleetQueue {
     return this.#queue.physicalDepth;
   }
 
-  /** Every waiter still holding a slot, oldest first (ADR 0005 §11's dispatch order). See
-   * `WaitQueue#list`. */
   list(): readonly FleetWaiter[] {
     return this.#queue.list().map((waiter) => asFleet(waiter));
   }
 
-  /** Where each waiter not yet settled stands. See `WaitQueue#places`. */
   places(): readonly QueuePlace[] {
     return this.#queue.places();
   }

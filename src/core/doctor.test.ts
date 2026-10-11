@@ -2615,9 +2615,6 @@ function sequence() {
   return { generate: () => `${next++}` };
 }
 
-/** Attaches a fixed `advisories()` result to a `FakeDriver` instance -- `FakeDriver` itself
- * never implements the optional method, so tests that need a driver reporting advisories add it
- * ad hoc rather than growing the fake's own surface for a single test file's needs. */
 function withAdvisories(
   driver: FakeDriver,
   advisories: readonly { readonly code: string; readonly message: string }[],

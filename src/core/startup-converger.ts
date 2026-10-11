@@ -9,22 +9,18 @@ export interface StartupRegistry {
   };
 }
 
-/** Safely completes a reclaim operation interrupted by daemon shutdown. */
 export interface InterruptedReclaimRecovery {
   recoverInterruptedReclaim(device: VirtualDevice): Promise<void>;
 }
 
-/** Deletes a spent fresh device the previous process shut down but did not delete. */
 export interface SpentDeviceDeletion {
   deleteSpent(device: VirtualDevice): Promise<void>;
 }
 
-/** Re-arms retry timers for devices still `quarantined` at startup, from persisted state. */
 export interface QuarantineRestorer {
   restore(include: (device: DeviceRecord) => boolean): void;
 }
 
-/** Read-only operation claim view used to avoid an in-flight device operation. */
 export interface DeviceClaimReader {
   isClaimed(deviceId: string): boolean;
 }
@@ -39,26 +35,8 @@ export interface StartupConvergerOptions {
 }
 
 /**
- * Directly coordinates the required startup recovery sequence. It emits no
- * events itself; recovery and cleanup own their post-commit lifecycle facts.
- *
- * Convergence never acts on a platform the startup read could not list: a platform whose driver
- * was refused at discovery, or whose listing failed or hung. Recovering or shutting a
- * device down needs a driver call there is no driver for, and a `NoDriverError` out of
- * convergence stops the whole daemon -- costing the healthy platform for a root the other one
- * rejected, which is the opposite of the per-platform fail-closed behaviour discovery
- * promises. `simlock doctor` reports the rejection; the inventory waits for the driver to
- * come back. That includes a quarantined device's retry timer: a retry already due would drive
- * a driver the read just found failing or hung.
- *
- * A device a daemon start left `reclaiming` with its wipe put off, because it could not read the
- * device's platform (ADR 0019 §2), has its full reclaim started here once a start reads that
- * platform, in the background under a claim: startup does not wait for the erase. Any other
- * interrupted reclaim is only shut down.
- *
- * Only the device steps live here. Settling the requests a restart left open, ending the leases
- * whose device is not running and restoring the expiry timers of the leases left are leasing's,
- * and the daemon runs them first (ADR 0018 §1, ADR 0019 §1).
+ * Convergence never acts on a platform the startup read could not list: a `NoDriverError` out of
+ * convergence would stop the whole daemon, costing the healthy platform too.
  */
 export class StartupConverger {
   constructor(private readonly options: StartupConvergerOptions) {}

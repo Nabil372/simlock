@@ -333,10 +333,6 @@ export class Dispatcher {
   });
 
   #statusGet: Handler<"status.get"> = () => {
-    // ADR 0005 §1: what this daemon is, as opposed to what it holds. `mode` comes from
-    // config rather than being assumed, because it is what tells a client whether the device
-    // it leased is on this machine (§19c) -- today every daemon configures `worker`, and
-    // #117 is what makes `gateway` mean something beyond this field.
     const daemon = {
       health: this.options.health(),
       mode: this.options.config.mode,
@@ -368,27 +364,15 @@ export class Dispatcher {
     const requesterId = input.requesterId ?? session.principal;
     const requestedAllowDownload = input.allowDownload ?? false;
     const downloadsPolicy = this.options.config.downloads.policy;
-    // ADR 0005 §27a (narrowed, round 3 review, H3): `owner` is read only from the gateway's own
-    // uplink session -- forwarding the principal it authorized the request against on its own
-    // side -- never merely from `role === "admin"`. HTTP's `operator` token maps onto that same
-    // role (`dispatcher-session.ts`), so gating on role alone let *any* operator bearer
-    // credential set someone else's owner on a plain worker with no gateway anywhere; the field
-    // exists for one caller (the gateway's uplink, forced to `admin` by `acceptUplink`
-    // regardless of credential -- see `session.isGatewayUplink`'s own doc), not for every
-    // session that happens to carry that role. Any session that is not the uplink naming one is
-    // rejected outright rather than silently ignored: a caller free to name someone else as
-    // owner would be naming its way into their lease, and "ignore the field" would hide that a
-    // non-uplink caller tried. Omitting it keeps today's behaviour -- the owner is always the
-    // calling connection.
+    // `owner` is read only from the gateway's uplink, never from role alone: HTTP's `operator` token
+    // maps to `admin`, so a role check would let any operator name someone else's owner. Refused, not ignored.
     if (input.owner !== undefined && session.isGatewayUplink !== true) {
       throw new DispatchError(
         "FORBIDDEN",
         "Only the gateway's own uplink session may set lease.request's `owner` field",
       );
     }
-    // ADR 0021 §1: `fleetRequestId` marks a gateway's dispatch, a probe, so it follows `owner`'s
-    // rule exactly: only the uplink may send it, and the refusal comes before anything is stored.
-    // A probe is never queued on a worker, so it must also say `noWait`.
+    // Uplink only, refused before anything is stored: a probe is never queued on a worker, so it must say `noWait`.
     if (input.fleetRequestId !== undefined) {
       if (session.isGatewayUplink !== true) {
         throw new DispatchError(
@@ -420,21 +404,17 @@ export class Dispatcher {
         ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
         ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
       });
-      // A physical device's class sits on its spec; a grant carries it beside `physical` (ADR 0022).
       const { device } = grant;
       return {
         ...grant,
         device: device.physical ? { ...device, class: device.spec.class } : device,
       };
     } catch (error: unknown) {
-      // The refusal carries the ID in `details` on every transport (`ErrorDetailsMap`).
       if (error instanceof LeaseIdTakenError) {
         throw new DispatchError("LEASE_ID_TAKEN", error.message, { leaseId: error.leaseId });
       }
-      // The lease path only ever sees the clamped-to-false permission, so it cannot itself
-      // tell the caller that config, not missing consent, is what stood between this request
-      // and success. Recover that distinction here, the one place that saw both sides. Moved
-      // verbatim from `DaemonServer`'s former `#requestLease`.
+      // The lease path sees only the clamped-to-false permission, so this is the one place that can
+      // tell the caller that config, not missing consent, blocked the download.
       if (
         downloadsPolicy === "never" &&
         error instanceof RuntimeMissingError &&

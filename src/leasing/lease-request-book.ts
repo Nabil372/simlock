@@ -64,31 +64,19 @@ export class InMemoryLeaseRequestStore<Grant> implements LeaseRequestStore<Grant
   }
 }
 
-/**
- * A request still waiting for a device, as an operator sees it: who asked, for what, since when,
- * and where it stands. `queued` while it holds a place in the queue, `starting` while the daemon works
- * on it: placing it as it arrives, or finding, making, booting or downloading its device. Its idempotency key and owner are not here: they
- * are the requester's, not the operator's.
- */
 export interface WaitingRequest {
   readonly id: string;
   readonly requesterId: string;
-  /** The device as the request named it, with every field it left out left out. */
   readonly spec: Omit<DeviceRequest, "physical"> & { readonly physical?: true };
   readonly createdAt: number;
   readonly stage: "queued" | "starting";
   readonly queuePosition?: number;
 }
 
-/**
- * The one place a stored request and its place in a queue become a waiting entry. A daemon and a
- * gateway both list through it (`LeaseRequestBook#waiting`).
- */
 function waitingRequest(
   record: Pick<LeaseRequestRecord<unknown>, "createdAt" | "id" | "request" | "requesterId">,
   place: QueuePlace,
 ): WaitingRequest {
-  // A virtual request has no `physical` on the wire, whatever a caller stored for it.
   const { physical, ...named } = record.request;
   return {
     createdAt: record.createdAt,
@@ -101,7 +89,6 @@ function waitingRequest(
   };
 }
 
-/** The same `(requesterId, idempotencyKey)` arrived again naming a different device or lease ID. */
 export class IdempotencyConflictError extends Error {
   constructor(
     readonly requesterId: string,
@@ -114,7 +101,6 @@ export class IdempotencyConflictError extends Error {
   }
 }
 
-/** A replay of a request another principal sent. */
 export class LeaseRequestForbiddenError extends Error {
   constructor(readonly requestId: string) {
     super(`Lease request ${requestId} belongs to another principal`);
@@ -416,11 +402,7 @@ function storedResult<Grant>(record: LeaseRequestRecord<Grant>): Promise<Grant> 
   return Promise.reject(new ReplayedLeaseRequestError(failure.code, failure.message));
 }
 
-/**
- * Whether two requests name the same device: what an idempotency key promises not to change. An
- * omitted `model`, `class`, `osVersion`, `mode` or `imageTag` compares equal to itself only: a request that named
- * no mode is not the same request as one that named the worker's default.
- */
+/** An omitted field equals only an omitted one: a request naming no mode is not one naming the worker's default. */
 function sameDeviceRequest(left: DeviceRequest, right: DeviceRequest): boolean {
   return (
     left.platform === right.platform &&

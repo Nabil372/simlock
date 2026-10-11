@@ -1216,8 +1216,6 @@ export class IosSimctlDriver implements Driver {
     device: DriverDevice,
     _options: { readonly clean: "standard" | "full" },
   ): Promise<{ readonly state: "shutdown"; readonly strategy: "erase" }> {
-    // The physical reclaim comes with the physical handlers (#440); until then a physical device
-    // is refused before anything runs, never erased as if it were a simulator.
     if (isPhysicalDriverDevice(device)) {
       throw new Error("a physical device cannot be reclaimed yet");
     }
@@ -1246,11 +1244,7 @@ export class IosSimctlDriver implements Driver {
     await this.#simctl(["delete", data.udid], COMMAND_TIMEOUT_MS);
   }
 
-  /**
-   * Looks for a UDID in the machine's default device set -- where every simulator Simlock
-   * created before it owned one still lives. Reached only for a registry device the root no
-   * longer holds, and it reads: `simctl list` is the one unscoped call that mutates nothing.
-   */
+  /** Unscoped, so it only reads: `simctl list` is the one unscoped call that mutates nothing. */
   async findLegacy(driverDeviceId: string): Promise<LegacyDevice | undefined> {
     const result = await this.#legacySimctl(["list", "-j", "devices"], COMMAND_TIMEOUT_MS);
     const found = parseManagedDevices(JSON.parse(result.stdout) as unknown).find(
@@ -1271,28 +1265,20 @@ export class IosSimctlDriver implements Driver {
           udid: found.udid,
         } satisfies IosDriverData,
       },
-      // CoreSimulator lays every set out as `<set>/<UDID>`, data container included, so the
-      // container's parent is the device directory -- and where the *old* set is is exactly
-      // what this driver no longer knows any other way (ADR 0001, consequences).
+      // CoreSimulator lays every set out as `<set>/<UDID>`, so the data container's parent is the
+      // device directory.
       ...(found.dataPath === undefined ? {} : { path: dirname(found.dataPath) }),
     };
   }
 
-  /**
-   * Destroys a pre-root simulator through the unscoped path it actually sits on. Permitted
-   * despite living outside this driver's root because the registry names it: registry-only
-   * destruction (safety rule 1) is satisfied by the record, not by the root. `doctor --fix`
-   * is the only caller, and it checks the lease guard before asking.
-   */
+  /** Permitted outside this driver's root because the registry names the device (safety rule 1). */
   async destroyLegacy(device: DriverDevice): Promise<void> {
     const { udid } = iosDriverData(device);
-    // Best effort, exactly as the scoped `#shutdown` is: a device that is already shut down
-    // reports a failure that says nothing about whether the delete can proceed.
+    // Best effort: a device that is already shut down reports a failure unrelated to the delete.
     await this.#invokeLegacySimctl(["shutdown", udid], COMMAND_TIMEOUT_MS);
     await this.#legacySimctl(["delete", udid], COMMAND_TIMEOUT_MS);
   }
 
-  /** Reads no device until the physical handlers exist (#440): every ID given reads not present. */
   async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
     return enrolledIds.map((driverDeviceId) => ({ driverDeviceId, present: false }));
   }
@@ -1536,31 +1522,17 @@ export class IosSimctlDriver implements Driver {
     ];
   }
 
-  /**
-   * The device-set path a lease holder needs to address its simulator at all: inside a
-   * custom set a UDID resolves to nothing without it. `docs/CLI.md` publishes the variable
-   * name, and `simlock simctl` reads it back.
-   */
   leaseEnvironment(device: DriverDevice): Readonly<Record<string, string>> {
-    // A physical device is addressed by its UDID alone; a simulator device set cannot see it.
     if (isPhysicalDriverDevice(device)) return { SIMLOCK_DEVICE_UDID: device.deviceId };
     return { SIMLOCK_IOS_DEVICE_SET: this.#deviceRoot };
   }
 
   readonly passthroughTool = IOS_PASSTHROUGH_TOOL;
 
-  /**
-   * `xcrun simctl --set <root> <args...>`: the same insertion `#invokeSimctl` makes, for a
-   * command the caller runs itself. This is still an accident boundary and not a security
-   * one (ADR 0001, "Not a security boundary") -- someone who wants to can run
-   * `xcrun simctl --set` themselves -- but the wrapper must never be the thing that hands
-   * over the set path, so the two globals that could disguise a refused verb are refused
-   * before the verb is resolved at all.
-   */
+  /** The two globals that could disguise a refused verb are refused before the verb is resolved. */
   passthrough(args: readonly string[]): PassthroughCommand {
     this.#assertProxyable(args);
-    // No environment: on iOS the device set only ever reaches simctl on the command line
-    // (ADR 0001 records that every candidate variable was tried and ignored).
+    // No environment: simctl ignores every variable that could carry the device set.
     return { args: ["simctl", "--set", this.#deviceRoot, ...args], command: "xcrun", env: {} };
   }
 

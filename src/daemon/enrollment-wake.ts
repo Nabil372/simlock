@@ -3,10 +3,8 @@ import type { DispatcherOptions } from "./dispatcher.js";
 type Enrollment = NonNullable<DispatcherOptions["enrollment"]>;
 
 /**
- * Wakes the queue after an enrollment change commits (ADR 0022 §3), so a request waiting for a
- * device is granted one that was just enrolled, and one whose last match was unenrolled ends. It
- * lives at the composition root because the core cannot reach leasing: the wake is leasing's
- * port, which only the daemon holds. A refused `add` or `remove` changed nothing and wakes nothing.
+ * At the composition root because the core cannot reach leasing: the wake is leasing's port, which
+ * only the daemon holds.
  */
 export function wakingQueueAfter(enrollment: Enrollment, wake: () => void): Enrollment {
   return {

@@ -105,41 +105,24 @@ interface MutableWaiter extends Waiter {
   state: WaiterState;
   timer: TimerHandle | undefined;
   /**
-   * The absolute clock reading `options.timeoutMs` counts down to, fixed the *first* time this
-   * waiter is ever armed and never moved afterward -- see `#armTimeout`'s own doc comment for why
-   * (pre-existing, now routinely triggered: round 2 review of ADR 0005's fleet queue).
+   * Fixed on the first arm and never moved, so a re-queue cannot restart the budget.
    */
   deadlineAt: number | undefined;
 }
 
-/**
- * The two lines a waiter can stand in (ADR 0022): physical requests wait for a device and virtual
- * ones for a turn, so neither is ever held behind the other.
- */
 export type QueueLine = "virtual" | "physical";
 
 export interface WaitQueueOptions {
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
-  /** Called after a timed-out waiter has been removed and rejected. */
   readonly onTimeout?: (waiter: Waiter) => void;
-  /** Called with the new depth of a line each time a waiter joins or leaves it. */
   readonly onDepthChange?: ((depth: number, line: QueueLine) => void) | undefined;
 }
 
-/** The line a request waits in: its own, by whether it asked for a physical device. */
 export function lineOf(request: DeviceRequest): QueueLine {
   return request.physical === true ? "physical" : "virtual";
 }
 
-/**
- * FIFO state and promises for requests that are waiting to acquire a lease. One arrival order,
- * counted per line: a position, a depth and the head are each a line's own.
- *
- * This class deliberately does not decide whether capacity exists or perform
- * any lease work. Its owner advances waiters between `new`, `processing`, and
- * terminal states while this class owns queue membership and settlement.
- */
 export class WaitQueue {
   readonly #ownedWaiters = new WeakSet<MutableWaiter>();
   readonly #waiters: MutableWaiter[] = [];
@@ -148,7 +131,6 @@ export class WaitQueue {
 
   constructor(private readonly options: WaitQueueOptions) {}
 
-  /** The virtual line's waiters; the physical line's are `physicalDepth`. */
   get depth(): number {
     return this.#line("virtual").length;
   }
@@ -157,30 +139,14 @@ export class WaitQueue {
     return this.#line("physical").length;
   }
 
-  /** The oldest virtual waiter holding a slot: a physical waiter is never the head. */
   get head(): Waiter | undefined {
     return this.#line("virtual")[0];
   }
 
-  /**
-   * Every waiter currently holding a queue slot (`queued` or `processing`), oldest first. The
-   * single-lease acquisition path never needs this -- it only ever advances `head` -- but a
-   * caller that places requests across more than one resource (the gateway's fleet queue,
-   * ADR 0005 §11: "for each queued request, oldest first, the routing policy picks an eligible
-   * worker ... a request no worker can serve right now is passed over") has to walk the whole
-   * FIFO in order rather than block on its front. Returns a snapshot copy, not a live view.
-   */
   list(): readonly Waiter[] {
     return [...this.#waiters];
   }
 
-  /**
-   * Every waiter not yet granted or rejected, oldest first, with its place in its own line while
-   * it is `queued`: its 1-based index there, counting the waiters ahead of it in that line that are
-   * already being worked on, which is how a `queued` progress report and `lease.queued` count. A waiter being
-   * worked on (`new` or `processing`) has no place. Read now, not as last reported: a waiter
-   * moves up as the ones ahead of it leave.
-   */
   places(): readonly QueuePlace[] {
     return [...this.#pendingWaiters].map((waiter) =>
       waiter.state === "queued"
@@ -189,7 +155,6 @@ export class WaitQueue {
     );
   }
 
-  /** Every waiter not yet granted or rejected, in arrival order. A snapshot copy, not a live view. */
   pending(): readonly Waiter[] {
     return [...this.#pendingWaiters];
   }
@@ -199,9 +164,7 @@ export class WaitQueue {
   }
 
   /**
-   * Finds a requester's waiter across every non-terminal state, not just the FIFO list -- a
-   * waiter driven straight to `processing` on its first attempt never gets enqueued at all, so
-   * a caller deciding cancellability needs this broader membership.
+   * Includes a waiter driven straight to `processing`, which is never enqueued.
    */
   findPendingWaiter(requesterId: string): Waiter | undefined {
     for (const waiter of this.#pendingWaiters) {
@@ -245,13 +208,7 @@ export class WaitQueue {
   }
 
   /**
-   * Pre-existing gap, now routinely triggered (round 2 review): a waiter that cycles
-   * `queued` -> `processing` -> `queued` again (a worker's own retry, or the gateway's stale-view
-   * re-queue) used to have its whole `timeoutMs` budget re-armed from zero on every return to
-   * `queued`, because `#armTimeout` only ever knew "start a fresh timer for the full duration."
-   * `deadlineAt` (fixed once, on the very first arm) is what makes the budget survive the cycle:
-   * a re-enqueue past that deadline is rejected on the spot instead of getting another full
-   * `timeoutMs`, and one still short of it gets only the time actually left.
+   * A re-queue keeps the first deadline (`deadlineAt`) instead of re-arming the full `timeoutMs`.
    */
   enqueue(waiter: Waiter): boolean {
     const mutable = this.#mutable(waiter);
@@ -274,14 +231,12 @@ export class WaitQueue {
   markProcessing(waiter: Waiter): boolean {
     const mutable = this.#mutable(waiter);
     if (isTerminal(mutable.state)) return false;
-    // A waiter that held a worker's attempt open past its deadline must not be handed to the
-    // next worker: the deadline is fixed once and a retry does not reset it.
+    // A retry does not reset the deadline, so a waiter past it is not handed to the next worker.
     if (this.#expireIfPastDeadline(mutable)) return false;
     mutable.state = "processing";
     return true;
   }
 
-  /** Rejects `QUEUE_TIMEOUT` a waiter whose fixed deadline has passed. Whether it did. */
   #expireIfPastDeadline(mutable: MutableWaiter): boolean {
     if (mutable.deadlineAt === undefined || this.options.clock.now() < mutable.deadlineAt) {
       return false;

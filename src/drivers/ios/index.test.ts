@@ -1058,8 +1058,6 @@ describe("IosSimctlDriver", () => {
   it("prices reclaim as the erase it always runs, at either clean level", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    // `reclaimStrategy` answers `erase` for both levels, so both must be priced as one --
-    // and as tens of seconds, not the ~1s the estimate used to claim (#56).
     expect(driver.reclaimStrategy(VIRTUAL_DEVICE, { clean: "standard" })).toBe("erase");
     expect(driver.reclaimStrategy(VIRTUAL_DEVICE, { clean: "full" })).toBe("erase");
     expect(driver.estimate({ clean: "standard", operation: "reclaim" }, spec)).toBe(34_000);

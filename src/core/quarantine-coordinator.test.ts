@@ -38,10 +38,8 @@ const retryConfig: QuarantineRetryConfig = {
   maxRetryBackoffMs: 5_000,
 };
 
-/** In-memory stand-in mirroring the four Registry methods QuarantineCoordinator calls. */
 class FakeRegistry implements QuarantineRegistry {
   #devices: VirtualDevice[];
-  /** The initiator of every `deleteQuarantined` commit, in order. */
   readonly deletions: string[] = [];
 
   constructor(devices: readonly VirtualDevice[]) {
@@ -677,9 +675,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
       idGenerator: { generate: () => "id" },
       statePath: "/home/agent/.simlock/state.json",
     });
-    // A retry timer's first act is a serialized decision, so `decisionRuns` is the device's own
-    // retry: the test compares it before and after the clock passes, not against a count of the
-    // shared clock's timers.
+    // `decisionRuns` counts this device's own retry, which the shared clock's timer count does not.
     const decisions = new SerializedDecision();
     const decisionRuns = vi.spyOn(decisions, "run");
     const coordinator = new QuarantineCoordinator({

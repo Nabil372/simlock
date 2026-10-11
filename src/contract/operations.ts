@@ -110,49 +110,18 @@ export const statusGet = defineOperation({
      * is `starting`, like the fields above: a started worker and a gateway always send it.
      */
     warmPool: statusWarmPoolSchema.optional(),
-    /**
-     * What this daemon *is*, as opposed to what it currently holds: its health, and its run
-     * mode (ADR 0005 §1). `mode` is the one field that tells a client which kind of daemon
-     * answered -- a `worker` owns the devices it serves, a `gateway` owns none and fronts the
-     * workers that joined it -- which is what `simlock simctl` / `simlock adb` branch on
-     * (§19c). They live together in a block because they are both facts about the process and
-     * neither is a fact about a device; `health` moved in here from the top level with the
-     * same protocol bump that added `mode`. `consoleUrl` is where the daemon serves its web
-     * console (ADR 0011 §3), present only when HTTP is enabled; additive, so an older daemon
-     * simply sends none.
-     */
     daemon: z.object({
       health: daemonHealthSchema,
       mode: daemonModeSchema,
       // Bounded: a gateway parses every worker's answer (safety rule 10).
       consoleUrl: z.string().max(CONSOLE_URL_MAX_LENGTH).optional(),
     }),
-    /**
-     * ADR 0008 §5: the machine, beside `daemon`, the process. Served from memory, so reading it
-     * never makes `status.get` wait.
-     */
     host: hostFactsSchema,
-    /** The virtual line's waiters; the physical line's are `physicalQueueDepth`. */
     queueDepth: z.number().optional(),
     physicalQueueDepth: z.number().optional(),
-    /**
-     * ADR 0010 §3: the component installs waiting or running, the oldest first. A worker always
-     * sends it, empty when nothing is installing; a gateway lists its connected workers'
-     * installs, each with its `workerId`. Optional because an older daemon sends none.
-     */
     installs: statusInstallsSchema.optional(),
-    /**
-     * The requests waiting for a device in this daemon's own queue, oldest first: a worker's
-     * local queue, a gateway's fleet queue. A gateway lists its workers' own queues on each
-     * worker view and in `list.get`'s `requests`, not here. Optional because an older daemon
-     * sends none.
-     */
     waiting: z.array(waitingRequestSchema).optional(),
-    /**
-     * ADR 0005 §20: one entry per worker view, additive and gateway-only. Absent (not empty)
-     * from a worker's answer -- a worker has no fleet, and an empty array would read as "a
-     * gateway with no workers".
-     */
+    /** Absent, not empty, from a worker: an empty array would read as a gateway with no workers. */
     workers: z.array(workerViewSchema).optional(),
   }),
 });
@@ -183,49 +152,21 @@ export const leaseIdSchema = z.string().regex(LEASE_ID_PATTERN);
 
 const leaseRequestBaseSchema = z
   .object({
-    /**
-     * ADR 0015 §1: a request names an exact model, a device class, or neither, which means
-     * `phone`. Naming both is refused by the refinement below, so every transport answers alike.
-     */
     model: z.string().min(1).optional(),
     class: deviceClassSchema.optional(),
     platform: platformSchema,
-    /**
-     * ADR 0015 §2: an exact version or a range. A plain string here, checked by
-     * `refuseBadOsVersion` beside it: a refined field would be checked by the MCP SDK before the
-     * handler, and its own error would stand in for `BAD_REQUEST`.
-     */
+    // A plain string, checked by `refuseBadOsVersion`: a refined field would be checked by the MCP SDK
+    // before the handler, and its error would stand in for `BAD_REQUEST`.
     osVersion: z.string().optional(),
     mode: z.enum(["slim", "full"]).optional(),
     imageTag: imageTagSchema.optional(),
-    /**
-     * ADR 0022: asks for an enrolled physical device. `refusePhysicalWithImageFields` below
-     * refuses the fields that mean something only for a simulator or an emulator.
-     */
     physical: z.boolean().optional(),
     requesterId: z.string().optional(),
     allowDownload: z.boolean().optional(),
     noWait: z.boolean().optional(),
     timeoutMs: z.number().finite().positive().optional(),
-    /**
-     * ADR 0004 §4: this lease's initial TTL, accepted on **every** request now (it used to be
-     * `BAD_REQUEST` for a held lease). Omitting it means `lease.defaultTtlMs`; a value above
-     * `lease.maxTtlMs` is `BAD_REQUEST`, enforced by the dispatcher's handler rather than here
-     * because the cap is a daemon config value this module deliberately cannot see. Wired
-     * through to `LeaseRequestOptions.ttlMs` (src/leasing/wait-queue.ts) by that same handler.
-     */
+    /** Capped by the dispatcher's handler, not here: the cap is daemon config this module cannot see. */
     ttlMs: z.number().finite().positive().optional(),
-    /**
-     * ADR 0005 §27a: the gateway's own forward of the lease's *owner* -- the principal it
-     * authorized the request against on its own side -- so the worker stores that verbatim as
-     * `ownerId` instead of deriving one from the connection that reached it (which, over the
-     * uplink, is always the gateway's own admin session, never the fleet client). Read **only
-     * on an admin session**; the dispatcher's `#leaseRequest` rejects the request outright if
-     * any other role's session sends it (see that handler's own comment) rather than silently
-     * ignoring it, because silently ignoring it is exactly the "guess or fail open" the ADR
-     * calls out as the alternative to rejecting. Omitting it keeps today's behaviour -- the
-     * owner is the calling connection -- so this is additive and no existing caller changes.
-     */
     owner: z.string().optional(),
     /**
      * Makes this request repeatable: the daemon stores it under `(requesterId, idempotencyKey)`,
@@ -279,10 +220,7 @@ export function refuseModelWithClass(
   };
 }
 
-/**
- * Refuses the fields a physical device has no use for (ADR 0022): `mode`, `imageTag` and
- * `allowDownload: true`. `allowDownload: false` passes because the CLI always sends it.
- */
+/** `allowDownload: false` passes because the CLI always sends it. */
 function refusePhysicalWithImageFields(): <
   T extends {
     readonly physical?: boolean | undefined;
@@ -312,7 +250,6 @@ function refusePhysicalWithImageFields(): <
   };
 }
 
-/** Refuses an `osVersion` that is neither an exact version nor a range (ADR 0015 §2); one place, one check. */
 function refuseBadOsVersion(): <T extends { readonly osVersion?: string | undefined }>(
   input: T,
   context: z.RefinementCtx,
@@ -330,7 +267,6 @@ function refuseBadOsVersion(): <T extends { readonly osVersion?: string | undefi
   };
 }
 
-/** The fields of `lease.request` without the model-or-class refinement, for schemas derived from it. */
 export const leaseRequestFields = leaseRequestBaseSchema;
 
 const leaseRequestInputSchema = leaseRequestBaseSchema
@@ -345,31 +281,10 @@ export const leaseRequest = defineOperation({
   effect: "write",
   input: leaseRequestInputSchema,
   output: leaseGrantSchema,
-  /**
-   * Deliberately no `authorize` hook, and not an oversight to pair with `lease.cancel`'s: ADR
-   * §4 is explicit that any agent session may request a lease under an arbitrary
-   * `requesterId` -- that is the whole mechanism behind "one connection (the host, acting as
-   * a proxy for many agents) holds many leases by passing one requester id per session". The
-   * lease's actual `ownerId` is never client-supplied by an ordinary agent session (always
-   * `session.principal`, see the dispatcher's `#leaseRequest`) -- only an admin session's
-   * explicit `owner` above overrides that, and that gate is a role check on one field, not an
-   * ownership question about an existing resource, so it lives in the handler rather than as an
-   * `authorize` hook here (which runs against a resource this request has not created yet).
-   * Neither lets one session take over another's lease -- only choose the attribution label, or
-   * (admin only) the owner, on a lease it will itself cause to be granted. `lease.cancel` used
-   * to look inconsistent next to this (forbidding a `requesterId` that did not equal the
-   * principal, on an operation that has none of `lease.request`'s ownership protection to
-   * begin with) -- fixed by gating `lease.cancel` on the pending request's recorded owner
-   * (`pendingRequestOwner`, see its own `authorize` hook below) instead, which is consistent
-   * with this operation's design rather than in tension with it.
-   */
+  // No `authorize` hook on purpose: any agent session may request under an arbitrary
+  // `requesterId`, and `owner` is gated by role in the handler (the resource does not exist yet).
 });
 
-/**
- * The device a `lease.request` input names, with every field it left out left out: what a
- * daemon hands its lease path, as it arrived. A request that names no mode or image tag reaches
- * the lease path, and a worker behind a gateway, naming none (ADR 0007 §2).
- */
 export function requestedDevice(input: z.infer<typeof leaseRequestInputSchema>) {
   return {
     ...(input.model === undefined ? {} : { model: input.model }),
@@ -382,11 +297,6 @@ export function requestedDevice(input: z.infer<typeof leaseRequestInputSchema>) 
   };
 }
 
-/**
- * The class a request means (ADR 0015 §1): the one it names, `phone` when it names neither a
- * model nor a class, and none for an exact model. A constant of the contract, not a worker
- * setting; the worker's coordinator and the gateway both read it here.
- */
 export function requestedClass(request: {
   readonly model?: undefined;
   readonly class?: DeviceClass | undefined;

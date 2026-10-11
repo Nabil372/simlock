@@ -26,9 +26,7 @@ import {
 } from "../core/index.js";
 
 export interface AcquisitionPlannerSnapshot {
-  /** Every device: the ready grant reads them all, and `fits` refuses a physical one. */
   readonly devices: readonly DeviceRecord[];
-  /** The virtual read: everything that boots, evicts or counts toward a limit reads this. */
   readonly virtualDevices: readonly VirtualDevice[];
   readonly leases: readonly LeaseRecord[];
 }
@@ -36,30 +34,19 @@ export interface AcquisitionPlannerSnapshot {
 export interface AcquisitionPlannerInput {
   readonly failures: number;
   readonly noWait: boolean;
-  /** The waiter's id, put on the boot claim the plan takes. */
   readonly owner?: string | undefined;
   readonly snapshot: AcquisitionPlannerSnapshot;
-  /** The spec a new device would have, and so the pool mode an idle device must be in. */
   readonly spec: VirtualSpec;
-  /**
-   * What an idle device must satisfy besides its pool mode (ADR 0015 §5). Absent, the request is
-   * exact and the requirement is `spec`'s own model, OS and image tag.
-   */
   readonly requirement?: DeviceRequirement | undefined;
-  /** The class the catalog gives a model, for a requirement that names a class. */
   readonly classOf?: ((model: string) => DeviceClass | undefined) | undefined;
 }
 
-/** What a physical request plans from: no spec, no catalog, only the enrolled devices. */
 export interface PhysicalPlanInput {
   readonly request: PhysicalRequest;
   readonly noWait: boolean;
-  /** The waiter's id, put on the grant claim the plan takes. */
   readonly owner: string;
   readonly snapshot: AcquisitionPlannerSnapshot;
-  /** Devices this waiter read not present in the drive that is planning: not tried again. */
   readonly absent: ReadonlySet<string>;
-  /** Whether an older physical waiter still `queued` matches the device: it has first claim. */
   readonly heldByOlder: (device: PhysicalDevice) => boolean;
 }
 
@@ -128,8 +115,7 @@ export class AcquisitionPlanner {
       return { kind: "wait" };
     }
 
-    // A spent fresh device sits `shutdown` between its lease-end shutdown commit and its
-    // delete; `mayBeGranted` is what keeps it from being booted for a new lease in that window.
+    // A spent fresh device sits `shutdown` until its delete; `mayBeGranted` keeps it from being booted again.
     const shutdown = snapshot.virtualDevices.find(
       (device) => device.state === "shutdown" && servesRequest(device),
     );
@@ -138,12 +124,6 @@ export class AcquisitionPlanner {
     return this.#planProvision(input);
   }
 
-  /**
-   * A physical request is granted a device that is `ready`, never one a driver must boot,
-   * provision or evict, and it reserves no capacity (ADR 0022 §3). The first match in snapshot
-   * order that nothing holds is claimed for the presence read the caller runs next; none is a
-   * wait, or `no-capacity` under `noWait`.
-   */
   // fallow-ignore-next-line unused-class-member -- called through LeaseAcquisitionCoordinator's `AcquisitionPlannerPort`.
   planPhysical(input: PhysicalPlanInput): AcquisitionPlan {
     for (const device of input.snapshot.devices) {

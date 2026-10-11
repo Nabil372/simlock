@@ -108,7 +108,6 @@ describe("WaitQueue", () => {
       { id: unqueued.id },
     ]);
 
-    // The waiter ahead is granted: the ones behind it move up, and a settled one is gone.
     queue.resolve(starting, grant());
     await starting.promise;
     expect(queue.places()).toEqual([
