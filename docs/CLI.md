@@ -1806,8 +1806,7 @@ add again gets a new record.
   `network-only`, `untrusted`, `developer-mode-off`, `os-too-old`,
   `unsupported-kind`, `locked`, `unreadable`, `virtual-device` (a simulator or
   emulator, including every one Simlock manages) or
-  `enrolled-on-other-platform`. The message is the driver's own, and says
-  what to do.
+  `enrolled-on-other-platform`. The message says why and what to do.
 - `DEVICE_BUSY` (exit 11): the device is `leased`, is `reclaiming`, or
   another operation holds it, such as another `device add` (`busy`).
 - `NO_DRIVER` (exit 12): this machine has no driver for the platform.
@@ -1816,7 +1815,8 @@ add again gets a new record.
 `simlock list --devices` show as `driverDeviceId`. It asks for no
 confirmation and takes no `--yes`: it only makes Simlock forget the device,
 and sends nothing to it. An ID that is not enrolled is `UNKNOWN_DEVICE`
-(exit 12); a leased or reclaiming device is `DEVICE_BUSY`.
+(exit 12); a device that is leased, is reclaiming, or is held by another
+operation (`busy`) is `DEVICE_BUSY`.
 
 Enrolling emits `device.enrolled` and removing emits `device.deleted` with
 `initiator` `operator`; see [EVENTS.md](EVENTS.md). The real iOS and Android

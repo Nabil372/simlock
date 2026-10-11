@@ -289,7 +289,7 @@ export interface SimlockAdminClient extends SimlockClient {
   /**
    * Enrols the physical device plugged into the host this daemon runs on, named by
    * any ID the platform's driver reads. A device it cannot enrol is `DEVICE_NOT_ENROLLABLE` with
-   * the driver's reason; a leased, reclaiming or busy one is `DEVICE_BUSY`. A device already
+   * a reason; a leased, reclaiming or busy one is `DEVICE_BUSY`. A device already
    * enrolled is enrolled again: its record is kept and its model, OS version, class and apps are
    * read anew (`reenrolled: true`). A gateway answers `UNSUPPORTED_IN_GATEWAY_MODE`.
    */
@@ -297,8 +297,8 @@ export interface SimlockAdminClient extends SimlockClient {
 
   /**
    * Forgets an enrolled physical device, named by its canonical ID. Nothing is sent
-   * to the device. `UNKNOWN_DEVICE` for an ID with no enrolled device, `DEVICE_BUSY` for a leased
-   * or reclaiming one. A gateway answers `UNSUPPORTED_IN_GATEWAY_MODE`.
+   * to the device. `UNKNOWN_DEVICE` for an ID with no enrolled device, `DEVICE_BUSY` for a leased,
+   * reclaiming or busy one (another operation holds it). A gateway answers `UNSUPPORTED_IN_GATEWAY_MODE`.
    */
   removeDevice(input: DeviceRemoveInput): Promise<DeviceRemoveOutput>;
 }
