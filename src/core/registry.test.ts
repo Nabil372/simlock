@@ -3224,6 +3224,30 @@ describe("Registry: absent physical devices (ADR 0022 §2, §8)", () => {
     ]);
   });
 
+  it("an absent device moves to ready with a device.ready event and to deleted with a device.deleted event, and either is refused with device.returned", async () => {
+    const absent = { ...physicalRecord, absentReason: "locked", state: "absent" };
+    const { bus, loaded, transitionAny } = await stateFile({ physicalDevices: [absent] });
+    const registry = await loaded();
+    const seen: string[] = [];
+    bus.subscribeAll((envelope) => seen.push(envelope.event));
+    const returned = { event: "device.returned", payload: { deviceId: "dev_physical" } };
+
+    await expect(transitionAny(registry)("dev_physical", "ready", returned, {})).rejects.toThrow(
+      "Transition from absent to ready requires device.ready device event",
+    );
+    await expect(transitionAny(registry)("dev_physical", "deleted", returned, {})).rejects.toThrow(
+      "Transition from absent to deleted requires device.deleted device event",
+    );
+    await transitionAny(registry)(
+      "dev_physical",
+      "ready",
+      { event: "device.ready", payload: { deviceId: "dev_physical" } },
+      {},
+    );
+
+    expect(seen).toEqual(["device.ready"]);
+  });
+
   it("a ready physical device that goes absent is not stamped reclaimingSince, and device add re-enrolling it emits device.enrolled with reenrolled true, not device.ready", async () => {
     const { bus, loaded, transitionAny } = await stateFile({
       physicalDevices: [{ ...physicalRecord, state: "ready" }],
