@@ -144,7 +144,7 @@ describe("the core knows physical devices", () => {
     ).toEqual([]);
   });
 
-  it("a leased physical record whose lease deadline passed before the daemon started: right after start the lease ends with lease.expired, the record is reclaiming, and no lease.released with reason device-lost and no driver call names it", async () => {
+  it("a leased physical record whose lease deadline passed before the daemon started: right after start the lease ends with lease.expired, the record is reclaimed back to ready with device.reclaimed strategy uninstall, and no lease.released with reason device-lost", async () => {
     const env = await startWith([LEASED], { leases: [HELD_LEASE(-60_000)] });
     const startedAfter = Date.now() - 60_000;
 
@@ -154,15 +154,19 @@ describe("the core knows physical devices", () => {
     expect((await named(env, "lease.expired")).map((entry) => entry.payload)).toEqual([
       expect.objectContaining({ leaseId: "lse_pheld" }),
     ]);
+    await waitFor(async () => (await stateOf(env, LEASED.id)) === "ready", {
+      label: "the expired lease's reclaim returns the record to ready",
+    });
     const row = (await rows(env)).find((candidate) => candidate.id === LEASED.id);
-    expect(row?.state).toBe("reclaiming");
     expect(row?.lastLeaseEndedAt).toBeGreaterThan(startedAfter);
+    expect((await named(env, "device.reclaimed")).map((entry) => entry.payload)).toEqual([
+      expect.objectContaining({ deviceId: LEASED.id, strategy: "uninstall" }),
+    ]);
     expect(
       (await named(env, "lease.released")).filter(
         (entry) => (entry.payload as { reason?: string }).reason === "device-lost",
       ),
     ).toEqual([]);
-    expect(await callsNaming(env, LEASED.driverDeviceId)).toEqual([]);
   });
 
   it("with health.probeIntervalMs 200 and stableObservations 2, a leased physical record is still leased after two seconds, its lease renews, and no lease.released or device.deleted names it", async () => {
@@ -195,7 +199,7 @@ describe("the core knows physical devices", () => {
     await expectState(env, LEASED.id, "leased");
   });
 
-  it("doctor --fix reports stalled-transition for the reclaiming physical record and moves it to quarantined with device.quarantined; after warmPool.quarantine.retryBackoffMs has passed, no driver call names it", async () => {
+  it("doctor --fix reports stalled-transition for the reclaiming physical record and moves it to quarantined with device.quarantined; after warmPool.quarantine.retryBackoffMs has passed, the retry reclaims it by uninstall and it is ready with device.quarantine-recovered", async () => {
     const env = await startWith([RECLAIMING], {
       config: { warmPool: { quarantine: { retryBackoffMs: 300 } } },
     });
@@ -206,14 +210,17 @@ describe("the core knows physical devices", () => {
     expect((fixed.json as { findings: Finding[] }).findings).toContainEqual(
       expect.objectContaining({ deviceId: RECLAIMING.id, kind: "stalled-transition" }),
     );
-    await expectState(env, RECLAIMING.id, "quarantined");
     expect(await named(env, "device.quarantined")).toContainEqual(
       expect.objectContaining({ payload: expect.objectContaining({ deviceId: RECLAIMING.id }) }),
     );
-    await observeFor(1_500, async () => {
-      expect(await stateOf(env, RECLAIMING.id), "no retry moves the record").toBe("quarantined");
+    await waitFor(async () => (await stateOf(env, RECLAIMING.id)) === "ready", {
+      label: "the retry reclaims the quarantined record",
     });
-    expect(await callsNaming(env, RECLAIMING.driverDeviceId)).toEqual([]);
+    expect(await named(env, "device.quarantine-recovered")).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({ deviceId: RECLAIMING.id, strategy: "uninstall" }),
+      }),
+    );
   });
 
   it("with a scripted orphan simulator and a scripted root device whose ID is the ready physical record's driverDeviceId, doctor --purge-orphans --yes destroys the orphan, reports no orphan for that ID, and no destroy call names it", async () => {
@@ -423,7 +430,7 @@ describe("the core knows physical devices", () => {
     expect(await callsNaming(env, READY.driverDeviceId, RECLAIMING.driverDeviceId)).toEqual([]);
   });
 
-  it("a physical lease whose deadline passes while the daemon runs ends with lease.expired; its record is reclaiming with lastLeaseEndedAt set, and no driver call names it", async () => {
+  it("a physical lease whose deadline passes while the daemon runs ends with lease.expired; its record is reclaimed back to ready with lastLeaseEndedAt set and device.reclaimed strategy uninstall", async () => {
     const env = await startWith([LEASED], { leases: [HELD_LEASE(8_000)] });
     const startedAt = Date.now();
     expect(
@@ -436,10 +443,16 @@ describe("the core knows physical devices", () => {
       timeout: 30_000,
     });
 
+    await waitFor(async () => (await stateOf(env, LEASED.id)) === "ready", {
+      label: "the expired lease's reclaim returns the record to ready",
+    });
     const row = (await rows(env)).find((candidate) => candidate.id === LEASED.id);
-    expect(row?.state).toBe("reclaiming");
     expect(row?.lastLeaseEndedAt).toBeGreaterThanOrEqual(startedAt);
-    expect(await callsNaming(env, LEASED.driverDeviceId)).toEqual([]);
+    expect(await named(env, "device.reclaimed")).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({ deviceId: LEASED.id, strategy: "uninstall" }),
+      }),
+    );
   });
 
   it("status --json and list --devices show a physical record with physical true, class phone and no mode, and a simulator with physical false, its mode and no class", async () => {
