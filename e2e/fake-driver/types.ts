@@ -23,7 +23,9 @@ export type FakeDriverOperation =
   | "listComponents"
   | "removeComponent"
   /** The root re-proof `doctor --purge-orphans` takes before its first destroy. */
-  | "revalidateRoot";
+  | "revalidateRoot"
+  /** The read `device add` makes of a physical device: logged with the ID the operator typed. */
+  | "inspectPhysical";
 
 export type FakeDriverEstimateOperation = "provision" | "boot" | "reclaim";
 
@@ -34,6 +36,33 @@ export type FakeDriverErrorSpec =
   | { readonly type: "BootTimeoutError"; readonly deviceId?: string }
   | { readonly type: "DriverCrashError"; readonly message?: string }
   | { readonly type: "generic"; readonly message?: string };
+
+/** Why a driver refuses to enrol a device; the core adds `enrolled-on-other-platform` itself. */
+export type FakeDriverRefusalReason =
+  | "not-connected"
+  | "network-only"
+  | "untrusted"
+  | "developer-mode-off"
+  | "os-too-old"
+  | "unsupported-kind"
+  | "locked"
+  | "unreadable"
+  | "virtual-device";
+
+/**
+ * One physical device the fake driver can read. `ids` lists every ID the device answers to: the
+ * first is its canonical ID, the rest are aliases an operator may type. A `refusal` makes every
+ * one of those IDs refused with its reason and message. The script is re-read on every call, so
+ * a test can change a device's model, OS version, class or apps between two `device add` calls.
+ */
+export interface ScriptedPhysicalDevice {
+  readonly ids: readonly string[];
+  readonly model?: string;
+  readonly osVersion?: string;
+  readonly class?: "phone" | "tablet";
+  readonly apps?: readonly string[];
+  readonly refusal?: { readonly reason: FakeDriverRefusalReason; readonly message: string };
+}
 
 export type ScriptedRunState = "running" | "stopped" | "transitioning";
 
@@ -120,6 +149,11 @@ export interface FakeDriverPlatformScript {
   readonly reclaimStrategy?: "erase" | "snapshot" | "wipe";
   readonly failures?: Partial<Record<FakeDriverOperation, FakeDriverErrorSpec>>;
   readonly managedReality?: ScriptedManagedReality;
+  /**
+   * The physical devices `inspectPhysical` reads. An ID no entry lists is refused
+   * `not-connected`, as a device that is not plugged in is.
+   */
+  readonly physicalDevices?: readonly ScriptedPhysicalDevice[];
   /**
    * Environment the grant for this platform's devices should carry, standing in for the
    * device-set path / adb port a real driver contributes. Read on every operation like
