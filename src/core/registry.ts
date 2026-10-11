@@ -1397,11 +1397,9 @@ function parsePhysicalDevice(
   state: unknown,
   shared: SharedDeviceFields,
 ): PhysicalDevice {
-  const { absentReason, enrolledApps, reclaimingSince } = value;
+  const { enrolledApps } = value;
   if (
     !isPhysicalState(state) ||
-    !hasValidAbsence(state, absentReason) ||
-    !isOptionalNumber(reclaimingSince) ||
     value.physical !== true ||
     value.mode !== undefined ||
     value.leaseIdentity !== undefined ||
@@ -1414,16 +1412,29 @@ function parsePhysicalDevice(
     ...shared,
     enrolledApps: [...(enrolledApps as string[])],
     physical: true,
-    ...(reclaimingSince === undefined ? {} : { reclaimingSince }),
+    ...parsePhysicalMarks(state, value),
     spec: parsePhysicalSpec(spec),
     state,
-    ...(state === "absent" ? { absentReason: absentReason as AbsentReason } : {}),
   };
 }
 
-/** A record is `absent` exactly when it carries one of the three reasons. */
-function hasValidAbsence(state: PhysicalState, absentReason: unknown): boolean {
-  return state === "absent" ? isAbsentReason(absentReason) : absentReason === undefined;
+/**
+ * What only a physical record carries: when it entered `reclaiming`, which is a number if there,
+ * and why it is `absent`, which a record has exactly when it is `absent`.
+ */
+function parsePhysicalMarks(
+  state: PhysicalState,
+  value: Record<string, unknown>,
+): Pick<PhysicalDevice, "absentReason" | "reclaimingSince"> {
+  const { absentReason, reclaimingSince } = value;
+  const absent = state === "absent" ? isAbsentReason(absentReason) : absentReason === undefined;
+  if (!absent || !isOptionalNumber(reclaimingSince)) {
+    throw new RegistryLoadError("Invalid device record in registry state");
+  }
+  return {
+    ...(reclaimingSince === undefined ? {} : { reclaimingSince }),
+    ...(absentReason === undefined ? {} : { absentReason: absentReason as AbsentReason }),
+  };
 }
 
 function parsePhysicalSpec(value: Record<string, unknown>): PhysicalSpec {
