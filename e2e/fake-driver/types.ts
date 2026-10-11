@@ -51,6 +51,8 @@ export interface ScriptedPhysicalDevice {
   readonly apps?: readonly string[];
   readonly installedApps?: readonly string[];
   readonly present?: boolean;
+  /** Why a read of this device says not present; defaults to `not-present`. */
+  readonly absentReason?: "locked" | "untrusted" | "not-present";
   readonly refusal?: { readonly reason: FakeDriverRefusalReason; readonly message: string };
 }
 

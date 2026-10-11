@@ -1366,6 +1366,41 @@ describe("Dispatcher: device mode on every surface", () => {
     expect(status.capacity?.ios).toMatchObject({ running: 1, used: 1, warm: 0 });
   });
 
+  it("a reclaiming physical device's status entry has no reclaimingSince", async () => {
+    const { dispatcher } = await buildDispatcher({
+      state: {
+        devices: [],
+        leases: [],
+        physicalDevices: [
+          {
+            createdAt: 1,
+            driverData: {},
+            driverDeviceId: "00008110-001A2B3C4D5E",
+            enrolledApps: [],
+            id: "dev_phys",
+            lastLeaseEndedAt: 200,
+            physical: true,
+            reclaimingSince: 600,
+            spec: {
+              class: "phone",
+              model: "iPhone 15 Pro",
+              osVersion: "18.4",
+              physical: true,
+              platform: "ios",
+            },
+            state: "reclaiming",
+          },
+        ],
+      },
+    });
+
+    const status = await dispatcher.dispatch("status.get", {}, session());
+
+    const entry = status.devices?.find((device) => device.id === "dev_phys");
+    expect(entry).toMatchObject({ state: "reclaiming", transitionAgeMs: 400 });
+    expect(entry).not.toHaveProperty("reclaimingSince");
+  });
+
   it("status.get carries the warm pool's figures: the reserve, and a target the pass could not meet with its reason", async () => {
     const { dispatcher, engine } = await buildDispatcher({
       warmPool: {

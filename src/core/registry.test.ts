@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import { EventBus } from "../bus/index.js";
 import { FakeClock, MemoryFilesystem } from "../ports/index.js";
 import {
+  type DeviceRecord,
   type VirtualSpec,
   Registry,
   RegistryEventError,
   UnknownDeviceError,
   UnknownLeaseError,
+  transitionEnteredAt,
 } from "./index.js";
 
 const statePath = "/home/agent/.simlock/state.json";
@@ -2911,5 +2913,268 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
     await expect(registry.unenrollPhysical(device.id)).rejects.toThrow(
       `Cannot unenrol device: ${device.id}`,
     );
+  });
+});
+
+describe("Registry: absent physical devices (ADR 0022 §2, §8)", () => {
+  const physicalSpec = {
+    class: "phone",
+    model: "iPhone 15 Pro",
+    osVersion: "18.4",
+    physical: true,
+    platform: "ios",
+  };
+  const physicalRecord = {
+    address: "00008110-001A2B3C4D5E",
+    createdAt: 600,
+    driverData: {},
+    driverDeviceId: "00008110-001A2B3C4D5E",
+    enrolledApps: ["com.example.one"],
+    id: "dev_physical",
+    physical: true,
+    spec: physicalSpec,
+    state: "ready",
+  };
+  const virtualRecord = {
+    createdAt: 500,
+    driverData: {},
+    driverDeviceId: "driver_virtual",
+    id: "dev_virtual",
+    mode: "full",
+    spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+    state: "leased",
+  };
+  const leaseOf = (deviceId: string) => ({
+    deviceId,
+    grantedAt: 700,
+    id: `lse_${deviceId}`,
+    idChosenByRequester: false,
+    lastRenewedAt: 700,
+    ownerId: "agent",
+    requesterId: "agent",
+    ttlDeadline: 90_000,
+    ttlMs: 60_000,
+  });
+  const invalid = "Invalid device record in registry state";
+
+  interface AbsentWrites {
+    endLeaseAndMarkDeviceAbsent(
+      leaseId: string,
+      absentReason: string,
+      announceLeaseEnd: (ended: unknown) => void,
+    ): Promise<unknown>;
+  }
+  type Writer = (
+    deviceId: string,
+    to: string,
+    event: { event: string; payload: Record<string, unknown> },
+    update: Record<string, unknown>,
+  ) => Promise<unknown>;
+
+  async function stateFile(state: Record<string, unknown>) {
+    const clock = new FakeClock(1_000);
+    const bus = new EventBus(clock);
+    const filesystem = new ObservingFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    await filesystem.writeFileAtomic(
+      statePath,
+      JSON.stringify({ devices: [], leases: [], ...state }),
+    );
+    filesystem.operations.length = 0;
+    const load = () =>
+      Registry.load({
+        clock,
+        eventBus: bus,
+        filesystem,
+        idGenerator: { generate: () => "new" },
+        statePath,
+      });
+    const loaded = async () => {
+      const registry = await load().catch((error: unknown) => error);
+      expect(registry).toBeInstanceOf(Registry);
+      return registry as Registry;
+    };
+    const written = async () =>
+      JSON.parse(await filesystem.readFile(statePath)) as Record<string, Record<string, unknown>[]>;
+    const transitionAny = (registry: Registry): Writer =>
+      registry.transitionDevice.bind(registry) as unknown as Writer;
+    return { bus, filesystem, load, loaded, transitionAny, written };
+  }
+
+  it("endLeaseAndMarkDeviceAbsent removes the lease, writes absent with its absentReason and stamps lastLeaseEndedAt in one commit, and calls announceLeaseEnd before emitting device.absence-detected", async () => {
+    const { bus, filesystem, loaded, written } = await stateFile({
+      leases: [leaseOf("dev_physical")],
+      physicalDevices: [{ ...physicalRecord, state: "leased" }],
+    });
+    const registry = await loaded();
+    const order: string[] = [];
+    const payloads: unknown[] = [];
+    bus.subscribeAll((envelope) => {
+      order.push(envelope.event);
+      payloads.push(envelope.payload);
+    });
+    const end = (registry as unknown as Partial<AbsentWrites>).endLeaseAndMarkDeviceAbsent;
+    expect(end).toBeTypeOf("function");
+
+    await end?.call(registry, "lse_dev_physical", "locked", () => {
+      order.push("announce");
+    });
+
+    expect(registry.snapshot.leases).toEqual([]);
+    expect(registry.snapshot.devices[0]).toMatchObject({
+      absentReason: "locked",
+      lastLeaseEndedAt: 1_000,
+      state: "absent",
+    });
+    expect(filesystem.operations).toEqual(["save"]);
+    const file = await written();
+    expect(file.leases).toEqual([]);
+    expect(file.physicalDevices?.[0]).toMatchObject({
+      absentReason: "locked",
+      lastLeaseEndedAt: 1_000,
+      state: "absent",
+    });
+    expect(order).toEqual(["announce", "device.absence-detected"]);
+    expect(payloads[1]).toEqual({
+      absentReason: "locked",
+      deviceId: "dev_physical",
+      previousState: "leased",
+    });
+  });
+
+  it("absent -> reclaiming writes the new osVersion, stamps reclaimingSince, removes absentReason, keeps lastLeaseEndedAt, and transitionEnteredAt returns reclaimingSince", async () => {
+    const { loaded, transitionAny } = await stateFile({
+      physicalDevices: [
+        { ...physicalRecord, absentReason: "locked", lastLeaseEndedAt: 500, state: "absent" },
+      ],
+    });
+    const registry = await loaded();
+
+    await transitionAny(registry)(
+      "dev_physical",
+      "reclaiming",
+      { event: "device.returned", payload: { deviceId: "dev_physical", osVersion: "18.5" } },
+      { osVersion: "18.5" },
+    );
+
+    const stored = registry.snapshot.devices[0] as DeviceRecord & Record<string, unknown>;
+    expect(stored).toMatchObject({
+      lastLeaseEndedAt: 500,
+      reclaimingSince: 1_000,
+      spec: { osVersion: "18.5" },
+      state: "reclaiming",
+    });
+    expect(stored).not.toHaveProperty("absentReason");
+    expect(transitionEnteredAt(stored)).toBe(1_000);
+  });
+
+  it("beginRelease of a physical lease stamps reclaimingSince and lastLeaseEndedAt; of a virtual lease it stamps no reclaimingSince", async () => {
+    const { loaded } = await stateFile({
+      devices: [virtualRecord],
+      leases: [leaseOf("dev_physical"), leaseOf("dev_virtual")],
+      physicalDevices: [{ ...physicalRecord, state: "leased" }],
+    });
+    const registry = await loaded();
+
+    const physical = await registry.beginRelease("lse_dev_physical");
+    const virtual = await registry.beginRelease("lse_dev_virtual");
+
+    expect(physical.device).toMatchObject({
+      lastLeaseEndedAt: 1_000,
+      reclaimingSince: 1_000,
+      state: "reclaiming",
+    });
+    expect(virtual.device).toMatchObject({ lastLeaseEndedAt: 1_000, state: "reclaiming" });
+    expect(virtual.device).not.toHaveProperty("reclaimingSince");
+  });
+
+  it("transitionEnteredAt of a reclaiming physical record with no reclaimingSince is its lastLeaseEndedAt", () => {
+    const reclaiming = {
+      ...physicalRecord,
+      lastLeaseEndedAt: 2_000,
+      state: "reclaiming",
+    } as unknown as DeviceRecord;
+
+    expect(
+      transitionEnteredAt({ ...reclaiming, reclaimingSince: 3_000 } as unknown as DeviceRecord),
+    ).toBe(3_000);
+    expect(transitionEnteredAt(reclaiming)).toBe(2_000);
+  });
+
+  it("a physical record with reclaimingSince and an absent one with absentReason survive a save and a load; an absentReason on a record that is not absent, or with another value, an absent record without one, and a reclaimingSince that is not a number, fail the load", async () => {
+    const reclaiming = {
+      ...physicalRecord,
+      id: "dev_a",
+      lastLeaseEndedAt: 400,
+      reclaimingSince: 450,
+      state: "reclaiming",
+    };
+    const absent = { ...physicalRecord, absentReason: "untrusted", id: "dev_b", state: "absent" };
+    const { loaded, written } = await stateFile({ physicalDevices: [reclaiming, absent] });
+    const registry = await loaded();
+    await registry.markForeignStateDetected("dev_a", 5);
+
+    expect((await written()).physicalDevices).toEqual([
+      { ...reclaiming, foreignStateDetectedAt: 5 },
+      absent,
+    ]);
+    expect(
+      (await stateFile({ physicalDevices: [absent] }).then((file) => file.loaded())).snapshot
+        .devices[0],
+    ).toMatchObject({
+      absentReason: "untrusted",
+      state: "absent",
+    });
+
+    const broken = [
+      ["absentReason on a ready record", { absentReason: "locked", state: "ready" }],
+      ["absentReason on a reclaiming record", { absentReason: "locked", state: "reclaiming" }],
+      ["another absentReason", { absentReason: "asleep", state: "absent" }],
+      ["no absentReason", { state: "absent" }],
+      ["a reclaimingSince that is a string", { reclaimingSince: "450", state: "reclaiming" }],
+    ] as const;
+    for (const [why, change] of broken) {
+      const { load } = await stateFile({ physicalDevices: [{ ...physicalRecord, ...change }] });
+
+      await expect(load(), why).rejects.toThrow(invalid);
+    }
+  });
+
+  it("absent -> ready (device add) and absent -> deleted (device remove) remove absentReason", async () => {
+    const absent = { ...physicalRecord, absentReason: "not-present", state: "absent" };
+    const added = await stateFile({ physicalDevices: [absent] });
+    const addRegistry = await added.loaded();
+    const removed = await stateFile({ physicalDevices: [absent] });
+    const removeRegistry = await removed.loaded();
+
+    await addRegistry.reenrollPhysical("dev_physical", {
+      apps: ["com.example.one"],
+      class: "phone",
+      driverDeviceId: physicalRecord.driverDeviceId,
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      platform: "ios",
+    });
+    await removeRegistry.unenrollPhysical("dev_physical");
+
+    expect(addRegistry.snapshot.devices[0]).toMatchObject({ state: "ready" });
+    expect(addRegistry.snapshot.devices[0]).not.toHaveProperty("absentReason");
+    expect(removeRegistry.snapshot.devices[0]).toMatchObject({ state: "deleted" });
+    expect(removeRegistry.snapshot.devices[0]).not.toHaveProperty("absentReason");
+    expect((await added.written()).physicalDevices?.[0]).not.toHaveProperty("absentReason");
+    expect((await removed.written()).physicalDevices?.[0]).not.toHaveProperty("absentReason");
+  });
+
+  it("a record in physicalDevices in absent loads; a record in devices in absent fails to load as corrupt", async () => {
+    const { loaded } = await stateFile({
+      physicalDevices: [{ ...physicalRecord, absentReason: "locked", state: "absent" }],
+    });
+    const registry = await loaded();
+    const { load } = await stateFile({
+      devices: [{ ...virtualRecord, state: "absent" }],
+    });
+
+    expect(registry.snapshot.devices[0]).toMatchObject({ physical: true, state: "absent" });
+    await expect(load()).rejects.toThrow(invalid);
   });
 });

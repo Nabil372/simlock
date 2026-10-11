@@ -519,7 +519,10 @@ export class OutOfProcessFakeDriver implements Driver {
       const scripted = script.physicalDevices?.find((candidate) =>
         candidate.ids.includes(driverDeviceId),
       );
-      return { driverDeviceId, present: scripted !== undefined && scripted.present !== false };
+      if (scripted !== undefined && scripted.present !== false) {
+        return { driverDeviceId, osVersion: scripted.osVersion ?? "1.0", present: true };
+      }
+      return { driverDeviceId, present: false, reason: scripted?.absentReason ?? "not-present" };
     });
   }
 

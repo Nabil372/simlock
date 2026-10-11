@@ -529,3 +529,48 @@ describe("noPhysicalMatch", () => {
     expect(noPhysicalMatch({ platform: "android" }).details).toEqual({ platform: "android" });
   });
 });
+
+describe("a physical device's absent state (ADR 0022 §2, §8)", () => {
+  const absent = "absent" as unknown as PhysicalState;
+  const settle = (
+    device: Omit<PhysicalDevice, "state"> | Omit<VirtualDevice, "state">,
+    from: string,
+    to: string,
+  ) => {
+    try {
+      return transition(
+        { ...device, state: from } as unknown as VirtualDevice,
+        to as unknown as "ready",
+      ).state as string;
+    } catch (error) {
+      return error instanceof IllegalTransition ? "illegal" : "unexpected";
+    }
+  };
+
+  it("a physical record may move ready, leased or reclaiming to absent, and absent to reclaiming, ready or deleted; quarantined -> absent and any virtual move to absent throw IllegalTransition", () => {
+    for (const from of ["ready", "leased", "reclaiming"]) {
+      expect(settle(physicalDevice, from, absent), `${from} -> absent`).toBe("absent");
+    }
+    for (const to of ["reclaiming", "ready", "deleted"]) {
+      expect(settle(physicalDevice, absent, to), `absent -> ${to}`).toBe(to);
+    }
+
+    expect(() =>
+      transition(
+        { ...physicalDevice, state: "quarantined" } as unknown as VirtualDevice,
+        absent as unknown as "ready",
+      ),
+    ).toThrow(IllegalTransition);
+    for (const from of [
+      "provisioning",
+      "ready",
+      "leased",
+      "reclaiming",
+      "quarantined",
+      "shutdown",
+      "deleted",
+    ]) {
+      expect(settle(baseDevice, from, absent), `virtual ${from} -> absent`).toBe("illegal");
+    }
+  });
+});

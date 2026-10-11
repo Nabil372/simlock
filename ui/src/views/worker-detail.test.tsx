@@ -137,6 +137,36 @@ describe("the page of a worker that has finished starting", () => {
     expect(shown).toContain("iOS Physical iPhone 15 Pro 18.4 — —");
   });
 
+  it("a worker's page shows an absent device's state as the word absent in the warn tone", () => {
+    const device = (id: string, state: string) =>
+      ({
+        class: "phone",
+        driverDeviceId: "00008110-001A2B3C4D5E",
+        id,
+        physical: true,
+        servesDefaultMode: true,
+        spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+        state,
+        ...(state === "absent" ? { absentReason: "locked" } : {}),
+      }) as unknown as NonNullable<WorkerView["devices"]>[number];
+
+    const html = renderToStaticMarkup(
+      <WorkerDetail
+        id="wrk_1"
+        workers={[
+          { ...RUNNING, devices: [device("dev_up", "ready"), device("dev_gone", "absent")] },
+        ]}
+        now={NOW}
+      />,
+    );
+
+    const status = (tone: string, word: string) =>
+      `<span class="status status-${tone}"><span class="status-dot" aria-hidden="true"></span>${word}</span>`;
+    expect(html).toContain(status("ok", "ready"));
+    expect(html).toContain(status("warn", "absent"));
+    expect(text(html)).toContain("dev_gone absent");
+  });
+
   it("says so where a worker's catalog and devices were never read", () => {
     const { catalog: _catalog, devices: _devices, ...unread } = RUNNING;
 
