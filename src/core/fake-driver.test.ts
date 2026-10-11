@@ -141,6 +141,20 @@ describe("FakeDriver", () => {
     ]);
   });
 
+  it("answers a presence read at once after the held reads were released", async () => {
+    const driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
+    driver.setPhysicalPresence("A", true);
+    driver.holdPresenceReads("A");
+    driver.releasePresenceReads();
+
+    const answer = await Promise.race([
+      driver.listPresentPhysical(["A"]),
+      new Promise((resolve) => setTimeout(() => resolve("held"), 25)),
+    ]);
+
+    expect(answer).toEqual([{ driverDeviceId: "A", present: true }]);
+  });
+
   it("implements the platform-agnostic Driver contract", () => {
     const driver: Driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
 

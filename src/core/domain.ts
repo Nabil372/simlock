@@ -650,8 +650,6 @@ function osPhrase(osVersion: string | undefined): readonly string[] {
     : [`os ${osVersion}`];
 }
 
-const NAMEABLE_OS = /^\d+(\.\d+)?$/;
-
 function rangeAround(osVersion: string): string {
   const parts = osVersion.split(".").map(Number);
   const raised = parts.map((part, index) => (index === parts.length - 1 ? part + 1 : part));
@@ -674,7 +672,7 @@ export function noPhysicalMatch(request: PhysicalRequest): {
   const range =
     request.platform === "ios" &&
     request.osVersion !== undefined &&
-    NAMEABLE_OS.test(request.osVersion)
+    /^\d+(\.\d+)?$/.test(request.osVersion)
       ? `; --os is exact, for any ${request.osVersion}.x write --os "${rangeAround(request.osVersion)}"`
       : "";
   return {
