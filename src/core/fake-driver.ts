@@ -573,7 +573,6 @@ export class FakeDriver implements Driver {
     });
   }
 
-  /** `detail.reason` says why a not-present read is not present; `detail.osVersion` is what a present read reports. */
   setPhysicalPresence(
     driverDeviceId: string,
     present: boolean,

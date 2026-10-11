@@ -847,12 +847,6 @@ export class Dispatcher {
     return this.options.tokens;
   }
 
-  /**
-   * A device as `status.get` and `list.get` report it: `class` on a physical one (`physical` is
-   * on every record), `transitionAgeMs` while it is mid-transition, `servesDefaultMode` always
-   * (ADR 0009 §6), and `stalled: true` once that transition is a stall by the rule `doctor`
-   * reports (`isStalledTransition`). A device that is not stalled carries no `stalled` at all.
-   */
   #decorateDevice(device: DeviceRecord): DeviceRecord & {
     readonly class?: PhysicalClass;
     readonly servesDefaultMode: boolean;

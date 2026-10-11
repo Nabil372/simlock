@@ -1,10 +1,6 @@
 import type { ReactNode } from "react";
 
-/**
- * A status is always a word with its colour (docs/internal/DESIGN.md): the colour is a second
- * signal, never the only one, and never the accent. The word is the daemon's own, so the
- * console and the CLI agree.
- */
+/** The colour is a second signal, never the only one, and never the accent (docs/internal/DESIGN.md). */
 export type Tone = "ok" | "warn" | "error" | "idle";
 
 export function Status({ tone, children }: { readonly tone: Tone; readonly children: ReactNode }) {
@@ -38,8 +34,8 @@ const INSTALL_STATES: Tones = { downloading: "ok", waiting: "idle" };
 const WAITING_STAGES: Tones = { queued: "idle", starting: "ok" };
 
 /**
- * Each status the daemon sends, as a word and a tone. Wire input is a claim: a word this
- * console does not know, from a newer daemon, still shows as itself, in the neutral tone.
+ * Wire input is a claim: a word from a newer daemon this console does not know still shows as
+ * itself, in the neutral tone.
  */
 function statusOf(tones: Tones, word: string): { readonly word: string; readonly tone: Tone } {
   return { tone: tones[word] ?? "idle", word };

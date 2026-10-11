@@ -58,7 +58,6 @@ export interface PhysicalEnrollmentOptions {
   readonly claims: Pick<DeviceOperationClaims, "claim" | "tryClaim">;
   readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: { get(platform: Platform): Driver };
-  /** Called once a physical device has been committed `ready` by `device add`. */
   readonly physicalDeviceReady?: (deviceId: string) => void;
   readonly registry: PhysicalEnrollmentRegistry;
 }

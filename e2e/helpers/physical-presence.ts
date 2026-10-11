@@ -20,12 +20,10 @@ export const ENROLLED = ["com.example.mail", "com.example.maps"] as const;
 export const AGENT_APPS = ["com.agent.one", "com.agent.two"] as const;
 export const RECLAIM_FAILURE: FakeDriverErrorSpec = { message: "device busy", type: "generic" };
 
-/** Two not-present reads 200 ms apart make a device absent, so a test waits well under a second. */
 export const GRACE_HEALTH = { probeIntervalMs: 200, stableObservations: 2 };
 
 export type AbsentReason = "locked" | "untrusted" | "not-present";
 
-/** The seed states `seedPhysicalState` writes, and `absent`, which the helper patches in. */
 export interface PresenceSeed extends Omit<PhysicalSeed, "state"> {
   readonly state: PhysicalSeed["state"] | "absent";
   readonly absentReason?: AbsentReason;
@@ -57,7 +55,6 @@ export interface DeviceScript {
   readonly osVersion?: string;
   readonly installed?: readonly string[];
   readonly apps?: readonly string[];
-  /** `false` leaves the device out of the script altogether, so inspection says not connected. */
   readonly connected?: boolean;
 }
 
@@ -106,7 +103,6 @@ export async function setIosScript(
   await env.driverScript.set({ ios: iosScript(devices, options) });
 }
 
-/** Scripts one device's presence and leaves any other scripted device as the test set it. */
 export async function setPresence(
   env: TestEnv,
   seed: PresenceSeed,
@@ -123,10 +119,6 @@ export interface StartOptions {
   readonly failReclaim?: boolean;
 }
 
-/**
- * Seeds `state.json` with these physical records (an `absent` one included), scripts the fake
- * iOS driver for them, and starts the daemon with a fast grace period.
- */
 export async function startPresence(
   devices: readonly ScriptedSeed[],
   options: StartOptions = {},
@@ -215,10 +207,6 @@ export async function rowOf(env: TestEnv, id: string): Promise<DeviceRow | undef
   return (await statusJson(env)).devices.find((row) => row.id === id);
 }
 
-/**
- * Reads until `done` holds or `timeoutMs` passes, and returns the last value either way, so the
- * test asserts on what it saw instead of timing out in a wait.
- */
 export async function until<T>(
   read: () => Promise<T>,
   done: (value: T) => boolean,
@@ -264,7 +252,6 @@ export async function payloadsOf(
   return (await named(env, name)).map((entry) => entry.payload as Record<string, unknown>);
 }
 
-/** The first payload of an event, once it is recorded or the timeout passes. */
 export async function firstPayload(
   env: TestEnv,
   name: string,
@@ -308,7 +295,6 @@ export async function queuedAtFirst(handle: CliBackgroundHandle): Promise<boolea
   );
 }
 
-/** Every logged call whose arguments name the driver device, in log order. */
 export async function callsOn(env: TestEnv, driverDeviceId: string) {
   return (await env.driverLog.calls()).filter((call) =>
     JSON.stringify(call.arguments).includes(driverDeviceId),
@@ -321,7 +307,6 @@ export async function presenceReadTimes(env: TestEnv, driverDeviceId: string): P
     .map((call) => call.timestampMs);
 }
 
-/** The reclaim, uninstall, shutdown and destroy calls that name the device. */
 export async function changingCallsOn(env: TestEnv, driverDeviceId: string): Promise<string[]> {
   return (await callsOn(env, driverDeviceId))
     .map((call) => String(call.operation))

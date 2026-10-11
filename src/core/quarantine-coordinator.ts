@@ -33,7 +33,6 @@ export interface QuarantineRegistry {
 
 export interface QuarantinePurgeFailure {
   readonly deviceId: string;
-  /** None for a device with no lease to name: `device.purge-failed` is then not emitted. */
   readonly leaseId?: string | undefined;
   readonly attemptedStrategy: "erase" | "snapshot" | "wipe" | "delete" | "uninstall";
   readonly duration: number;
@@ -55,12 +54,7 @@ export interface QuarantineCoordinatorOptions {
   readonly drivers: QuarantineDriverCatalog;
   readonly eventBus: Pick<EventBus, "emit">;
   readonly notifyAvailability: () => void;
-  /** Called once a physical device's retry has committed it `ready`. */
   readonly physicalDeviceReady?: (deviceId: string) => void;
-  /**
-   * How long a physical device's retry waits when the device is not present: `health.probeIntervalMs`.
-   * Omitted, it waits `config.retryBackoffMs`.
-   */
   readonly probeIntervalMs?: number;
   readonly registry: QuarantineRegistry;
   readonly logger?: Logger;
@@ -133,7 +127,6 @@ export class QuarantineCoordinator {
     if (entered) this.#arm(deviceId, nextRetryAt);
   }
 
-  /** `include` skips devices a daemon start must not act on: a due retry drives the driver at once. */
   restore(include: (device: DeviceRecord) => boolean = () => true): void {
     for (const device of this.options.registry.snapshot.devices) {
       if (device.state !== "quarantined" || !include(device)) continue;

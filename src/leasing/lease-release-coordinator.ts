@@ -20,7 +20,6 @@ export interface LeaseExpirationAdmin {
   expire(leaseId: string, expectedDeadline?: number): Promise<void>;
 }
 
-/** Administrative boundary that fences release/reclaim work during reset. */
 export interface LeaseReleaseMaintenance {
   beginMaintenance(): Promise<void>;
   releaseAllDuringMaintenance(reason: "killed"): Promise<readonly string[]>;
@@ -35,13 +34,11 @@ export interface LeaseReleaseMaintenance {
  */
 export type StartupDeviceOutcome = "reclaim" | "wait" | "missing";
 
-/** How a lease is ended at startup: `expired` for one whose deadline passed, else `device-lost`. */
 export interface StartupEnding {
   readonly device: StartupDeviceOutcome;
   readonly reason: "device-lost" | "expired";
 }
 
-/** The release a daemon start performs on a lease whose device is not running. */
 export interface StartupLeaseEnder {
   endAtStartup(leaseId: string, ending: StartupEnding): Promise<void>;
 }
@@ -62,41 +59,25 @@ export interface LeaseReleaseRegistry {
 }
 
 export interface LeaseReleaseCoordinatorOptions {
-  /** Claims the reclaiming device for the duration of a backgrounded reclaim. */
   readonly claims: Pick<DeviceOperationClaims, "tryClaim">;
   readonly decisions: Pick<SerializedDecision, "run">;
   readonly lifecycle: LeaseReleaseLifecycle;
   readonly logger?: Logger;
-  /**
-   * Re-kicks acquisition once a backgrounded reclaim has fully settled *and* given
-   * up its claim. Load-bearing rather than belt-and-braces: see `#reclaimInBackground`.
-   */
+  /** Load-bearing, not belt-and-braces: see `#reclaimInBackground`. */
   readonly notifyAvailability: () => void;
   readonly registry: LeaseReleaseRegistry;
   readonly reclaim: Pick<ReclaimCoordinator, "reclaim" | "reclaimReturned">;
 }
 
 /**
- * How a release sequences its driver-side reclaim against its own caller.
- *
- * `background` is the default for every release a client or a timer can reach:
- * the registry-only half (lease gone, device `reclaiming`) is what the caller
- * actually needs, and the purge behind it is the slow part. `await` exists for
- * the one caller that needs the device settled before it continues -- the
- * maintenance-authorized release an operator reset runs (see
- * `releaseAllDuringMaintenance`). `none` starts no reclaim at all: the device stays
- * `reclaiming` for a later start to recover, which is what a lease ended on a platform that
- * could not be listed needs (see `endAtStartup`).
+ * `none` starts no reclaim: the device stays `reclaiming` for a later start to recover, which is what
+ * a lease ended on a platform that could not be listed needs (see `endAtStartup`).
  */
 type ReclaimMode = "await" | "background" | "none";
 
 /**
- * Coordinates lease-side commands. Lease commits happen in the serialized
- * decision section; reclaiming is intentionally outside it, and -- except under
- * maintenance -- outside the caller's await as well (see `ReclaimMode`).
- *
- * releaseAll preserves the snapshot-and-parallel behavior it always had. Concurrent
- * calls are not idempotent: overlapping snapshots can yield UnknownLeaseError.
+ * Lease commits happen in the serialized decision section; reclaiming is deliberately outside it.
+ * Concurrent `releaseAll` calls are not idempotent: overlapping snapshots can yield UnknownLeaseError.
  */
 export class LeaseReleaseCoordinator
   implements LeaseReleaseCommands, LeaseExpirationAdmin, LeaseReleaseMaintenance, StartupLeaseEnder
@@ -174,12 +155,7 @@ export class LeaseReleaseCoordinator
     });
   }
 
-  /**
-   * Ends a lease whose physical device the watcher read not present for the grace period: the
-   * lease and the device's move to `absent` are one write, and no reclaim starts (ADR 0022 §8).
-   * Admitted like every release, so it waits out nuke maintenance. A lease that is already gone
-   * is not an error: the release that took it came first.
-   */
+  /** A lease already gone is not an error: the release that took it came first. */
   // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<boolean> {
     return this.#runNormal(() =>
@@ -193,21 +169,13 @@ export class LeaseReleaseCoordinator
     );
   }
 
-  /**
-   * Runs work the watcher does on a device that is not a release (ending a `ready` device's
-   * presence, rewriting a reason) under the same maintenance admission as every release, so none
-   * of it lands while an operator reset walks the devices.
-   */
+  /** Under the maintenance admission every release takes, so no watcher write lands while an operator reset walks the devices. */
   // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async admit<Result>(work: () => Promise<Result>): Promise<Result> {
     return this.#runNormal(work);
   }
 
-  /**
-   * Starts the reclaim of a physical device that is back, or one a killed daemon left
-   * `reclaiming`, under the same admission. The reclaim joins the background reclaims, so nuke's
-   * `beginMaintenance` and a graceful stop wait for it.
-   */
+  /** The reclaim joins the background reclaims, so nuke's `beginMaintenance` and a graceful stop wait for it. */
   // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async reclaimReturned(deviceId: string, osVersion?: string): Promise<boolean> {
     return this.#runNormal(async () => {
@@ -220,13 +188,6 @@ export class LeaseReleaseCoordinator
     });
   }
 
-  /**
-   * Awaits every reclaim currently running in the background. Nothing on a
-   * client's path calls this -- a graceful daemon shutdown does, so a `simlock
-   * daemon stop` still leaves the pool in the same settled shape an inline
-   * reclaim used to. An ungraceful death instead leaves those devices
-   * `reclaiming` for `StartupConverger#recoverInterruptedReclaims`.
-   */
   async settleBackgroundReclaims(): Promise<void> {
     while (this.#backgroundReclaims.size > 0) {
       await Promise.allSettled(this.#backgroundReclaims);

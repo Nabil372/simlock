@@ -14,7 +14,6 @@ import {
 } from "../core/index.js";
 
 export interface PhysicalWatcherReleaser {
-  /** Runs `work` under the maintenance admission every release takes. */
   admit<Result>(work: () => Promise<Result>): Promise<Result>;
   endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<boolean>;
   reclaimReturned(deviceId: string, osVersion?: string): Promise<boolean>;
@@ -26,7 +25,6 @@ export interface PhysicalDeviceWatcherOptions {
   readonly config: Pick<Config, "health">;
   readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: Pick<DriverCatalog, "get">;
-  /** Wakes the wait queue: a device it skipped may be grantable now. */
   readonly kick: () => void;
   readonly logger?: Logger | undefined;
   readonly registry: Pick<Registry, "snapshot" | "transitionDevice" | "rewriteAbsentReason">;
@@ -35,12 +33,6 @@ export interface PhysicalDeviceWatcherOptions {
 
 const NOT_PRESENT: PhysicalRead = { present: false, reason: "not-present" };
 
-/**
- * Reads the presence of every enrolled physical device on an interval and acts on what it finds
- * (ADR 0022 §8): a device not present for `health.stableObservations` reads in a row becomes
- * `absent` and its lease ends `device-lost`; one that is back is reclaimed. It runs whatever
- * `health.enabled` says, and its only driver call is the presence listing.
- */
 export class PhysicalDeviceWatcher {
   readonly #counts = new Map<string, number>();
   readonly #generations = new Map<string, number>();
@@ -66,7 +58,6 @@ export class PhysicalDeviceWatcher {
     this.#timer = undefined;
   }
 
-  /** Resolves once the tick in flight has ended; after `dispose`, no further tick is armed. */
   async settle(): Promise<void> {
     await this.#running;
   }
@@ -145,7 +136,6 @@ export class PhysicalDeviceWatcher {
     }
   }
 
-  /** A read that throws, or a platform with no driver, tells nothing: no count moves this tick. */
   async #read(
     platform: Platform,
     group: readonly PhysicalDevice[],
@@ -210,7 +200,6 @@ export class PhysicalDeviceWatcher {
     }
   }
 
-  /** One more not-present read of a `ready` or `leased` device; at the grace period it acts. */
   async #missed(
     device: PhysicalDevice,
     absentReason: AbsentReason,

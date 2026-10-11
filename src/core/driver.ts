@@ -50,9 +50,7 @@ export function isPhysicalDriverDevice(device: DriverDevice): device is Physical
 export interface PresentPhysical {
   readonly driverDeviceId: string;
   readonly present: boolean;
-  /** What a present read reports of the device's OS version. */
   readonly osVersion?: string;
-  /** Why a not-present read is not present; none means `not-present`. */
   readonly reason?: AbsentReason;
 }
 

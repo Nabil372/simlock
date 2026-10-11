@@ -36,20 +36,15 @@ import { type LeaseRequestOptions, WaitQueue } from "./wait-queue.js";
 
 export interface LeasingOptions {
   readonly clock: Clock;
-  /**
-   * The daemon's one `ComponentInstaller`, built and closed by the composition root. Only the
-   * lease path installs through it (safety rule 4).
-   */
+  /** Only the lease path installs through it (safety rule 4). */
   readonly components: Pick<ComponentInstaller, "claimProvision" | "install">;
   readonly config: Config;
-  /** Device management, built first. */
   readonly core: Core;
   readonly eventBus: EventBus;
   readonly idGenerator: IdGenerator;
   /**
-   * Where work leasing finishes off its callers' paths reports its failures. A backgrounded
-   * reclaim has no caller left to reject to, so without this its only trace is the device's own
-   * registry state.
+   * A backgrounded reclaim has no caller left to reject to; without this its only trace is the
+   * device's own registry state.
    */
   readonly logger?: Logger | undefined;
   /**
@@ -69,62 +64,36 @@ export interface LeasingOptions {
    */
   readonly modelPreferences?: ModelPreferences | undefined;
   /**
-   * Whether the leased-device health monitor is wired. Built here but deliberately not started:
-   * the daemon arms it only once startup convergence has finished, so no health probe shells out
-   * while convergence is still doing so itself. See `DaemonServer#start`. Default: wired.
+   * Built but not started: the daemon arms it after startup convergence, so no health probe shells
+   * out while convergence is doing so itself. See `DaemonServer#start`.
    */
   readonly healthMonitor?: boolean | undefined;
 }
 
-/** What the daemon's request handlers and status reporting use leasing through. */
 export interface Leasing extends LeaseCommands, QueueControl, DeviceModeReader {
   /**
-   * The ports core declared, implemented by leasing. The composition root hands them to
-   * `core.connect` once, before any request is admitted (ADR 0018 §2); building leasing does not
-   * connect, so building one over a core never re-points that core's ports.
+   * Building leasing does not connect them, so building one over a core never re-points that core's
+   * ports.
    */
   readonly corePorts: CorePorts;
-  /** Every lease request, stored in the registry; read by the HTTP request resource too. */
   readonly requests: LeaseRequestBook<LeaseGrant>;
-  /**
-   * Present when `createLeasing` wired the monitor. Not started; the daemon arms it after
-   * startup convergence.
-   */
   readonly healthMonitor: LeaseHealthMonitor | undefined;
-  /**
-   * Always wired, whatever `health.enabled` says. Not started; the daemon arms it after startup
-   * convergence, beside the health monitor.
-   */
+  /** Wired whatever `health.enabled` says; the daemon arms it after startup convergence. */
   readonly physicalDeviceWatcher: PhysicalDeviceWatcher;
-  /** Administrative lease expiry used by doctor reconciliation. */
   expire(leaseId: string): Promise<void>;
-  /** The first step of startup: settles the requests a restart left open. */
   settleRequests(): Promise<void>;
-  /**
-   * Checks every lease against the startup read and ends those whose device is not running (ADR
-   * 0019 §2), then restores the expiry timers of the leases that remain. Runs before core's
-   * `converge`, so no device convergence picks a device this is about to release.
-   */
+  /** Runs before core's `converge`, so no device convergence picks a device this is about to release. */
   reconcile(read: StartupRead): Promise<void>;
-  /** The queue's depth as a fact on the bus, once startup is done: every run begins with one. */
   announceQueueDepth(): void;
   /**
-   * Awaits the reclaims release left running in the background, so a graceful shutdown hands
-   * back the same settled pool an inline reclaim used to. Runs before `dispose`: a reclaim that
-   * settles into a purge failure arms a quarantine retry timer, and cancelling those first would
-   * strand it armed.
+   * Runs before `dispose`: a reclaim that settles into a purge failure arms a quarantine retry
+   * timer, and cancelling first would strand it armed.
    */
   settle(): Promise<void>;
   /**
-   * Cancels every timer leasing armed, so the process can actually exit. A lease's TTL is a
-   * `setTimeout` that outlives the decision to shut down, so without this a daemon with an
-   * outstanding lease keeps running long after `daemon stop` -- up to that lease's whole TTL.
-   *
-   * Cancelling expires nothing early and loses nothing, and under ADR 0004 releases nothing
-   * either: `ttlDeadline` is persisted with the lease, and `LeaseExpiryScheduler.restore`
-   * re-arms it on the next start. That is exactly what makes a lease whose device is running
-   * survive a daemon restart intact, and a lease whose deadline passed while no daemon was
-   * running expire as soon as one is there to expire it.
+   * Cancelling expires nothing and releases nothing (ADR 0004): `ttlDeadline` is persisted and
+   * re-armed on the next start. Without this a lease's TTL timer keeps the process alive after
+   * `daemon stop`.
    */
   dispose(): void;
   /** Every request waiting for a device on this host, for `list.get` and `status.get`. */

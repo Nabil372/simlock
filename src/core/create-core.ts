@@ -80,31 +80,17 @@ export interface CorePorts {
     readonly acquisition: AcquisitionMaintenance;
     readonly leases: LeaseMaintenance;
   };
-  /** Administrative lease expiry, which doctor reconciliation uses on a lease that lapsed. */
   readonly leaseExpirer: LeaseExpirer;
-  /**
-   * What the warm pool reads of acquisition: the requests with no device yet, and whether an
-   * operator reset holds acquisition closed (the pool then leaves every device alone).
-   */
   readonly warmPoolDemand: {
     readonly maintenanceActive: boolean;
     waitingDemand(): readonly WaitingDemand[];
-    /** The mode a request naming none plans on a platform: where a target with no mode lands. */
     defaultMode(platform: Platform): DeviceMode;
-    /** A target as a request, resolved with downloads off: the spec, or why there is none. */
     resolve(request: DeviceRequest): Promise<TargetResolution>;
   };
-  /** Tells acquisition a device came back, so a waiting request is tried again. */
   readonly notifyAvailability: () => void;
-  /**
-   * Tells the physical-device watcher a physical device was just committed `ready`, by a
-   * reclaim, a quarantine recovery or `device add`, so its count of not-present reads starts
-   * again from zero (ADR 0022 §8). Omitted, nothing is told.
-   */
   readonly physicalDeviceReady?: (deviceId: string) => void;
 }
 
-/** A core service reached a port that `Core#connect` has not been given yet. */
 class CorePortMissingError extends Error {
   constructor(readonly port: keyof CorePorts) {
     super(`A core service was called before connect() supplied the "${port}" port`);
@@ -112,7 +98,6 @@ class CorePortMissingError extends Error {
   }
 }
 
-/** Device management, built and ready except for the ports `connect` fills. */
 export interface Core {
   readonly capacity: CapacityCoordinator;
   readonly capacityReader: CapacityReader;
@@ -148,21 +133,15 @@ export interface Core {
    * hands back a settled pool.
    */
   settle(): Promise<void>;
-  /**
-   * A graceful stop: the warm pool starts nothing new and finishes what is in flight, so the
-   * daemon exits on a settled pool.
-   */
   drain(): Promise<void>;
   /**
-   * The first step of a graceful stop: closes the warm pool to new work before leasing settles,
-   * so a reclaim that commits meanwhile cannot start a creation `drain` would then wait for.
+   * The first step of a graceful stop: closes the warm pool before leasing settles, so a reclaim
+   * that commits meanwhile cannot start a creation `drain` would then wait for.
    */
   closeWarmPool(): void;
-  /** Cancels the timers core armed, so the process can exit. */
   dispose(): void;
 }
 
-/** Composition root for device management: the registry's services, with no lease in them. */
 export function createCore(options: CoreOptions): Core {
   const { decisions, registry } = options;
   let ports: CorePorts | undefined;

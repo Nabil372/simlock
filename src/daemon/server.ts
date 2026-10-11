@@ -128,17 +128,8 @@ interface Connection {
 }
 
 /**
- * The worker engine `DaemonServer` builds its `Dispatcher` from, and the few things it touches
- * around that dispatcher (the registry snapshot a `lease.release-all` reads to suppress its own
- * pushes, the queue a closing connection detaches progress from, the reaper and health monitor
- * a stop disposes).
- *
- * Separate from the common options because ADR 0005 §32 gives the contract a second
- * implementation: a **gateway** passes `dispatcher` instead of all of this, and has none of it
- * to pass -- no registry, no capacity, no lifecycle (§33). Keeping the split in the *type*
- * rather than making every field optional is what preserves the compile-time guarantee for
- * worker mode: omitting `queue` from a worker's options is still an error, not a runtime
- * surprise.
+ * Kept in the type rather than making every field optional: a gateway passes `dispatcher` instead
+ * (ADR 0005 §32), and omitting `queue` from a worker's options stays a compile error.
  */
 export interface DaemonServerEngineOptions {
   readonly capacity: CapacityReader;
@@ -170,9 +161,8 @@ export interface DaemonServerCommonOptions {
   readonly config: Config;
   readonly defaultRequesterId: string;
   /**
-   * Platforms whose driver refused to start. The daemon serves without them rather than
-   * refusing to come up (safety rule 9), so the refusal has to be visible somewhere: one
-   * event each lands in the ring buffer here, and `Doctor` reports the same list.
+   * The daemon serves without a platform whose driver refused to start (safety rule 9), so each
+   * refusal lands as an event in the ring buffer here.
    */
   readonly driverRejections?: readonly DriverRejection[];
   readonly eventBus: EventBus;
@@ -586,7 +576,6 @@ export class DaemonServer {
     }
   }
 
-  /** Every request type but `hello` (handled separately) and `status.get` parks here. */
   async #awaitReady(): Promise<void> {
     if (this.#readyPromise === undefined) return;
     try {
@@ -620,24 +609,17 @@ export class DaemonServer {
     this.#engine?.reaper.dispose();
     this.#engine?.healthMonitor?.dispose();
     this.#engine?.physicalDeviceWatcher?.dispose();
-    // ADR 0004 §3: a stop releases nothing. Every lease persists with its deadline, and the
-    // next daemon ends the ones whose device is not running (ADR 0019) and restores the timer of
-    // each other from its deadline (leasing's `LeaseStartup`); one whose deadline passed in
-    // between expires as soon as a daemon is there to expire it. What is
-    // drained here is only work already in flight -- a release someone else asked for commits
-    // the registry half and hands its purge off, so draining keeps `daemon stop` finishing on
-    // a settled pool. Disposal follows rather than precedes it, so a retry timer armed by a
-    // reclaim that settles into quarantine is still cancelled.
+    // ADR 0004 §3: a stop releases nothing; leases persist with their deadline. Only work already in
+    // flight is drained, so `daemon stop` finishes on a settled pool. Disposal follows rather than
+    // precedes it, so a retry timer armed by a reclaim that settles into quarantine is still cancelled.
     await this.options.settle?.();
     await this.options.dispose?.();
     for (const connection of this.#connections) {
       await connection.socket.close();
     }
     await this.options.host.stop();
-    // ADR §5: removed on graceful stop, mirroring the socket file itself (`host.stop()` just
-    // above). A daemon that never persisted it (lost the start race, see `start()`) has no
-    // adminSecret to remove -- `#stop()` on the loser's own `DaemonServer` instance is never
-    // reached, since that instance's `start()` already threw.
+    // A daemon that lost the start race never persisted it, and `#stop()` is never reached on that
+    // instance.
     await this.options.adminSecret?.remove();
     this.#logger.info("Daemon stopped", { reason });
   }

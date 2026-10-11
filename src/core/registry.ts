@@ -120,15 +120,11 @@ export interface CreateLeaseInput {
   readonly ownerId: string;
   readonly ttlMs: number;
   readonly ttlDeadline: number;
-  /**
-   * The ID the requester chose for this lease (ADR 0020). Omitted, the registry generates one.
-   * The caller has already refused an ID that is in use: one place enforces that rule.
-   */
+  /** The caller has already refused an ID that is in use: one place enforces that rule. */
   readonly leaseId?: string;
   /**
-   * The request this lease is granted for, and the rest of the grant its repeat answers. When
-   * given, the commit that adds the lease also marks that request `granted` with the whole
-   * `LeaseGrant` (device, environment, lease, timing), so no crash can fall between the two.
+   * When given, the commit that adds the lease also marks the request `granted`, so no crash can
+   * fall between the two.
    */
   readonly request?: {
     readonly id: string;
@@ -148,7 +144,6 @@ export type RegistryDeviceEvent =
   | { readonly event: "device.returned"; readonly payload: EventMap["device.returned"] }
   | {
       readonly event: "device.deleted";
-      /** `physical` is the record's own: the registry adds it when it emits. */
       readonly payload: Omit<EventMap["device.deleted"], "physical">;
     };
 
@@ -400,7 +395,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return transition(device, to, update);
   }
 
-  /** Commits a successful quarantine retry; the device rejoins the warm pool. */
   async recoverFromQuarantine(deviceId: string, to: "ready" | "shutdown"): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (device.state !== "quarantined") {
@@ -583,12 +577,7 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return ended;
   }
 
-  /**
-   * Removes a lease and moves its physical device `leased -> absent` in one write, for a device
-   * the watcher read not present past the grace period (ADR 0022 §8). The device is gone, so no
-   * `reclaiming` state stands between. `announceLeaseEnd` runs once the write has committed and
-   * before `device.absence-detected` is emitted, so the lease's own fact precedes the device's.
-   */
+  /** `announceLeaseEnd` runs after the commit and before `device.absence-detected`, so the lease's fact comes first. */
   // fallow-ignore-next-line unused-class-member -- called through LeaseLifecycle's registry port.
   async endLeaseAndMarkDeviceAbsent(
     leaseId: string,
@@ -620,10 +609,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return ended;
   }
 
-  /**
-   * Rewrites why an `absent` device is absent. One write, no event: the device was already
-   * reported absent, and only the reason it is read with changed.
-   */
   // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's registry port.
   async rewriteAbsentReason(deviceId: string, absentReason: AbsentReason): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
@@ -1129,8 +1114,7 @@ const deviceRecordKeys = [
   "absentReason",
 ] as const;
 /**
- * Fields a device record written before ADR 0007 carries that this daemon neither reads nor
- * keeps. `featureProfile` is stripped on load, not preserved as an unknown field, and no mode is
+ * `featureProfile` is stripped on load rather than kept as an unknown field, and no mode is
  * derived from it (ADR 0007 §11).
  */
 const retiredDeviceRecordKeys = ["featureProfile"] as const;
@@ -1282,10 +1266,8 @@ function eventForTransition(
 }
 
 /**
- * Every optional field on a device record happens to be a number, so they are
- * parsed as one group: absent stays absent, present-but-not-a-number is a
- * corrupt record. Keeping them out of `parseDevice`'s required-field check is
- * what stops that check growing another two branches per field added.
+ * Parsed as one group so `parseDevice`'s required-field check does not grow two branches per
+ * field added.
  */
 const optionalDeviceNumberKeys = [
   "lastLeaseEndedAt",
@@ -1418,10 +1400,6 @@ function parsePhysicalDevice(
   };
 }
 
-/**
- * What only a physical record carries: when it entered `reclaiming`, which is a number if there,
- * and why it is `absent`, which a record has exactly when it is `absent`.
- */
 function parsePhysicalMarks(
   state: PhysicalState,
   value: Record<string, unknown>,

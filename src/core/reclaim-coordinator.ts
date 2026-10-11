@@ -75,7 +75,6 @@ export interface ReclaimCoordinatorOptions {
   readonly eventBus: Pick<EventBus, "emit">;
   readonly logger?: Logger | undefined;
   readonly notifyAvailability: () => void;
-  /** Called once a physical device's reclaim has committed it `ready`. */
   readonly physicalDeviceReady?: (deviceId: string) => void;
   readonly quarantine: ReclaimQuarantine;
   readonly registry: ReclaimRegistry;
@@ -172,15 +171,6 @@ export class ReclaimCoordinator {
     return recovered;
   }
 
-  /**
-   * Runs the reclaim of a physical device the watcher found back, or one a killed daemon left
-   * `reclaiming` (ADR 0022 §8), in the background under a `reclaim` claim taken here. With
-   * `osVersion` the device is `absent` and comes back: one decision checks that and commits
-   * `absent -> reclaiming` with the new OS version. Without it the device is already
-   * `reclaiming` and nothing is written. A claim held, or a device no longer in that state,
-   * means there is nothing to do: undefined. The returned promise settles once the reclaim has
-   * started; `settled` is the reclaim itself, and `settle` awaits it too.
-   */
   // fallow-ignore-next-line unused-class-member -- called through LeaseReleaseCoordinator's reclaim port.
   async reclaimReturned(
     deviceId: string,
@@ -200,7 +190,6 @@ export class ReclaimCoordinator {
     return { settled: this.#wipeInBackground(device, claim) };
   }
 
-  /** The enrolled physical record a registry ID, or the canonical ID of its device, names. */
   #physicalDevice(id: string): PhysicalDevice | undefined {
     return this.options.registry.snapshot.devices.find(
       (candidate): candidate is PhysicalDevice =>
@@ -258,9 +247,8 @@ export class ReclaimCoordinator {
   }
 
   /**
-   * Finishes a spent fresh device found `shutdown` at startup: the daemon stopped after its
-   * lease-end shutdown committed and before its delete did. A delete that fails throws and
-   * leaves the device `shutdown`, where `mayBeGranted` still keeps it out of every grant.
+   * A delete that fails throws and leaves the device `shutdown`, where `mayBeGranted` still keeps it
+   * out of every grant.
    */
   async deleteSpent(deviceId: string): Promise<boolean> {
     const device = await this.options.decisions.run(async () => {
@@ -271,12 +259,6 @@ export class ReclaimCoordinator {
     return this.#deleteSpent(device);
   }
 
-  /**
-   * A spent fresh device is never purged and never returns to the pool. Its lease end is a
-   * driver shutdown, a `reclaiming -> shutdown` commit with no `device.reclaimed` (nothing was
-   * reclaimed), then the delete. Either driver step failing hands the device to quarantine,
-   * which retries the delete.
-   */
   async #retireSpent(released: {
     readonly device: VirtualDevice;
     readonly lease: LeaseRecord;
@@ -339,10 +321,8 @@ export class ReclaimCoordinator {
   }
 
   /**
-   * Hands the release-time purge failure to the quarantine coordinator instead
-   * of readiness-checking the device back into circulation: the first warm-pool
-   * version did that (see docs/internal/KNOWN-PITFALLS.md) so a dirty device could still
-   * be leased, which is exactly the confusing failure mode quarantine replaces.
+   * Hands the purge failure to quarantine rather than readiness-checking the device back into
+   * circulation: a dirty device must never be leasable.
    */
   async #recoverPurgeFailure(
     deviceId: string,
@@ -360,11 +340,7 @@ export class ReclaimCoordinator {
     });
   }
 
-  /**
-   * A physical reclaim that failed is read once more (a failed reclaim used to quarantine the device whether or not it was there): a device
-   * that is not present, or whose read could not be made, is `absent` and not `quarantined`, since
-   * its reclaim runs again when it is back. A present device falls through to quarantine.
-   */
+  /** Absent, not quarantined, when the device is gone or unreadable: its reclaim runs again when it is back. */
   async #absentAfterFailure(device: PhysicalDevice, error: unknown): Promise<boolean> {
     let absentReason: AbsentReason | undefined;
     try {

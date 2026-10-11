@@ -52,14 +52,12 @@ export interface LeaseLifecycleOptions {
   readonly expiryScheduler: LeaseExpiryScheduler;
   readonly registry: LeaseLifecycleRegistry;
   /**
-   * ADR 0004 §4: `defaultMs` is `lease.defaultTtlMs`, and it applies in exactly one place -- a
-   * grant whose request named no `ttlMs`. A renew never falls back to it; it re-applies the
-   * lease's own stored width instead.
+   * ADR 0004 §4: applies only to a grant whose request named no `ttlMs`; a renew re-applies the
+   * lease's own stored width.
    */
   readonly ttl: { readonly defaultMs: number };
 }
 
-/** Registry-backed lease state changes, deliberately excluding reclaiming and queue wakeups. */
 export class LeaseLifecycle {
   constructor(private readonly options: LeaseLifecycleOptions) {}
 
@@ -164,12 +162,7 @@ export class LeaseLifecycle {
     return released;
   }
 
-  /**
-   * Ends a lease whose device a daemon start found gone, and marks the device missing in the same
-   * write (`device.deleted`, initiator `doctor`). The lease's fact, `lease.expired` for one whose
-   * deadline had passed and `lease.released` otherwise, is emitted after the commit and before the
-   * device's. Nothing is left `reclaiming`: there is nothing to wipe.
-   */
+  /** The lease's fact is emitted after the commit and before the device's `device.deleted`. */
   // fallow-ignore-next-line unused-class-member -- reached through LeaseReleaseCoordinator's lifecycle port.
   async endForMissingDevice(
     leaseId: string,
@@ -180,11 +173,6 @@ export class LeaseLifecycle {
     );
   }
 
-  /**
-   * Ends a lease whose physical device the watcher read not present for the grace period, and
-   * moves the device `leased -> absent` in the same write (`lease.released`, reason `device-lost`,
-   * then `device.absence-detected`). Nothing is left to wipe: the device is gone.
-   */
   // fallow-ignore-next-line unused-class-member -- reached through LeaseReleaseCoordinator's lifecycle port.
   async endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<ReleasedLease> {
     return this.options.registry.endLeaseAndMarkDeviceAbsent(leaseId, absentReason, (ended) =>
