@@ -8,6 +8,7 @@ import {
   type DriverCatalog,
   type ObservedDevice,
   type ObservedMark,
+  type SerializedDecision,
   type VirtualDevice,
 } from "../core/index.js";
 
@@ -32,6 +33,8 @@ export interface DeviceLostReleaser {
 export interface LeaseHealthMonitorOptions {
   readonly clock: Clock;
   readonly config: Config;
+  /** Each registry write runs in it, so it neither undoes nor is undone by another writer's commit. */
+  readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: DriverCatalog;
   readonly eventBus: EventBus;
   readonly lifecycle: HealthMonitorLifecycle;
@@ -237,7 +240,7 @@ export class LeaseHealthMonitor {
     counters.missing = 0;
     counters.stopped = 0;
     if (device.recoveringSince !== undefined || device.recoveryAttempts !== undefined) {
-      await this.options.registry.clearRecovery(device.id);
+      await this.options.decisions.run(() => this.options.registry.clearRecovery(device.id));
     }
     // A stopped device cannot be read reliably (Android's erasable mark lives on the
     // userdata partition, reachable only over adb while the emulator runs), so provenance
@@ -280,9 +283,8 @@ export class LeaseHealthMonitor {
       return;
     }
 
-    const recorded = await this.options.registry.markRecoveryAttempt(
-      device.id,
-      this.options.clock.now(),
+    const recorded = await this.options.decisions.run(() =>
+      this.options.registry.markRecoveryAttempt(device.id, this.options.clock.now()),
     );
     const attempt = recorded.recoveryAttempts ?? attemptsSoFar + 1;
 
@@ -332,7 +334,7 @@ export class LeaseHealthMonitor {
       return;
     }
 
-    await this.options.registry.clearRecovery(device.id);
+    await this.options.decisions.run(() => this.options.registry.clearRecovery(device.id));
     this.#counters.delete(device.id);
     this.options.eventBus.emit(
       "device.recovered",

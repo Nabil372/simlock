@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { EventBus } from "../bus/index.js";
-import { FakeClock, MemoryFilesystem } from "../ports/index.js";
+import { FakeClock } from "../ports/index.js";
 import {
   DeviceOperationClaims,
   type ObservedDevice,
@@ -13,7 +13,7 @@ import {
   ManagedDeviceLifecycle,
   SerializedDecision,
 } from "../core/index.js";
-import { FakeDriver } from "../core/testing.js";
+import { FakeDriver, HeldWritesFilesystem } from "../core/testing.js";
 import type { DeviceLostReleaser } from "./lease-health-monitor.js";
 import { LeaseHealthMonitor } from "./lease-health-monitor.js";
 
@@ -104,7 +104,7 @@ class RecordingReleaser implements DeviceLostReleaser {
 
 async function createHarness(healthOverrides: Partial<Config["health"]> = {}) {
   const clock = new FakeClock(1_000);
-  const filesystem = new MemoryFilesystem();
+  const filesystem = new HeldWritesFilesystem();
   const eventBus = new EventBus(clock);
   const driver = new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" });
   let nextId = 1;
@@ -123,6 +123,7 @@ async function createHarness(healthOverrides: Partial<Config["health"]> = {}) {
   const monitor = new LeaseHealthMonitor({
     clock,
     config: config(healthOverrides),
+    decisions,
     drivers: catalog,
     eventBus,
     lifecycle,
@@ -132,8 +133,10 @@ async function createHarness(healthOverrides: Partial<Config["health"]> = {}) {
 
   return {
     clock,
+    decisions,
     driver,
     eventBus,
+    filesystem,
     monitor,
     registry,
     get releaseCalls() {
@@ -631,6 +634,96 @@ describe("LeaseHealthMonitor", () => {
     await flush();
     harness.monitor.dispose();
   });
+
+  // Each case: the setup that leads the monitor to one registry write, and the recovery attempts
+  // that write leaves on the leased device. Holding starts just before that write.
+  it.each([
+    {
+      name: "recording a recovery attempt",
+      recoveryAttempts: 1,
+      async reachWrite(harness: Awaited<ReturnType<typeof createHarness>>, driverDeviceId: string) {
+        harness.driver.setManagedReality({
+          devices: [observedDevice(driverDeviceId, "stopped")],
+          processes: [],
+        });
+        harness.driver.failOn("makeReady", 1, new Error("boom"));
+        harness.monitor.start();
+        harness.clock.advance(30_000);
+        await flush();
+        harness.filesystem.holding = true;
+        harness.clock.advance(30_000);
+      },
+    },
+    {
+      name: "clearing recovery markers on a device observed running",
+      recoveryAttempts: undefined,
+      async reachWrite(harness: Awaited<ReturnType<typeof createHarness>>, driverDeviceId: string) {
+        const device = harness.registry.snapshot.virtualDevices.find(
+          (candidate) => candidate.driverDeviceId === driverDeviceId,
+        );
+        await harness.registry.markRecoveryAttempt(device?.id ?? "", 1_000);
+        harness.driver.setManagedReality({
+          devices: [observedDevice(driverDeviceId, "running")],
+          processes: [],
+        });
+        harness.monitor.start();
+        harness.filesystem.holding = true;
+        harness.clock.advance(30_000);
+      },
+    },
+    {
+      name: "clearing recovery markers after a successful reboot",
+      recoveryAttempts: undefined,
+      async reachWrite(harness: Awaited<ReturnType<typeof createHarness>>, driverDeviceId: string) {
+        harness.driver.setManagedReality({
+          devices: [observedDevice(driverDeviceId, "stopped")],
+          processes: [],
+        });
+        harness.driver.hangMakeReady();
+        harness.monitor.start();
+        harness.clock.advance(30_000);
+        await flush();
+        harness.clock.advance(30_000);
+        await flush();
+        harness.filesystem.holding = true;
+        harness.driver.releaseMakeReady();
+      },
+    },
+  ])(
+    "$name keeps its write, and another device's transition committed in the decision section while that write is in flight keeps its own",
+    async ({ reachWrite, recoveryAttempts }) => {
+      const harness = await createHarness();
+      const { device } = await seedLeased(harness);
+      const idle = await harness.registry.registerDevice({
+        driverData: { fakeDeviceId: "simlock-idle" },
+        driverDeviceId: "simlock-idle",
+        provisionDuration: 0,
+        spec,
+      });
+      await harness.registry.transitionDevice(idle.id, "ready", {
+        event: "device.ready",
+        payload: { bootDuration: 0, deviceId: idle.id },
+      });
+
+      await reachWrite(harness, device.driverDeviceId);
+      await harness.filesystem.held(1);
+      // What an idle shutdown commits: a transition in a decision section.
+      const shuttingDown = harness.decisions.run(() =>
+        harness.registry.transitionDevice(idle.id, "shutdown", {
+          event: "device.shutdown",
+          payload: { deviceId: idle.id, initiator: "warm-pool" },
+        }),
+      );
+      await harness.filesystem.releaseUntil(shuttingDown);
+      await flush();
+
+      const record = (id: string) => harness.registry.snapshot.devices.find((d) => d.id === id);
+      expect(record(device.id)?.state).toBe("leased");
+      expect(record(device.id)?.recoveryAttempts).toBe(recoveryAttempts);
+      expect(record(idle.id)?.state).toBe("shutdown");
+      harness.monitor.dispose();
+    },
+  );
 
   it("performs no driver calls when health.enabled is false", async () => {
     const harness = await createHarness({ enabled: false });

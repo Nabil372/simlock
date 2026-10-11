@@ -13,7 +13,7 @@ import { QuarantineCoordinator } from "./quarantine-coordinator.js";
 import { Registry } from "./registry.js";
 import { SerializedDecision } from "./serialized-decision.js";
 import { StartupRead } from "./startup-read.js";
-import { testComponentWiring } from "./testing.js";
+import { HeldWritesFilesystem, testComponentWiring } from "./testing.js";
 import { createTestEngine } from "../leasing/testing.js";
 
 describe("Doctor", () => {
@@ -2814,43 +2814,6 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
     expect(decisionRuns).toHaveBeenCalledTimes(runsAfterFix);
   });
 });
-
-/**
- * Holds each state write once `holding` is on, until the test releases it, so a test can put a
- * second commit inside the window between a commit's read and its write landing.
- */
-class HeldWritesFilesystem extends MemoryFilesystem {
-  holding = false;
-  readonly #held: (() => void)[] = [];
-
-  override async writeFileAtomic(path: string, contents: string): Promise<void> {
-    if (this.holding) await new Promise<void>((resolve) => this.#held.push(resolve));
-    await super.writeFileAtomic(path, contents);
-  }
-
-  /** Resolves once `count` writes are held. */
-  async held(count: number): Promise<void> {
-    for (let turn = 0; this.#held.length < count; turn++) {
-      if (turn === 100) throw new Error(`Only ${String(this.#held.length)} writes were held`);
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  }
-
-  /** Releases held writes one at a time, oldest first, each after every pending step has run. */
-  async releaseUntil(done: Promise<unknown>): Promise<void> {
-    let settled = false;
-    const settle = () => {
-      settled = true;
-    };
-    done.then(settle, settle);
-    for (let turn = 0; !settled; turn++) {
-      if (turn === 100) throw new Error("The held writes never settled");
-      await new Promise((resolve) => setImmediate(resolve));
-      this.#held.shift()?.();
-    }
-    await done;
-  }
-}
 
 function sequence() {
   let next = 1;
