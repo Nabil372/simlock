@@ -321,6 +321,41 @@ describe("a physical lease request: grant", () => {
     expect(grant.device.spec.osVersion).toBe("34");
   });
 
+  it("--platform android --physical --os 33 with only a phone on API 34 enrolled exits with UNKNOWN_MODEL at once, and its message names no range", async () => {
+    const env = await startWith({ android: [PIXEL] });
+    const accepted = await granted(env, [
+      "lease",
+      "--platform",
+      "android",
+      "--physical",
+      "--os",
+      "34",
+      "--agent-id",
+      "agent-exact",
+    ]);
+    expect(accepted.device.driverDeviceId).toBe(SERIAL);
+    await release(env, accepted);
+
+    const refused = await env.cli(
+      [
+        "lease",
+        "--platform",
+        "android",
+        "--physical",
+        "--os",
+        "33",
+        "--agent-id",
+        "agent-older",
+        "--detach",
+      ],
+      { timeout: 15_000 },
+    );
+
+    expect(refused.code, refused.stderr).toBe(12);
+    expect(refused.error?.code).toBe("UNKNOWN_MODEL");
+    expect(refused.error?.message).not.toMatch(/>=|<\d/);
+  });
+
   it("the grant's environment is the fake driver's answer for that device: SIMLOCK_DEVICE_UDID on iOS, ANDROID_SERIAL and ANDROID_ADB_SERVER_PORT=5037 on Android", async () => {
     const env = await startWith({ android: [PIXEL], ios: [IPHONE_A] });
 
