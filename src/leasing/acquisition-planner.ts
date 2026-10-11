@@ -11,8 +11,11 @@ import {
   type DeviceRequirement,
   exactRequirement,
   fits,
+  fitsPhysical,
   type LeaseRecord,
   mayBeGranted,
+  type PhysicalDevice,
+  type PhysicalRequest,
   type Platform,
   specMode,
   selectIdleRunningVictim,
@@ -23,9 +26,7 @@ import {
 } from "../core/index.js";
 
 export interface AcquisitionPlannerSnapshot {
-  /** Every device: the ready grant reads them all, and `fits` refuses a physical one. */
   readonly devices: readonly DeviceRecord[];
-  /** The virtual read: everything that boots, evicts or counts toward a limit reads this. */
   readonly virtualDevices: readonly VirtualDevice[];
   readonly leases: readonly LeaseRecord[];
 }
@@ -33,22 +34,29 @@ export interface AcquisitionPlannerSnapshot {
 export interface AcquisitionPlannerInput {
   readonly failures: number;
   readonly noWait: boolean;
-  /** The waiter's id, put on the boot claim the plan takes. */
   readonly owner?: string | undefined;
   readonly snapshot: AcquisitionPlannerSnapshot;
-  /** The spec a new device would have, and so the pool mode an idle device must be in. */
   readonly spec: VirtualSpec;
-  /**
-   * What an idle device must satisfy besides its pool mode (ADR 0015 §5). Absent, the request is
-   * exact and the requirement is `spec`'s own model, OS and image tag.
-   */
   readonly requirement?: DeviceRequirement | undefined;
-  /** The class the catalog gives a model, for a requirement that names a class. */
   readonly classOf?: ((model: string) => DeviceClass | undefined) | undefined;
+}
+
+export interface PhysicalPlanInput {
+  readonly request: PhysicalRequest;
+  readonly noWait: boolean;
+  readonly owner: string;
+  readonly snapshot: AcquisitionPlannerSnapshot;
+  readonly absent: ReadonlySet<string>;
+  readonly heldByOlder: (device: PhysicalDevice) => boolean;
 }
 
 export type AcquisitionPlan =
   | { readonly kind: "grant-ready"; readonly device: DeviceRecord }
+  | {
+      readonly kind: "grant-physical";
+      readonly claim: DeviceOperationClaim;
+      readonly device: PhysicalDevice;
+    }
   | {
       readonly kind: "boot-shutdown";
       readonly capacityReservation: CapacityReservation;
@@ -107,14 +115,25 @@ export class AcquisitionPlanner {
       return { kind: "wait" };
     }
 
-    // A spent fresh device sits `shutdown` between its lease-end shutdown commit and its
-    // delete; `mayBeGranted` is what keeps it from being booted for a new lease in that window.
+    // A spent fresh device sits `shutdown` until its delete; `mayBeGranted` keeps it from being booted again.
     const shutdown = snapshot.virtualDevices.find(
       (device) => device.state === "shutdown" && servesRequest(device),
     );
     if (shutdown !== undefined) return this.#planShutdownBoot(input, shutdown);
 
     return this.#planProvision(input);
+  }
+
+  // fallow-ignore-next-line unused-class-member -- called through LeaseAcquisitionCoordinator's `AcquisitionPlannerPort`.
+  planPhysical(input: PhysicalPlanInput): AcquisitionPlan {
+    for (const device of input.snapshot.devices) {
+      if (!device.physical || device.state !== "ready") continue;
+      if (input.absent.has(device.id)) continue;
+      if (!fitsPhysical(device, input.request) || input.heldByOlder(device)) continue;
+      const claim = this.claims.tryClaim(device.id, "grant", input.owner);
+      if (claim !== undefined) return { claim, device, kind: "grant-physical" };
+    }
+    return blocked(input.noWait);
   }
 
   #isOnItsWay(device: VirtualDevice, serves: (device: DeviceRecord) => boolean): boolean {

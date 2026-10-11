@@ -1503,3 +1503,51 @@ describe("GatewayDispatcher: waiting requests", () => {
     ]);
   });
 });
+
+describe("GatewayDispatcher: the fleet queue's physical line", () => {
+  async function settle(): Promise<void> {
+    for (let count = 0; count < 20; count += 1) await Promise.resolve();
+  }
+
+  function options(requesterId: string) {
+    return { allowDownload: false, noWait: false, ownerId: requesterId, requesterId };
+  }
+
+  it("with two virtual requests and one physical request in the fleet queue, the gateway's status.get shows queueDepth 2 and physicalQueueDepth 1; the physical request has queuePosition 1 in waiting and in lease.queued; its queue.changed carries physical: true and depth 1", async () => {
+    const { coordinator, directory, dispatcher, eventBus, workers } = harness();
+    directory.add("wrk_1", new ScriptedWorkerClient());
+    const capacity = statusFixture().capacity;
+    workers.connected("wrk_1", undefined, "0.3.0");
+    workers.refresh("wrk_1", {
+      capacity: { ...capacity, ios: { ...capacity.ios, maxRunning: 0 } },
+      catalog: catalogFixture([{ models: ["iPhone 17"], platform: "ios", runtimes: ["26.0"] }])
+        .platforms,
+      devices: [],
+      health: "running",
+      leases: [],
+      queueDepth: 0,
+    });
+    const queued: { requestId: string; queuePosition: number }[] = [];
+    eventBus.subscribe("lease.queued", (envelope) => queued.push(envelope.payload));
+    const changed: unknown[] = [];
+    eventBus.subscribe("queue.changed", (envelope) => changed.push(envelope.payload));
+    const virtual = { model: "iPhone 17", platform: "ios" as const };
+    const physical = { ...virtual, physical: true as const };
+
+    void coordinator.request(virtual, options("agent-1")).catch(() => undefined);
+    await settle();
+    void coordinator.request(virtual, options("agent-2")).catch(() => undefined);
+    await settle();
+    void coordinator.request(physical, options("agent-3")).catch(() => undefined);
+    await settle();
+
+    const status = await dispatcher.dispatch("status.get", {}, session());
+    expect(status).toMatchObject({ physicalQueueDepth: 1, queueDepth: 2 });
+    const waiting = status.waiting?.find((request) => request.requesterId === "agent-3");
+    expect(waiting).toMatchObject({ queuePosition: 1, stage: "queued" });
+    expect(queued.find((event) => event.requestId === waiting?.id)).toMatchObject({
+      queuePosition: 1,
+    });
+    expect(changed).toContainEqual(expect.objectContaining({ depth: 1, physical: true }));
+  });
+});

@@ -106,32 +106,22 @@ export interface EventMap {
     readonly requestSpec: unknown;
     readonly reason: EventMap["lease.rejected"]["reason"];
   };
-  /**
-   * ADR 0021 §4: the gateway handed a fleet request's grant to its caller. Emitted by the
-   * gateway only, after its lease index accepted the grant. `worker`, never `workerId`.
-   */
   "request.granted": {
     readonly requestId: string;
     readonly worker: string;
-    /** The gateway's lease id. */
     readonly leaseId: string;
-    /** The worker's lease id. */
     readonly workerLeaseId: string;
   };
-  /**
-   * A worker's capacity figures changed. Emitted after every registry commit and every
-   * reservation taken or released that changes them, and once at startup; never twice in a
-   * row with equal figures. `ramBudget` is there only under a strategy that keeps one.
-   */
   "capacity.changed": {
     readonly ios: CapacityFiguresPayload;
     readonly android: CapacityFiguresPayload;
     readonly global: CapacityFiguresPayload;
     readonly ramBudget?: { readonly usedBytes: number; readonly limitBytes: number };
   };
-  /** The depth of a wait queue changed (a worker's, or a gateway's fleet queue), and once at
-   * startup. */
-  "queue.changed": { readonly depth: number };
+  "queue.changed": {
+    readonly depth: number;
+    readonly physical?: true;
+  };
   "device.provisioned": {
     readonly deviceId: string;
     readonly spec: unknown;
@@ -141,7 +131,8 @@ export interface EventMap {
   "device.ready": { readonly deviceId: string; readonly bootDuration: number };
   "device.reclaimed": {
     readonly deviceId: string;
-    readonly strategy: "erase" | "snapshot" | "wipe";
+    readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+    readonly missingApps?: readonly string[];
     readonly duration: number;
   };
   "device.purge-failed": {
@@ -178,7 +169,8 @@ export interface EventMap {
   "device.quarantine-recovered": {
     readonly deviceId: string;
     readonly attempts: number;
-    readonly strategy: "erase" | "snapshot" | "wipe";
+    readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+    readonly missingApps?: readonly string[];
   };
   "device.quarantine-abandoned": { readonly deviceId: string; readonly attempts: number };
   "device.quarantine-stranded": {

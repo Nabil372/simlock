@@ -32,7 +32,6 @@ import { QueueTimeoutError, RequestCancelledError } from "./wait-queue.js";
 const gibibyte = 1024 ** 3;
 const statePath = "/home/agent/.simlock/state.json";
 const request = {
-  physical: false,
   model: "iPhone 16",
   osVersion: "26.5",
   platform: "ios",
@@ -226,11 +225,10 @@ async function createHarness(
 
 async function seedReady(
   harness: Awaited<ReturnType<typeof createHarness>>,
-  spec: VirtualSpec = request,
+  spec: VirtualSpec = { ...request, physical: false },
 ) {
   const driverDevice = await harness.driver.provision(spec);
-  // Running on the machine as well as ready in the registry, which is what a daemon start reads
-  // of a leased device to keep its lease.
+  // Running on the machine too: a daemon start reads that of a leased device to keep its lease.
   await harness.driver.makeReady(driverDevice, { mode: "full", purpose: "prepare" });
   const device = await harness.registry.registerDevice({
     driverData: driverDevice.driverData,
@@ -1449,9 +1447,8 @@ describe("createLeasing RAM budget by mode", () => {
       driverData: {},
       driverDeviceId: "driver-stalled",
       provisionDuration: 0,
-      spec: slimRequest,
+      spec: { ...slimRequest, physical: false },
     });
-    // A stalled provision is quarantined before the device ever booted.
     const quarantined = await harness.registry.enterQuarantine(registered.id, 60_000);
 
     expect(quarantined.state).toBe("quarantined");
@@ -1460,7 +1457,6 @@ describe("createLeasing RAM budget by mode", () => {
 
   it("keeps the lease of a device planned as slim whose driver reports full, shuts nothing down, and counts it full", async () => {
     const clock = new FakeClock(1_000);
-    // A slimming driver whose slim pass never takes: every device it boots reports `full`.
     const driver = new FakeDriver({
       availableOsVersions: ["26.5"],
       clock,
@@ -2054,10 +2050,6 @@ describe("createLeasing fresh lease identity (#75)", () => {
     expect(operations).not.toContain("destroy");
   });
 
-  /**
-   * The persisted state a daemon leaves behind when it dies part-way through a fresh device's
-   * lease end, built through the same registry calls that path makes, then read by a new process.
-   */
   async function restartAfterCrash(crashedIn: "reclaiming" | "shutdown") {
     const filesystem = new MemoryFilesystem();
     const clock = new FakeClock(1_000);
@@ -2074,15 +2066,18 @@ describe("createLeasing fresh lease identity (#75)", () => {
       leaseIdentity: freshIos,
       statePath,
     });
-    const driverDevice = await driver.makeReady(await driver.provision(request), {
-      mode: "full",
-      purpose: "prepare",
-    });
+    const driverDevice = await driver.makeReady(
+      await driver.provision({ ...request, physical: false }),
+      {
+        mode: "full",
+        purpose: "prepare",
+      },
+    );
     const device = await crashed.registerDevice({
       driverData: driverDevice.driverData,
       driverDeviceId: driverDevice.deviceId,
       provisionDuration: 0,
-      spec: request,
+      spec: { ...request, physical: false },
     });
     await crashed.transitionDevice(device.id, "ready", {
       event: "device.ready",
@@ -2572,7 +2567,7 @@ describe("createLeasing: capacity.changed and queue.changed", () => {
       driverData: {},
       driverDeviceId: "sim-1",
       provisionDuration: 0,
-      spec: request,
+      spec: { ...request, physical: false },
     });
 
     expect(capacityEvents(harness)).toHaveLength(before + 1);

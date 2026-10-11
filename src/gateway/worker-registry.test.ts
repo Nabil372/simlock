@@ -557,11 +557,12 @@ describe("WorkerRegistry", () => {
       host: hostFixture(),
       installs: [],
       leases: [leaseFixture("lease_1", "dev_1")],
+      physicalQueueDepth: 1,
       queueDepth: 0,
       waiting: [],
     };
 
-    it("drops capacity, catalog, catalogReadAt, devices, installs, leases, queueDepth and waiting a running read filled in, on a worker that stays connected", () => {
+    it("drops capacity, catalog, catalogReadAt, devices, installs, leases, queueDepth, physicalQueueDepth and waiting a running read filled in, on a worker that stays connected", () => {
       const { workers } = registry();
       workers.connected("wrk_1", undefined, undefined);
       workers.refresh("wrk_1", running);

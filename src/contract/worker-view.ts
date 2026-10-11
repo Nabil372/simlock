@@ -44,9 +44,6 @@ export interface WorkerReads {
   readonly config?: Output<"config.get">;
 }
 
-/** The view fields the reads fill. `catalog`, `downloads` and `lease` are present only when the
- * reads that carry them were made, and every field a running worker's reads fill is absent for
- * a worker that is starting. */
 export type WorkerViewReport = Pick<WorkerView, "health" | "host"> &
   Partial<
     Pick<
@@ -58,15 +55,14 @@ export type WorkerViewReport = Pick<WorkerView, "health" | "host"> &
       | "installs"
       | "lease"
       | "leases"
+      | "physicalQueueDepth"
       | "queueDepth"
       | "waiting"
       | "warmPool"
     >
   >;
 
-/** The device shape a view carries. `list.get` answers an admin with full `DeviceRecord`s;
- * narrowing them here keeps `driverData` -- an opaque, driver-defined blob -- out of every
- * view, on a gateway and on a worker alike. */
+/** Narrowed so `driverData` -- an opaque, driver-defined blob -- stays out of every view. */
 const viewDevicesSchema = z.array(statusDeviceSchema);
 
 export function workerViewFields(reads: WorkerReads): WorkerViewReport {
@@ -77,24 +73,21 @@ export function workerViewFields(reads: WorkerReads): WorkerViewReport {
   return {
     health: status.daemon.health,
     host: status.host,
-    // ADR 0010 §7: copied as the worker lists them, already bounded by the contract's parse
-    // (safety rule 10). A worker too old to list installs reports none.
     installs: status.installs ?? [],
-    // Copied as `installs` is: the requests waiting in the worker's own queue. A worker too old
-    // to list them reports none.
     waiting: status.waiting ?? [],
     ...(status.capacity === undefined ? {} : { capacity: status.capacity }),
     ...(status.warmPool === undefined ? {} : { warmPool: status.warmPool }),
     ...(status.leases === undefined ? {} : { leases: status.leases }),
     ...(status.queueDepth === undefined ? {} : { queueDepth: status.queueDepth }),
+    ...(status.physicalQueueDepth === undefined
+      ? {}
+      : { physicalQueueDepth: status.physicalQueueDepth }),
     ...(devices === undefined ? {} : { devices: viewDevicesSchema.parse(devices) }),
     ...(catalog === undefined ? {} : { catalog: catalog.platforms }),
     ...(config === undefined
       ? {}
       : {
-          // ADR 0010 §7: the worker's own install budget, read with its policy.
           downloads: { policy: config.downloads.policy, timeoutMs: config.downloads.timeoutMs },
-          // ADR 0005 §15: a gateway compares this against its own `lease.maxTtlMs`.
           lease: { maxTtlMs: config.lease.maxTtlMs },
         }),
   };

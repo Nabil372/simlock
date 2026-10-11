@@ -140,6 +140,20 @@ describe("assess", () => {
     expect(assess(REQUEST, [busy]).kind).toBe("route-or-wait");
   });
 
+  it("makes a physical request route-or-wait whatever model and runtime the catalogs list", () => {
+    const request = {
+      model: "iPhone 99",
+      osVersion: "99.0",
+      physical: true,
+      platform: "ios" as const,
+    };
+
+    expect(rejectionOf([view("wrk_a")], { ...request, physical: false }).code).toBe(
+      "UNKNOWN_MODEL",
+    );
+    expect(assess(request, [view("wrk_a")])).toStrictEqual({ kind: "route-or-wait" });
+  });
+
   it("says NO_CAPACITY, never UNKNOWN_MODEL, when the only worker connected for the first time and its catalog has not arrived", () => {
     const first = view("wrk_a", IOS, {
       catalog: [],

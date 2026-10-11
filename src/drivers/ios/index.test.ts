@@ -193,6 +193,21 @@ function deviceListResponse(state: string): string {
   });
 }
 
+const VIRTUAL_DEVICE = {
+  address: "",
+  deviceId: "device",
+  driverData: {},
+  physical: false,
+} as const;
+
+const PHYSICAL_DEVICE = {
+  address: "00008110-001A2B3C4D5E",
+  deviceId: "00008110-001A2B3C4D5E",
+  driverData: {},
+  enrolledApps: ["com.example.kept"],
+  physical: true,
+} as const;
+
 describe("IosSimctlDriver", () => {
   it("resolves an exact model and requested installed runtime", async () => {
     const runner = scriptedListRunner();
@@ -1043,10 +1058,8 @@ describe("IosSimctlDriver", () => {
   it("prices reclaim as the erase it always runs, at either clean level", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    // `reclaimStrategy` answers `erase` for both levels, so both must be priced as one --
-    // and as tens of seconds, not the ~1s the estimate used to claim (#56).
-    expect(driver.reclaimStrategy({ clean: "standard" })).toBe("erase");
-    expect(driver.reclaimStrategy({ clean: "full" })).toBe("erase");
+    expect(driver.reclaimStrategy(VIRTUAL_DEVICE, { clean: "standard" })).toBe("erase");
+    expect(driver.reclaimStrategy(VIRTUAL_DEVICE, { clean: "full" })).toBe("erase");
     expect(driver.estimate({ clean: "standard", operation: "reclaim" }, spec)).toBe(34_000);
     expect(driver.estimate({ clean: "full", operation: "reclaim" }, spec)).toBe(34_000);
   });
@@ -1591,7 +1604,53 @@ describe("IosSimctlDriver", () => {
   it("hands a lease holder the device set its simulator cannot be addressed without", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(driver.leaseEnvironment()).toEqual({ SIMLOCK_IOS_DEVICE_SET: deviceRoot });
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual({ SIMLOCK_IOS_DEVICE_SET: deviceRoot });
+  });
+
+  it("hands a lease holder of a physical device its UDID and no simulator device set", async () => {
+    const driver = await createDriver(new ScriptedProcessRunner([]));
+
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual({ SIMLOCK_IOS_DEVICE_SET: deviceRoot });
+    expect(driver.leaseEnvironment(PHYSICAL_DEVICE)).toEqual({
+      SIMLOCK_DEVICE_UDID: "00008110-001A2B3C4D5E",
+    });
+  });
+
+  it("answers uninstall for the reclaim strategy of a physical device, and erase for a simulator's", async () => {
+    const driver = await createDriver(new ScriptedProcessRunner([]));
+
+    expect(driver.reclaimStrategy(VIRTUAL_DEVICE, { clean: "standard" })).toBe("erase");
+    expect(driver.reclaimStrategy(PHYSICAL_DEVICE, { clean: "standard" })).toBe("uninstall");
+    expect(driver.reclaimStrategy(PHYSICAL_DEVICE, { clean: "full" })).toBe("uninstall");
+  });
+
+  it("answers each given ID not present from listPresentPhysical, starting no process", async () => {
+    const runner = new ScriptedProcessRunner([]);
+    const driver = await createDriver(runner);
+    const callsBefore = runner.calls.length;
+
+    const present = await driver.listPresentPhysical(["00008110-001A2B3C4D5E", "not-an-id"]);
+
+    expect(present).toEqual([
+      { driverDeviceId: "00008110-001A2B3C4D5E", present: false },
+      { driverDeviceId: "not-an-id", present: false },
+    ]);
+    expect(runner.calls).toHaveLength(callsBefore);
+  });
+
+  it("rejects reclaim of a physical device for being physical, not for its driver data, starting no process", async () => {
+    const runner = new ScriptedProcessRunner([]);
+    const driver = await createDriver(runner);
+    const callsBefore = runner.calls.length;
+
+    const failure = await driver
+      .reclaim(PHYSICAL_DEVICE, { clean: "standard" })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toMatch(/driver data/i);
+    expect((failure as Error).message).toBe("a physical device cannot be reclaimed yet");
+    expect(runner.calls).toHaveLength(callsBefore);
   });
 
   it("scopes a simctl passthrough to the device set the way its own calls are scoped", async () => {

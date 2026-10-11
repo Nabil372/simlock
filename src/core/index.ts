@@ -67,7 +67,12 @@ export {
   type ObservedDevice,
   type ObservedRunState,
   type PassthroughCommand,
+  isPhysicalDriverDevice,
+  type PhysicalDriverDevice,
   type PhysicalInspection,
+  type PresentPhysical,
+  toDriverDevice,
+  uninstallPlan,
   type PrerequisiteCheck,
   PassthroughRefusedError,
   removeListedComponent,
@@ -112,7 +117,17 @@ export {
   type WarmPoolReader,
 } from "./core-ports.js";
 export { findCatalogModel, modelClass, pairedRuntimes } from "./catalog-match.js";
-export { type DeviceRequirement, type FittableSpec, fits, type LeaseGrant } from "./domain.js";
+export {
+  type DeviceRequirement,
+  type FittableSpec,
+  fits,
+  fitsPhysical,
+  type LeaseGrant,
+  noPhysicalMatch,
+  type PhysicalDevice,
+  type PhysicalRequest,
+} from "./domain.js";
+export { readPhysicalPresence } from "./physical-presence.js";
 export {
   type DriverCatalogImage,
   type MissingPrerequisite,

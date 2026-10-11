@@ -95,6 +95,7 @@ import { DaemonServer } from "./server.js";
 import { DaemonEndpointHost } from "./connection-host.js";
 import { AdminSecretManager } from "./admin-secret.js";
 import { describeLeaseRequestFailure } from "./error-code.js";
+import { wakingQueueAfter } from "./enrollment-wake.js";
 import { GatewayUplink } from "./gateway-uplink.js";
 import { createCredentialRoleResolver } from "./session.js";
 
@@ -105,7 +106,6 @@ export interface StartDaemonOptions {
   readonly dataDirectory?: string;
   readonly defaultRequesterId?: string;
   readonly drivers?: readonly Driver[];
-  /** With `drivers`: the prerequisite checks `doctor` runs in place of discovery's. None if omitted. */
   readonly prerequisiteChecks?: readonly PrerequisiteCheck[];
   readonly filesystem?: Filesystem;
   readonly hostInfo?: HostInfo;
@@ -415,7 +415,6 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     eventHistory,
     healthMonitor: leasing.healthMonitor,
     hostFacts: () => fitHostFacts(hostFacts.current()),
-    // ADR 0012 §1: `worker.list` answers with this host under the id it presents to a gateway.
     instanceId,
     host: new DaemonEndpointHost({
       connector: ipc,
@@ -427,40 +426,25 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     leases: leasing,
     logger: logger.child("server"),
     passthrough: core.catalog,
-    // ADR 0005 §19a: `device.exec` runs its command here, on the machine that owns the device.
-    // The runner is the same port every driver already shells out through, and `execEnv` is the
-    // daemon's own environment -- read here, in the composition root, because that is the only
-    // place allowed to touch process state (architecture rule 9); the driver's scoping keys are
-    // layered over it per command.
     processRunner,
     execEnv: process.env,
     queue: leasing,
     reaper,
-    enrollment: core.enrollment,
+    enrollment: wakingQueueAfter(core.enrollment, () => leasing.corePorts.notifyAvailability()),
     nuke,
     registry,
-    // `status.get` and `list.get` flag a stalled device by the rule `doctor` reports, so they
-    // need what `doctor` has: the drivers, and the claims that keep a live reclaim from reading
-    // as a stall.
     stalls: { claims: core.claimReader, drivers },
     resolveRole,
     adminSecret,
     tokens,
     version: options.version ?? "1.0.0",
-    // Runs after the socket is claimed (see DaemonServer#start): reachability no
-    // longer depends on doctor reconciliation or running-capacity convergence.
-    // Requests other than hello/status.get park until this resolves.
     converge: convergeStartup,
     settle: async () => {
       stopping = true;
       await leasing.settle();
       await core.drain();
     },
-    // Drivers are disposed after the lease subsystem, and every one of them is tried even
-    // when another throws: Android's disposal is the only thing that can stop the adb
-    // server it started (`ADB_REJECT_KILL_SERVER=1` refuses everything else), and a
-    // shutdown that abandoned it would leave a server nothing can reap holding the port
-    // the next daemon needs.
+    // Every driver is tried even when another throws: Android's disposal is the only thing that can stop the adb server it started.
     dispose: async () => {
       core.dispose();
       leasing.dispose();

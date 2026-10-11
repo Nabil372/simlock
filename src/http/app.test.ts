@@ -568,6 +568,36 @@ describe("POST /v1/lease-requests", () => {
     expect(call.input).toMatchObject({ imageTag: "google_apis_playstore" });
   });
 
+  it("forwards a body's physical true to the dispatched lease.request", async () => {
+    const { app, dispatcher } = buildHarness();
+    const first = await Promise.race([
+      postLeaseRequest(app, { ...defaultBody, physical: true }),
+      waitForDispatch(dispatcher, "lease.request").then((call) => call),
+    ]);
+    if (first instanceof Response) throw new Error(`the body was refused with ${first.status}`);
+    expect(first.input).toMatchObject({ physical: true });
+  });
+
+  it("answers 400 BAD_REQUEST naming allowDownload for a body with physical true and allowDownload true", async () => {
+    const { app, dispatcher } = buildHarness();
+    const accepted = await Promise.race([
+      postLeaseRequest(app, { ...defaultBody, physical: true }),
+      waitForDispatch(dispatcher, "lease.request").then(() => "dispatched" as const),
+    ]);
+    expect(accepted).toBe("dispatched");
+
+    const response = await Promise.race([
+      postLeaseRequest(app, { ...defaultBody, allowDownload: true, physical: true }),
+      waitForDispatch(dispatcher, "lease.request", 1).then(() => "dispatched" as const),
+    ]);
+    if (response === "dispatched") throw new Error("the body was dispatched instead of refused");
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("BAD_REQUEST");
+    expect(body.error.message).toContain("allowDownload");
+  });
+
   it("forwards a body's mode to the dispatched lease.request", async () => {
     const { app, dispatcher } = buildHarness();
     void postLeaseRequest(app, { ...defaultBody, mode: "slim" });
@@ -576,13 +606,6 @@ describe("POST /v1/lease-requests", () => {
   });
 
   it("forwards a body's owner field to the dispatched lease.request rather than silently dropping it (ADR §27a, H7)", async () => {
-    // Before this, `leaseRequestBodySchema` had no `owner` field at all, so a caller naming one
-    // was answered as though it had named none -- the same anti-pattern this codebase's own
-    // `device.exec`'s `requesterId` precedent already rejected: an identity named and answered
-    // as if it had not is the kind of silence that reads like authorization. The gate itself
-    // (FORBIDDEN for a non-admin token) lives in the shared dispatcher, exercised once for every
-    // transport in `daemon/dispatcher.test.ts`/`gateway/dispatcher.test.ts` -- this only proves
-    // the field actually reaches that dispatcher from HTTP instead of being dropped in transit.
     const { app, dispatcher } = buildHarness();
     void postLeaseRequest(app, { ...defaultBody, owner: "someone-else" });
     const call = await waitForDispatch(dispatcher, "lease.request");
@@ -591,16 +614,6 @@ describe("POST /v1/lease-requests", () => {
   });
 
   it("builds an operator token's session as admin but never as the gateway's uplink, so §27a's owner gate still refuses it at the shared dispatcher (ADR §27a, H3)", async () => {
-    // §27a's `owner` field is narrowed to `session.isGatewayUplink` (round 3 review, H3): an
-    // HTTP `operator` bearer token maps onto `role: "admin"` (`dispatcher-session.ts`'s
-    // `toRole`), same as before, but `buildHttpSession` never sets `isGatewayUplink` -- no HTTP
-    // request is ever the worker's own uplink connection to its configured gateway, which is the
-    // only session that connection-acceptance signal is stamped on (`DaemonServer#acceptUplink`,
-    // via `connection.forcedRole`). This is what makes the real gate in
-    // `daemon/dispatcher.test.ts`/`gateway/dispatcher.test.ts` (FORBIDDEN for `isGatewayUplink !==
-    // true`, exercised there against the real dispatcher) actually bite an operator token too,
-    // not just an agent one -- this test only proves the session HTTP hands that dispatcher never
-    // carries the one flag that would let it through.
     const { app, dispatcher } = buildHarness();
     void postLeaseRequest(app, { ...defaultBody, owner: "someone-else" }, operatorAuth);
     const call = await waitForDispatch(dispatcher, "lease.request");

@@ -3228,6 +3228,35 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
       );
     });
 
+    it.each(["worker", "gateway"] as const)(
+      "simlock status of a %s with queueDepth 2 and physicalQueueDepth 1 prints Queue depth: 2",
+      async (mode) => {
+        const output = outputCapture();
+        const answer = {
+          ...EMPTY_STATUS,
+          daemon: { health: "running", mode },
+          physicalQueueDepth: 1,
+          queueDepth: 2,
+        } as unknown as StatusGetOutput;
+
+        await runCli(
+          ["status"],
+          output.environmentWith({
+            connectAdmin: async () => fakeClient({ getStatus: () => Promise.resolve(answer) }),
+          }),
+        );
+
+        expect(output.stdout).toBe(
+          `Daemon: running (${mode})\n` +
+            "Host: macOS 15.5 arm64\n" +
+            "Running global: 0 + 0 reserved/2, warm 0\n" +
+            "Capacity ios: managed 0/1, running 0 + 0 reserved/1, warm 0\n" +
+            "Capacity android: managed 0/1, running 0 + 0 reserved/1, warm 0\n" +
+            "Queue depth: 2\n",
+        );
+      },
+    );
+
     it("simlock status --json carries the block as the daemon sent it", async () => {
       const output = outputCapture();
 
@@ -3905,6 +3934,58 @@ describe("CLI: lease pushes and exit codes (own logic, not the dispatcher's)", (
 
     expect(inputs[0]?.imageTag).toBe("google_apis_playstore");
     expect(inputs[1]).not.toHaveProperty("imageTag");
+  });
+
+  it("sends physical: true for --physical, and no physical field without it", async () => {
+    const inputs: Record<string, unknown>[] = [];
+    const client = fakeClient({
+      requestLease: (input) => {
+        inputs.push(input as unknown as Record<string, unknown>);
+        return Promise.resolve({
+          device: {
+            class: "phone",
+            driverDeviceId: "00008110-001A2B3C4D5E",
+            id: "dev_1",
+            physical: true,
+            spec: {
+              class: "phone",
+              model: "iPhone 15 Pro",
+              osVersion: "18.4",
+              physical: true,
+              platform: "ios",
+            },
+          },
+          environment: {},
+          lease: {
+            id: "lse_1",
+            deviceId: "dev_1",
+            requesterId: "test-requester",
+            ownerId: "test-requester",
+            grantedAt: 0,
+            lastRenewedAt: 0,
+            idChosenByRequester: false,
+            ttlMs: 60_000,
+            ttlDeadline: 60_000,
+          },
+          timing: {
+            estimatedProvisionMs: 0,
+            estimatedBootMs: 0,
+            estimatedReclaimMs: 0,
+            estimatedReadyMs: 0,
+          },
+        });
+      },
+    });
+    const lease = ["lease", "--platform", "ios", "--detach"];
+
+    await runCli(
+      [...lease, "--physical"],
+      outputCapture().environmentWith({ connectAdmin: async () => client }),
+    );
+    await runCli(lease, outputCapture().environmentWith({ connectAdmin: async () => client }));
+
+    expect(inputs[0]?.physical).toBe(true);
+    expect(inputs[1]).not.toHaveProperty("physical");
   });
 
   it("fails the removed full flag as an unknown option, before connecting", async () => {
@@ -5727,7 +5808,7 @@ describe("simlock list --requests", () => {
             id: "req_2",
             queuePosition: 2,
             requesterId: "local-agent",
-            spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+            spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" },
             stage: "queued",
             workerId: "wrk_1",
           },
@@ -5857,7 +5938,7 @@ describe("simlock lease: a request names a model, a class, or nothing", () => {
     expect(output.stdout).toBe(
       "Usage: simlock lease --platform <ios|android> [--device <model> | --class <class>]\n" +
         "                     [--os <version|range>] [--mode <slim|full>] [--image-tag <tag>] [--agent-id <id>]\n" +
-        "                     [--timeout <duration>] [--lease-id <id>]\n" +
+        "                     [--timeout <duration>] [--lease-id <id>] [--physical]\n" +
         "                     [--no-wait] [--detach] [--ttl <duration>] [--allow-download]\n" +
         "                     [--export-env] [--bind-pid <pid>]\n",
     );
@@ -5916,6 +5997,40 @@ describe("simlock lease: a request names a model, a class, or nothing", () => {
     expect(output.stdout).toBe(
       "Request req_1: a, ios class watch, queued at 1, waiting 0s\n" +
         "Request req_2: b, android class phone, queued at 2, waiting 0s\n",
+    );
+  });
+
+  it("prints physical in a waiting physical request's line, and nothing for a simulator request", async () => {
+    const output = outputCapture();
+    const client = fakeClient({
+      list: async () => [
+        {
+          createdAt: 0,
+          id: "req_1",
+          queuePosition: 1,
+          requesterId: "a",
+          spec: { model: "iPhone 15 Pro", physical: true, platform: "ios" },
+          stage: "queued",
+        },
+        {
+          createdAt: 0,
+          id: "req_2",
+          queuePosition: 1,
+          requesterId: "b",
+          spec: { model: "iPhone 16", platform: "ios" },
+          stage: "queued",
+        },
+      ],
+    });
+
+    await runCli(
+      ["list", "--requests"],
+      output.environmentWith({ connectAdmin: async () => client }),
+    );
+
+    expect(output.stdout).toBe(
+      "Request req_1: a, ios physical iPhone 15 Pro, queued at 1, waiting 0s\n" +
+        "Request req_2: b, ios iPhone 16, queued at 1, waiting 0s\n",
     );
   });
 

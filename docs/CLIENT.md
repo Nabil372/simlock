@@ -75,6 +75,18 @@ device also carries `physical`: `false` for a simulator or emulator, `true` for 
 real phone or tablet. A physical device has a `class` (`"phone"` or `"tablet"`)
 and no `mode`, and a lease on one has no `mode` either.
 
+`requestLease` also takes an optional `physical: true`, which asks for an
+enrolled physical phone or tablet instead of a simulator or emulator. It
+matches an enrolled device of the platform by `model` (ignoring letter case),
+`class` and `osVersion`; `osVersion` is exact, so `"18"` matches no device on
+`18.4.1` and "any 18.x" is `">=18 <19"`, and on Android it is the API level
+(`"34"`). A request no enrolled device could match fails at once with
+`UNKNOWN_MODEL`. `physical` with `mode`, `imageTag` or `allowDownload: true` is a
+`BAD_REQUEST` naming the field. A request without `physical` never gets a
+physical device. A physical request waits in a line of its own, and the
+`queueDepth` of `getStatus()` counts the simulator and emulator line, with
+`physicalQueueDepth` counting the physical one.
+
 On Android, `requestLease` also takes an optional `imageTag`: the system image
 type to create the device from, such as `"google_apis_playstore"`, as
 `getCatalog()` lists it under each image's `tag`. Without it Simlock picks the
@@ -551,10 +563,10 @@ const { host } = await client.getStatus();
 
 While a daemon is starting (`daemon.health` is `"starting"`), `getStatus()`
 returns `daemon` and `host` and nothing else. `devices`, `leases`, `capacity`,
-`warmPool`, `queueDepth`, `installs`, `waiting` and `workers` are `undefined`, not empty,
+`warmPool`, `queueDepth`, `physicalQueueDepth`, `installs`, `waiting` and `workers` are `undefined`, not empty,
 because the daemon has not yet checked what it holds. The same is true of a
 worker's entry in `workers` and in `listWorkers()`: a worker that is starting has
-`health` and `host` and none of `devices`, `leases`, `capacity`, `warmPool`, `queueDepth`,
+`health` and `host` and none of `devices`, `leases`, `capacity`, `warmPool`, `queueDepth`, `physicalQueueDepth`,
 `catalog`, `installs` or `waiting`. Check `daemon.health` before reading them:
 
 ```ts
@@ -599,7 +611,9 @@ const { waiting = [] } = await client.getStatus();
 ```
 
 - `stage` is `queued` while the request holds a place in the queue, with
-  `queuePosition` counting from 1, and `starting` while the daemon is
+  `queuePosition` counting from 1 within the request's own line (a physical
+  request, which has `spec.physical: true`, waits apart from simulator and
+  emulator requests), and `starting` while the daemon is
   working on it: placing it as it arrives, or finding, creating, booting or
   downloading a device for it. `spec` has only the fields the
   request named.

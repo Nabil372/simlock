@@ -12,6 +12,7 @@ export {
 } from "./lease-request-book.js";
 export {
   LeaseIdTakenError,
+  lineOf,
   type LeaseRequestOptions,
   QueueTimeoutError,
   type QueuePlace,

@@ -1,7 +1,3 @@
-/**
- * Protocol version range negotiation (ADR 0003 §6). Client and daemon each advertise
- * `{min, max}`; the negotiated version is the highest value both ranges contain.
- */
 import { z } from "zod";
 
 import { SimlockError } from "./errors.js";
@@ -14,7 +10,7 @@ export interface ProtocolRange {
 const protocolRangeSchema = z.object({ min: z.number().int(), max: z.number().int() });
 
 /** Widen only once a second version is kept alive side by side with the first; a bump that leaves no shim behind moves both ends. */
-export const PROTOCOL_VERSION_RANGE: ProtocolRange = { min: 24, max: 24 };
+export const PROTOCOL_VERSION_RANGE: ProtocolRange = { min: 25, max: 25 };
 
 const LEGACY_DAEMON_PROTOCOL_VERSION = 2;
 
@@ -27,18 +23,13 @@ export function negotiateProtocolVersion(
   return overlapMin <= overlapMax ? overlapMax : undefined;
 }
 
-/** A new daemon treats a bare number as `{n, n}` (ADR §6). */
 export function normalizeProtocolVersion(value: number | ProtocolRange): ProtocolRange {
   return typeof value === "number" ? { min: value, max: value } : value;
 }
 
 /**
- * Builds the client-side error the ADR's compatibility note describes: a legacy protocol-2
- * daemon replies to `hello` with its own old-style `PROTOCOL_VERSION_MISMATCH` (no `{min,max}`
- * of its own -- that concept did not exist), so the client cannot learn the daemon's real
- * range from the wire. It reports the range as `{2,2}` because 2 is the only protocol version
- * that ever shipped without ranges -- see `LEGACY_DAEMON_PROTOCOL_VERSION`. `daemonVersion` is
- * `"unknown"` for the same reason: the legacy mismatch error carries no version string either.
+ * A legacy protocol-2 daemon sends no `{min,max}`, so its range is reported as `{2,2}`, the only version
+ * that shipped without ranges; `daemonVersion` is `"unknown"` for the same reason.
  */
 export function mapLegacyProtocolMismatch(
   clientRange: ProtocolRange,

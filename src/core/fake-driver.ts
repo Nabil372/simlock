@@ -27,10 +27,15 @@ import {
   type PassthroughCommand,
   PassthroughRefusedError,
   type PassthroughContext,
+  isPhysicalDriverDevice,
+  type PhysicalDriverDevice,
   type PhysicalInspection,
+  type PresentPhysical,
+  type ReclaimResult,
   removeListedComponent,
   RuntimeMissingError,
   UnknownModelError,
+  uninstallPlan,
 } from "./driver.js";
 
 export type FakeDriverOperation =
@@ -44,10 +49,10 @@ export type FakeDriverOperation =
   | "destroy"
   | "listManaged"
   | "inspectPhysical"
+  | "listPresentPhysical"
   | "listCatalog"
   | "listComponents"
   | "removeComponent"
-  /** Recorded like every other call, so a test can pin that it precedes the first destroy. */
   | "revalidateRoot"
   | "findLegacy"
   | "destroyLegacy";
@@ -196,6 +201,9 @@ export class FakeDriver implements Driver {
   readonly #bootCounts = new Map<string, number>();
   #managedReality: DriverReality | undefined;
   #physicalDevices: readonly FakePhysicalDevice[] | undefined;
+  readonly #presentPhysical = new Set<string>();
+  readonly #heldPresenceReads = new Set<string>();
+  readonly #pendingPresenceReads: (() => void)[] = [];
   readonly #scriptedPhysicalDevices: FakeDriverOptions["physicalDevices"];
 
   constructor(options: FakeDriverOptions) {
@@ -483,20 +491,27 @@ export class FakeDriver implements Driver {
   async reclaim(
     device: DriverDevice,
     options: { readonly clean: "standard" | "full" },
-  ): Promise<{
-    readonly state: "ready" | "shutdown";
-    readonly strategy: "erase" | "snapshot" | "wipe";
-  }> {
+  ): Promise<ReclaimResult> {
     await this.#beforeCall("reclaim", device, options);
+    if (isPhysicalDriverDevice(device)) return this.#reclaimPhysical(device);
     this.#requireDevice(device);
     this.#devices.set(device.deviceId, this.#reclaimResult);
     return { state: this.#reclaimResult, strategy: this.#reclaimStrategy };
   }
 
-  reclaimStrategy(_options: {
-    readonly clean: "standard" | "full";
-  }): "erase" | "snapshot" | "wipe" {
-    return this.#reclaimStrategy;
+  #reclaimPhysical(device: PhysicalDriverDevice): ReclaimResult {
+    const scripted = (this.#physicalDevices ?? this.#scriptedPhysicalDevices ?? []).find(
+      (candidate) => candidate.ids.includes(device.deviceId),
+    );
+    const plan = uninstallPlan(scripted?.apps ?? [], device.enrolledApps);
+    return { missingApps: plan.missing, state: "ready", strategy: "uninstall" };
+  }
+
+  reclaimStrategy(
+    device: DriverDevice,
+    _options: { readonly clean: "standard" | "full" },
+  ): "erase" | "snapshot" | "wipe" | "uninstall" {
+    return isPhysicalDriverDevice(device) ? "uninstall" : this.#reclaimStrategy;
   }
 
   async shutdown(device: DriverDevice): Promise<void> {
@@ -533,6 +548,33 @@ export class FakeDriver implements Driver {
     this.#physicalDevices = devices;
   }
 
+  async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
+    await this.#beforeCall("listPresentPhysical", enrolledIds);
+    if (enrolledIds.some((id) => this.#heldPresenceReads.has(id))) {
+      await new Promise<void>((resolve) => {
+        this.#pendingPresenceReads.push(resolve);
+      });
+    }
+    return enrolledIds.map((driverDeviceId) => ({
+      driverDeviceId,
+      present: this.#presentPhysical.has(driverDeviceId),
+    }));
+  }
+
+  setPhysicalPresence(driverDeviceId: string, present: boolean): void {
+    if (present) this.#presentPhysical.add(driverDeviceId);
+    else this.#presentPhysical.delete(driverDeviceId);
+  }
+
+  holdPresenceReads(...driverDeviceIds: readonly string[]): void {
+    for (const id of driverDeviceIds) this.#heldPresenceReads.add(id);
+  }
+
+  releasePresenceReads(): void {
+    this.#heldPresenceReads.clear();
+    for (const resolve of this.#pendingPresenceReads.splice(0)) resolve();
+  }
+
   async inspectPhysical(id: string): Promise<PhysicalInspection> {
     await this.#beforeCall("inspectPhysical", id);
     const scripted = this.#physicalDevices ?? this.#scriptedPhysicalDevices ?? [];
@@ -562,14 +604,18 @@ export class FakeDriver implements Driver {
     };
   }
 
-  estimate(estimate: DriverEstimate, _spec: DeviceSpec): number {
-    if (estimate.operation === "reclaim" && estimate.clean === "full") {
-      return this.#fullCleanReclaimEstimateMs ?? this.#estimateMs?.reclaim ?? 0;
-    }
-    return this.#estimateMs?.[estimate.operation] ?? 0;
+  estimate(estimate: DriverEstimate, spec: DeviceSpec): number {
+    if (estimate.operation !== "reclaim") return this.#estimateMs?.[estimate.operation] ?? 0;
+    return this.#reclaimEstimate(estimate.clean, spec);
   }
 
-  leaseEnvironment(): Readonly<Record<string, string>> {
+  #reclaimEstimate(clean: "standard" | "full", spec: DeviceSpec): number {
+    if (spec.physical) return PHYSICAL_RECLAIM_ESTIMATE_MS;
+    if (clean === "full") return this.#fullCleanReclaimEstimateMs ?? this.#estimateMs?.reclaim ?? 0;
+    return this.#estimateMs?.reclaim ?? 0;
+  }
+
+  leaseEnvironment(_device: DriverDevice): Readonly<Record<string, string>> {
     return this.#leaseEnvironment;
   }
 
@@ -650,6 +696,9 @@ export class FakeDriver implements Driver {
     }
   }
 }
+
+/** One 30 s read limit plus one 60 s uninstall limit: what the real physical drivers will answer. */
+const PHYSICAL_RECLAIM_ESTIMATE_MS = 90_000;
 
 function preinstalledReceipts(versions: ReadonlySet<string>): Map<string, ComponentReceipt> {
   return new Map([...versions].map((version) => [version, { preinstalled: version }]));

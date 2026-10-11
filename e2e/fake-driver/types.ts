@@ -1,9 +1,5 @@
-// Shapes shared by the scriptable fake driver, its script file, and its call log.
-// These are hand-declared rather than imported from src/core/driver.ts because the
-// structural pieces (ObservedDevice, DriverReality, ...) are simple enough to duplicate
-// and doing so keeps this file free of any value-level coupling to the src tree beyond
-// the four error classes declared in driver-errors.d.ts. Type-only imports would also
-// work, but duplicating here makes it obvious at a glance what the JSON script format is.
+// Hand-declared rather than imported from src/core/driver.ts, to keep this file free of
+// value-level coupling to the src tree and to show the JSON script format at a glance.
 
 export type FakeDriverPlatform = "ios" | "android";
 
@@ -23,7 +19,9 @@ export type FakeDriverOperation =
   | "listComponents"
   | "removeComponent"
   | "revalidateRoot"
-  | "inspectPhysical";
+  | "inspectPhysical"
+  | "listPresentPhysical"
+  | "uninstall";
 
 export type FakeDriverEstimateOperation = "provision" | "boot" | "reclaim";
 
@@ -51,6 +49,8 @@ export interface ScriptedPhysicalDevice {
   readonly osVersion?: string;
   readonly class?: "phone" | "tablet";
   readonly apps?: readonly string[];
+  readonly installedApps?: readonly string[];
+  readonly present?: boolean;
   readonly refusal?: { readonly reason: FakeDriverRefusalReason; readonly message: string };
 }
 

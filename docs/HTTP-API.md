@@ -144,7 +144,7 @@ Unauthenticated liveness for tunnels/load balancers. → `200 {"ok":true}`.
 
 Role: `agent`. The same view `simlock status --json` reads: a `daemon` block,
 managed/running capacity per platform, active leases, managed devices (each
-with its device mode, `mode`: `"slim"` or `"full"`), queue depth, and the warm
+with its device mode, `mode`: `"slim"` or `"full"`), queue depth (`queueDepth` counts the virtual line; `physicalQueueDepth` the physical one), and the warm
 pool: `warmPool` carries `enabled`, `reserveRunning` (`ios`, `android`) and
 `targets`, each with `platform`, `model`, `osVersion` (the one the target resolved
 to, or the one it names when it did not resolve; absent when it names none and
@@ -158,8 +158,8 @@ is on its entry in `workers`.
 
 While the daemon is starting (`daemon.health` is `starting`), the answer is
 `200` with the `daemon` block and `host` only: it has not yet checked what it
-holds, so `devices`, `leases`, `capacity`, `queueDepth`, `installs`, `waiting`,
-`warmPool` and `workers` are absent, not empty. They are all there once `health` is
+holds, so `devices`, `leases`, `capacity`, `queueDepth`, `physicalQueueDepth`, `installs`,
+`waiting`, `warmPool` and `workers` are absent, not empty. They are all there once `health` is
 `running`, and also when it is `failed`.
 
 ```json
@@ -427,6 +427,19 @@ same tag, and a request without `imageTag` only one created for none. On iOS
 worker lists for that API level, an iOS one included, fails at once with
 `422 RUNTIME_MISSING`, with or without `noWait`.
 
+`physical` (optional, boolean) asks for an enrolled physical phone or tablet
+instead of a simulator or emulator. It matches an enrolled device of the
+platform by `device` (ignoring letter case), `class` and `os`; `os` is exact,
+so `"18"` matches no device on `18.4.1` and "any 18.x" is `">=18 <19"`, and on
+Android it is the API level (`"34"`). A request no enrolled device could match
+fails at once with `422 UNKNOWN_MODEL`. One that could match a device that is
+leased or being reclaimed waits, or is `503 NO_CAPACITY` with `noWait`.
+`physical` with `mode` or `imageTag`, or with `allowDownload: true`, is
+`400 BAD_REQUEST` naming the field. The lease's `device` then has no `mode`. A
+request without `physical` never gets a physical device. A physical request
+waits in a line of its own: `queuePosition` counts within it, and a simulator
+request is never held behind it.
+
 `leaseId` (optional) is the ID you want the granted lease to have, in place of
 one Simlock generates: 1 to 64 ASCII letters, digits, `-` and `_`, starting
 with a letter or digit, case-sensitive (`ad-7f3a` and `Ad-7f3a` are two IDs).
@@ -441,7 +454,8 @@ request gets `409 REQUESTER_ALREADY_LEASED` first, whatever `leaseId` it sends.
 
 The body is strict: a key this route does not know, a `mode` other than
 `"slim"` or `"full"`, an `imageTag` that is not 1 to 64 letters, digits,
-`_`, `.` or `-`, or a `leaseId` outside the form above, is `400 BAD_REQUEST`.
+`_`, `.` or `-`, a `physical` that is not a boolean, or a `leaseId` outside the
+form above, is `400 BAD_REQUEST`.
 
 `allowDownload` is now clamped through `config.downloads.policy` the same
 way the socket protocol always was (**bug fix, 0.3.0**): before this
@@ -1153,7 +1167,7 @@ host itself, and the other three answer `501 UNSUPPORTED_IN_WORKER_MODE`.
 - `GET /v1/workers` — every worker view the gateway currently holds, or the
   host's own view on a single host. A worker whose `health` is `starting` has
   not yet checked what it holds, so its view carries `health` and `host` and
-  none of `devices`, `leases`, `capacity`, `warmPool`, `queueDepth`, `catalog`, `installs`
+  none of `devices`, `leases`, `capacity`, `warmPool`, `queueDepth`, `physicalQueueDepth`, `catalog`, `installs`
   or `waiting`: they are absent, not empty, until the worker answers `running`.
 - `POST /v1/workers/{id}/drain` — stop dispatching new requests to this
   worker; it keeps the leases it already has.
@@ -1201,6 +1215,7 @@ simulated (hence the thin Android catalog), trimmed to one worker:
       "downloads": {"policy": "on-request", "timeoutMs": 1200000},
       "lease": {"maxTtlMs": 14400000},
       "queueDepth": 0,
+      "physicalQueueDepth": 0,
       "leases": [],
       "devices": [],
       "installs": [
@@ -1403,15 +1418,17 @@ Every request still waiting for a device, oldest first, whoever sent it. An
 ```
 
 - `spec` is the device as the request named it: `platform` and `model`, and
-  `osVersion`, `mode` and `imageTag` only when the request named them.
+  `osVersion`, `mode` and `imageTag` only when the request named them, and
+  `physical: true` for a request for an enrolled physical device.
 - `createdAt` is when the daemon holding the request received it, in
   milliseconds since the epoch.
 - `stage` is `queued` while the request holds a place in the queue, and
   `starting` while the daemon is working on it: placing it as it arrives, or
   finding, creating, booting or downloading a device for it.
-- `queuePosition` is set only while `queued`: its place in the queue counting
-  from 1, the requests ahead of it that are already starting included. It is
-  the request's place now, not the one its `queued` progress first reported.
+- `queuePosition` is set only while `queued`: its place in the request's own
+  line, simulator and emulator requests or physical requests, counting from 1,
+  the requests ahead of it in that line that are already starting included. It
+  is the request's place now, not the one its `queued` progress first reported.
 - A request leaves the list as soon as it is granted, fails or is cancelled.
   The request's idempotency key and owner are never listed.
 

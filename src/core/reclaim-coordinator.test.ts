@@ -4,6 +4,7 @@ import { EventBus } from "../bus/index.js";
 import { FakeClock } from "../ports/index.js";
 import { DeviceOperationClaims } from "./device-operation-claims.js";
 import type {
+  DeviceRecord,
   DeviceTransitionUpdate,
   LeaseRecord,
   PhysicalDevice,
@@ -24,11 +25,11 @@ import {
 const spec = { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
 
 class TestRegistry {
-  #devices: VirtualDevice[];
+  #devices: DeviceRecord[];
   lastUpdate: DeviceTransitionUpdate | undefined;
 
   constructor(
-    devices: readonly VirtualDevice[],
+    devices: readonly DeviceRecord[],
     readonly leases: readonly LeaseRecord[] = [],
     private readonly eventBus: EventBus,
   ) {
@@ -39,7 +40,14 @@ class TestRegistry {
     readonly virtualDevices: readonly VirtualDevice[];
     readonly leases: readonly LeaseRecord[];
   } {
-    return { leases: this.leases, virtualDevices: this.#devices.map((device) => ({ ...device })) };
+    return {
+      leases: this.leases,
+      virtualDevices: this.#devices.flatMap((device) => (device.physical ? [] : [{ ...device }])),
+    };
+  }
+
+  deviceById(deviceId: string): DeviceRecord | undefined {
+    return this.#devices.find((device) => device.id === deviceId);
   }
 
   async transitionDevice(
@@ -47,12 +55,12 @@ class TestRegistry {
     to: Parameters<ReclaimRegistry["transitionDevice"]>[1],
     event: Parameters<ReclaimRegistry["transitionDevice"]>[2],
     update?: DeviceTransitionUpdate,
-  ): Promise<VirtualDevice> {
+  ): Promise<DeviceRecord> {
     const index = this.#devices.findIndex((device) => device.id === deviceId);
     const current = this.#devices[index];
     if (index === -1 || current === undefined) throw new Error("missing device");
     this.lastUpdate = update;
-    const updated = { ...current, ...update, state: to } as VirtualDevice;
+    const updated = { ...current, ...update, state: to } as DeviceRecord;
     this.#devices[index] = updated;
     if (event.event === "device.reclaimed") {
       this.eventBus.emit(event.event, event.payload, "test-registry");
@@ -62,11 +70,11 @@ class TestRegistry {
     return updated;
   }
 
-  async completeReclaimWithoutPurge(deviceId: string): Promise<VirtualDevice> {
+  async completeReclaimWithoutPurge(deviceId: string): Promise<DeviceRecord> {
     const index = this.#devices.findIndex((device) => device.id === deviceId);
     const current = this.#devices[index];
     if (index === -1 || current === undefined) throw new Error("missing device");
-    const updated = { ...current, state: "shutdown" } as VirtualDevice;
+    const updated = { ...current, state: "shutdown" } as DeviceRecord;
     this.#devices[index] = updated;
     return updated;
   }
@@ -74,7 +82,7 @@ class TestRegistry {
 
 async function createHarness(
   options: {
-    readonly devices?: readonly VirtualDevice[];
+    readonly devices?: readonly DeviceRecord[];
     readonly driver?: FakeDriver;
     readonly leases?: readonly LeaseRecord[];
   } = {},
@@ -152,13 +160,25 @@ function released(device: VirtualDevice): ReleasedLease {
 }
 
 describe("ReclaimCoordinator", () => {
-  it("calls no driver method and commits nothing for a released physical lease, so the device stays reclaiming", async () => {
-    const harness = await createHarness();
+  it("reclaims a released physical lease through the driver with its enrollment app list, and commits ready with the uninstall strategy and its missing apps", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({
+      clock,
+      physicalDevices: [
+        {
+          apps: ["com.example.kept", "com.example.stray"],
+          ids: ["00008110-001A2B3C4D5E"],
+          model: "iPhone 15 Pro",
+          osVersion: "18.4",
+        },
+      ],
+      platform: "ios",
+    });
     const physical: PhysicalDevice = {
       createdAt: 1,
       driverData: {},
       driverDeviceId: "00008110-001A2B3C4D5E",
-      enrolledApps: [],
+      enrolledApps: ["com.example.kept", "com.example.removed"],
       id: "dev_physical",
       lastLeaseEndedAt: 1_000,
       physical: true,
@@ -171,19 +191,32 @@ describe("ReclaimCoordinator", () => {
       },
       state: "reclaiming",
     };
-    const calls = vi.spyOn(harness.driver, "reclaim");
-    const shutdown = vi.spyOn(harness.driver, "shutdown");
-    const destroy = vi.spyOn(harness.driver, "destroy");
-    const commit = vi.spyOn(harness.registry, "transitionDevice");
+    const harness = await createHarness({ devices: [physical], driver });
 
     await harness.coordinator.reclaim({ ...released(harness.reclaiming), device: physical });
 
-    expect(calls).not.toHaveBeenCalled();
-    expect(shutdown).not.toHaveBeenCalled();
-    expect(destroy).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
-    expect(harness.bus.replay()).toEqual([]);
+    expect(driver.calls.filter((call) => call.operation === "reclaim")).toEqual([
+      {
+        arguments: [
+          expect.objectContaining({
+            deviceId: "00008110-001A2B3C4D5E",
+            enrolledApps: ["com.example.kept", "com.example.removed"],
+            physical: true,
+          }),
+          { clean: "standard" },
+        ],
+        operation: "reclaim",
+      },
+    ]);
+    expect(harness.registry.deviceById("dev_physical")?.state).toBe("ready");
+    expect(harness.bus.replay().map((event) => event.payload)).toEqual([
+      expect.objectContaining({
+        missingApps: ["com.example.removed"],
+        strategy: "uninstall",
+      }),
+    ]);
     expect(harness.quarantined).toEqual([]);
+    expect(harness.notifyAvailability).toHaveBeenCalledOnce();
   });
 
   it("hands the driver's reclaim a device marked virtual", async () => {
@@ -195,6 +228,55 @@ describe("ReclaimCoordinator", () => {
     expect(reclaims.map((call) => call.arguments[0])).toEqual([
       expect.objectContaining({ physical: false }),
     ]);
+  });
+
+  it("asks the driver for the strategy of a standard clean before it reclaims", async () => {
+    const harness = await createHarness();
+    const strategy = vi.spyOn(harness.driver, "reclaimStrategy");
+    const reclaim = vi.spyOn(harness.driver, "reclaim");
+
+    await harness.coordinator.reclaim(released(harness.reclaiming));
+
+    expect(strategy.mock.calls.map((call) => call[1])).toEqual([{ clean: "standard" }]);
+    expect(strategy.mock.invocationCallOrder[0]).toBeLessThan(
+      reclaim.mock.invocationCallOrder[0] as number,
+    );
+  });
+
+  it("emits device.reclaimed for a virtual device without a missingApps field", async () => {
+    const harness = await createHarness();
+
+    await harness.coordinator.reclaim(released(harness.reclaiming));
+
+    const payload = harness.bus.replay()[0]?.payload as object;
+    expect("missingApps" in payload).toBe(false);
+  });
+
+  it("reclaims a physical device through the driver even when its record carries a spent fresh identity", async () => {
+    const physical = {
+      createdAt: 1,
+      driverData: {},
+      driverDeviceId: "00008110-001A2B3C4D5E",
+      enrolledApps: [],
+      id: "dev_physical",
+      lastLeaseEndedAt: 1_000,
+      leaseIdentity: "fresh",
+      physical: true,
+      spec: {
+        class: "phone",
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        physical: true,
+        platform: "ios",
+      },
+      state: "reclaiming",
+    } as unknown as PhysicalDevice;
+    const harness = await createHarness({ devices: [physical] });
+
+    await harness.coordinator.reclaim({ ...released(harness.reclaiming), device: physical });
+
+    expect(harness.driver.calls.map((call) => call.operation)).toEqual(["provision", "reclaim"]);
+    expect(harness.registry.deviceById("dev_physical")?.state).toBe("ready");
   });
 
   it("commits shutdown, emits device.reclaimed and kicks acquisition when the driver returns shutdown", async () => {

@@ -9,7 +9,7 @@ import {
   type Platform,
   type VirtualDevice,
 } from "./domain.js";
-import type { Driver, VirtualDriverDevice } from "./driver.js";
+import { type Driver, toDriverDevice } from "./driver.js";
 import type { QuarantinePurgeFailure } from "./quarantine-coordinator.js";
 import type { ReleasedLease } from "./registry.js";
 import type { SerializedDecision } from "./serialized-decision.js";
@@ -33,7 +33,8 @@ export interface ReclaimRegistry {
           readonly payload: {
             readonly deviceId: string;
             readonly duration: number;
-            readonly strategy: "erase" | "snapshot" | "wipe";
+            readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+            readonly missingApps?: readonly string[];
           };
         }
       | {
@@ -44,13 +45,11 @@ export interface ReclaimRegistry {
   completeReclaimWithoutPurge(deviceId: string): Promise<DeviceRecord>;
 }
 
-/** Where a release-time purge failure is handed off once the reclaim attempt commits. */
 export interface ReclaimQuarantine {
   enter(failure: QuarantinePurgeFailure): Promise<void>;
 }
 
 export interface ReclaimCoordinatorOptions {
-  /** Marks a background wipe as a live in-process operation, as every release's reclaim is. */
   readonly claims: Pick<DeviceOperationClaims, "tryClaim">;
   readonly clock: Clock;
   readonly decisions: Pick<SerializedDecision, "run">;
@@ -62,17 +61,11 @@ export interface ReclaimCoordinatorOptions {
   readonly registry: ReclaimRegistry;
 }
 
-/**
- * Reclaims released devices and commits the state the driver's reclaim returns. Driver
- * work remains outside the serialized registry decision sections.
- */
 export class ReclaimCoordinator {
-  /** The deferred wipes `recoverInterrupted` started and has not seen settle. */
   readonly #backgroundWipes = new Set<Promise<void>>();
 
   constructor(private readonly options: ReclaimCoordinatorOptions) {}
 
-  /** Awaits every deferred wipe running in the background, for a graceful shutdown. */
   async settle(): Promise<void> {
     while (this.#backgroundWipes.size > 0) {
       await Promise.allSettled(this.#backgroundWipes);
@@ -82,19 +75,18 @@ export class ReclaimCoordinator {
   // Not `async`: returning the inner promise adds no microtask hop to a reclaim's start, and
   // the tests that step a fake clock count those hops.
   reclaim(released: ReleasedLease): Promise<void> {
-    // Simlock cannot erase a physical device. Until the physical reclaim exists the device stays
-    // `reclaiming`, aged from `lastLeaseEndedAt`, and doctor's stalled-transition rule moves it on.
-    if (released.device.physical) return Promise.resolve();
+    // A physical device is never retired: it has no spent state, so only its purge applies.
+    if (released.device.physical) return this.#purge(released.device, released.lease.id);
     if (!mayBeGranted(released.device)) {
       return this.#retireSpent({ device: released.device, lease: released.lease });
     }
     return this.#purge(released.device, released.lease.id);
   }
 
-  async #purge(device: VirtualDevice, leaseId: string): Promise<void> {
+  async #purge(device: DeviceRecord, leaseId: string): Promise<void> {
     const driver = this.options.drivers.get(device.spec.platform);
     const startedAt = this.options.clock.now();
-    const attemptedStrategy = driver.reclaimStrategy({ clean: "standard" });
+    const attemptedStrategy = driver.reclaimStrategy(toDriverDevice(device), { clean: "standard" });
     let result: Awaited<ReturnType<Driver["reclaim"]>>;
     try {
       result = await driver.reclaim(toDriverDevice(device), { clean: "standard" });
@@ -110,22 +102,14 @@ export class ReclaimCoordinator {
           deviceId: device.id,
           duration: this.options.clock.now() - startedAt,
           strategy: result.strategy,
+          ...(result.missingApps === undefined ? {} : { missingApps: result.missingApps }),
         },
       });
     });
     this.options.notifyAvailability();
   }
 
-  /**
-   * Safely finishes an unleased reclaim interrupted before its disposition commit.
-   *
-   * A reusable device whose wipe a daemon start put off (`deferredReclaimLeaseId`, ADR 0019 §2)
-   * gets the full reclaim instead, purge included: it still holds its last holder's data, and a
-   * reusable device never returns to the pool with it. That wipe starts in the background under
-   * a claim, as every release's reclaim does (#43), and this returns once it has started: an
-   * erase runs tens of seconds, and startup waits for none. A spent fresh device, which is never
-   * purged, takes the shutdown path either way.
-   */
+  /** The wipe starts in the background under a claim and this returns once it has started: an erase runs tens of seconds, and startup waits for none. */
   async recoverInterrupted(deviceId: string): Promise<boolean> {
     const device = await this.options.decisions.run(async () => {
       const current = this.options.registry.snapshot.virtualDevices.find(
@@ -291,17 +275,4 @@ export class ReclaimCoordinator {
       leaseId,
     });
   }
-}
-
-/**
- * `address` is never trusted by a driver's `shutdown` / `reclaim` / `makeReady` -- they derive
- * whatever they need from `driverData` -- so a placeholder here is harmless.
- */
-function toDriverDevice(device: VirtualDevice): VirtualDriverDevice {
-  return {
-    address: device.address ?? "",
-    deviceId: device.driverDeviceId,
-    driverData: device.driverData,
-    physical: false,
-  };
 }

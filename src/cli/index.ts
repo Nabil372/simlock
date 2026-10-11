@@ -929,6 +929,7 @@ async function runLease(
     mode: { type: "string" },
     "no-wait": { type: "boolean" },
     os: { type: "string" },
+    physical: { type: "boolean" },
     platform: { type: "string" },
     timeout: { type: "string" },
     ttl: { type: "string" },
@@ -937,7 +938,7 @@ async function runLease(
     environment.stdout.write(
       "Usage: simlock lease --platform <ios|android> [--device <model> | --class <class>]\n" +
         "                     [--os <version|range>] [--mode <slim|full>] [--image-tag <tag>] [--agent-id <id>]\n" +
-        "                     [--timeout <duration>] [--lease-id <id>]\n" +
+        "                     [--timeout <duration>] [--lease-id <id>] [--physical]\n" +
         "                     [--no-wait] [--detach] [--ttl <duration>] [--allow-download]\n" +
         "                     [--export-env] [--bind-pid <pid>]\n",
     );
@@ -952,15 +953,9 @@ async function runLease(
   const requesterId = (values["agent-id"] as string | undefined) ?? environment.requesterId;
   const detached = values.detach ?? false;
   const timeoutMs = typeof values.timeout === "string" ? parseDuration(values.timeout) : undefined;
-  // ADR 0004 §4: this lease's initial TTL, in place of `lease.defaultTtlMs`. Sent as-is -- the
-  // cap against `lease.maxTtlMs` is the daemon's to apply, and asking for more comes back as
-  // `BAD_REQUEST` rather than being clamped here to a value the caller did not write.
+  // Sent as-is: the daemon caps it against `lease.maxTtlMs`; clamping here would change what the caller wrote.
   const ttlMs = typeof values.ttl === "string" ? parseDuration(values.ttl) : undefined;
-  // A holder watches its parent so a crashed agent's backgrounded `simlock lease`
-  // self-terminates instead of surviving reparenting (docs/internal/KNOWN-PITFALLS.md) -- the one
-  // failure a TTL cannot bound, because a reparented holder keeps renewing. `--bind-pid`
-  // overrides which pid that is, for a holder spawned from a short-lived subshell whose
-  // immediate parent dies before the agent does.
+  // A reparented holder keeps renewing, so a TTL cannot bound it; watching the parent does (KNOWN-PITFALLS).
   const bindPid = parseBindPid(values["bind-pid"]);
   const watchedPid = bindPid ?? environment.parentPid;
   const termination = detached
@@ -1071,9 +1066,6 @@ async function runLease(
         `Timed out releasing lease ${leaseId}`,
       );
     } catch (error: unknown) {
-      // Non-fatal: the process still exits 0 after a signal, but the release
-      // failure is still diagnostic output, so it stays a structured stderr
-      // line rather than reverting to prose.
       writeError(environment, error);
     }
   };
@@ -1084,20 +1076,13 @@ async function runLease(
         allowDownload: values["allow-download"] === true,
         noWait: values["no-wait"] === true,
         requesterId,
-        // Sent as typed, both of them: the contract refuses a request naming a model and a
-        // class, and a request naming neither means `phone` (ADR 0015 §1).
         ...(typeof values.device === "string" ? { model: values.device } : {}),
         ...(typeof values.class === "string" ? { class: values.class as DeviceClass } : {}),
         ...(typeof values.os === "string" ? { osVersion: values.os } : {}),
+        ...(values.physical === true ? { physical: true } : {}),
         platform,
-        // Sent as typed: the contract, not the CLI, decides which modes exist, and answers
-        // anything else with `BAD_REQUEST`.
         ...(typeof values.mode === "string" ? { mode: values.mode as "slim" | "full" } : {}),
-        // Sent as typed too: the contract bounds it, and the platform's driver decides whether
-        // the platform has image tags at all.
         ...(typeof values["image-tag"] === "string" ? { imageTag: values["image-tag"] } : {}),
-        // Sent as typed as well: the contract bounds what an ID may look like (`BAD_REQUEST`), and
-        // the daemon refuses one already in use (`LEASE_ID_TAKEN`, exit 13).
         ...(typeof values["lease-id"] === "string" ? { leaseId: values["lease-id"] } : {}),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(ttlMs === undefined ? {} : { ttlMs }),
@@ -1110,10 +1095,7 @@ async function runLease(
     );
     ourLeaseId = grant.lease.id;
     ourLeaseDeadline = grant.lease.ttlDeadline;
-    // Owed from here on, whatever happens next -- see `releaseHeldLease`.
     if (!detached) heldLeaseId = grant.lease.id;
-    // ADR §5: "simlock lease output includes the resolved role" -- the one field this CLI
-    // adds on top of the contract's `LeaseGrant` shape, everything else passed through as-is.
     const result = { ...grant, role: client.role };
     // A holder keeps holding after this line, whichever shape its output took: `--export-env`
     // only changes what stdout carries, never how long the lease lives.
@@ -1310,11 +1292,6 @@ async function runList(
   }
 }
 
-/**
- * One line per waiting request: `Request req_7: agent-b on wrk_1, ios iPhone 16 18.4 mode slim,
- * queued at 2, waiting 12s` -- the request, who sent it, the worker whose queue it waits in, the
- * device it asked for, where it stands, and for how long.
- */
 function formatWaitingRequests(requests: readonly WaitingRequestEntry[], now: number): string {
   if (requests.length === 0) return "No requests are waiting.";
   return requests
@@ -1322,6 +1299,7 @@ function formatWaitingRequests(requests: readonly WaitingRequestEntry[], now: nu
       const { spec } = request;
       const device = [
         spec.platform,
+        spec.physical === true ? "physical" : undefined,
         spec.model ?? `class ${String(requestedClass(spec))}`,
         spec.osVersion,
         spec.mode === undefined ? undefined : `mode ${spec.mode}`,

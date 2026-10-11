@@ -132,6 +132,9 @@ export function createTestEngine(options: TestEngineOptions): TestEngine {
     get queueDepth() {
       return leasing.queueDepth;
     },
+    get physicalQueueDepth() {
+      return leasing.physicalQueueDepth;
+    },
     waitingRequests: () => leasing.waitingRequests(),
     cancelPending: (requesterId) => leasing.cancelPending(requesterId),
     pendingRequestOwner: (requesterId) => leasing.pendingRequestOwner(requesterId),

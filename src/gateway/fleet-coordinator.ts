@@ -71,6 +71,7 @@ import { type FleetLeaseEntry, type FleetLeaseIndex } from "./lease-index.js";
 import type { WorkerView } from "./worker-registry.js";
 import {
   FleetQueue,
+  lineOf,
   RequestCancelledError,
   RequesterAlreadyLeasedError,
   type FleetLeaseGrant,
@@ -158,25 +159,13 @@ export class FleetLeaseCoordinator {
    * identity on the notification itself. */
   readonly #lastReconciledLeases = new Map<string, NonNullable<WorkerView["leases"]>>();
   readonly #unsubscribeViews: () => void;
-  /** C2 (round 2 review): when each waiter was created (`#queue.create`, in `request` below),
-   * for `request.dispatched`'s `queuedMs` field -- a `WeakMap` rather than a `Map<string, number>`
-   * so a waiter that never gets there (rejected at admission, cancelled, timed out) needs no
-   * explicit clean-up call on every one of those exits to avoid an unbounded leak; the entry is
-   * reclaimable the moment nothing else still references the waiter. */
+  /** A `WeakMap` so a waiter that never dispatches (rejected, cancelled, timed out) leaks no entry. */
   readonly #createdAt = new WeakMap<FleetWaiter, number>();
-  /** ADR 0009 §5: per waiter, each worker that answered it an immediate `NO_CAPACITY`, and that
-   * worker's `viewLoadKey` at the time. The worker is not picked again for that waiter while its
-   * key is unchanged. A `WeakMap` so the memo dies with the waiter. */
+  /** A `WeakMap` so the memo dies with the waiter. */
   readonly #refusals = new WeakMap<FleetWaiter, Map<string, string>>();
-  /** ADR 0009 §5: per waiter, each worker that answered it `UNKNOWN_MODEL`, `RUNTIME_MISSING` or
-   * `NO_DRIVER` before any progress push, with that answer. Unlike `#refusals` the exclusion does
-   * not lift when the worker's view changes: the worker is not asked again for that request. The
-   * map's last entry is the most recent refusal. A `WeakMap` so the memo dies with the waiter. */
+  /** A `WeakMap` so the memo dies with the waiter. */
   readonly #cannotServe = new WeakMap<FleetWaiter, Map<string, DispatchError>>();
-  /** C1 (round 3 review): re-entrancy guard for `#dispatch` -- see its own doc comment. */
   #dispatchDepth = 0;
-  /** Set when a pass is requested while one is already running; the running pass then repeats
-   * rather than dropping it (round 4 review, finding 6). */
   #passRequested = false;
 
   constructor(private readonly options: FleetLeaseCoordinatorOptions) {
@@ -184,9 +173,8 @@ export class FleetLeaseCoordinator {
     this.#queue = new FleetQueue({
       clock: options.clock,
       idGenerator: options.idGenerator,
-      onDepthChange: (depth) => this.#emit("queue.changed", { depth }),
-      // The rejection itself already happened inside `WaitQueue#armTimeout` by the time this
-      // fires (see `queue.ts`); this only reports the gateway's own fact for it.
+      onDepthChange: (depth, line) =>
+        this.#emit("queue.changed", line === "physical" ? { depth, physical: true } : { depth }),
       onTimeout: (waiter) => this.#emitRejected(waiter, "timeout"),
     });
     this.requests = new LeaseRequestBook({
@@ -205,15 +193,15 @@ export class FleetLeaseCoordinator {
     return this.#queue.depth;
   }
 
-  /** Reports the fleet queue's depth once, as the gateway starts, so every run begins with a
-   * `queue.changed` step. */
+  // fallow-ignore-next-line unused-class-member -- reached only through `GatewayDispatcher`'s `Pick<FleetLeaseCoordinator, ...>`-typed `coordinator` option.
+  get physicalQueueDepth(): number {
+    return this.#queue.physicalDepth;
+  }
+
   start(): void {
     this.#emit("queue.changed", { depth: this.#queue.depth });
   }
 
-  /** Every request waiting in the fleet queue, or being dispatched, oldest first. Read by the
-   * same function a worker lists its own with (`LeaseRequestBook#waiting`). */
-  // fallow-ignore-next-line unused-class-member -- reached only through `GatewayDispatcher`'s `Pick<FleetLeaseCoordinator, ...>`-typed `coordinator` option.
   waitingRequests(): readonly WaitingRequest[] {
     return this.requests.waiting(this.#queue.places());
   }
@@ -760,23 +748,12 @@ export class FleetLeaseCoordinator {
   }
 
   /**
-   * One ordered, oldest-first walk -- the single place a waiter is matched to a worker.
-   *
-   * `candidate` is `#admit`'s waiter, usually brand new with no queue membership yet. It walks
-   * **last**, because it is the newest: that is what keeps ADR §10's single fleet FIFO honest,
-   * since an admission can never take a slot an already-queued waiter would have had. Returns
-   * whether the candidate was attempted, which is what lets `#admit` tell "nothing could serve
-   * it" from "it was attempted" -- the attempt, not `#admit`, settles a `noWait` caller whose
-   * worker refuses it, and `waiter.state` alone cannot distinguish the two (round 4 review,
-   * finding 2). `candidate` may also be a `noWait` waiter whose attempt was just refused, on its
-   * one more walk; if it is already queued it walks in its queue position only, never twice.
-   *
-   * A worker that refused a waiter is left out of that waiter's views while its view is
-   * unchanged (`#refused`, ADR 0009 §5). This is the one place that exclusion is applied, the
-   * same place as the per-pass claim set.
+   * `candidate` walks last, because it is the newest: that keeps the single fleet FIFO honest.
+   * The return says whether it was attempted, which `waiter.state` alone cannot tell `#admit`.
    */
   #dispatchPass(candidate?: FleetWaiter): boolean {
-    const claimedThisPass = new Set<string>();
+    // The two lines are matched separately, so each claims its own set.
+    const claimedThisPass = { physical: new Set<string>(), virtual: new Set<string>() };
     const attempted = new Set<FleetWaiter | undefined>();
     const waiters =
       candidate === undefined || this.#queue.isQueued(candidate)
@@ -790,21 +767,19 @@ export class FleetLeaseCoordinator {
     return attempted.has(candidate);
   }
 
-  /** One waiter's turn in the walk. Whether it was sent to a worker; a waiter the table rejects
-   * is terminal by then, and `#admit` finds both of its follow-ups no-ops on it. */
-  #walkWaiter(waiter: FleetWaiter, claimedThisPass: Set<string>): boolean {
+  #walkWaiter(
+    waiter: FleetWaiter,
+    claims: { readonly physical: Set<string>; readonly virtual: Set<string> },
+  ): boolean {
+    const claimedThisPass =
+      lineOf(waiter.request) === "physical" ? claims.physical : claims.virtual;
     const refusals = this.#cannotServe.get(waiter);
-    // ADR 0009 §5: a worker that told this waiter it cannot serve it is out of every view below,
-    // the table's included. A worker claimed this pass or one that answered `NO_CAPACITY` is
-    // busy, not unable, so it stays in the table's view.
+    // A worker claimed this pass or one that answered `NO_CAPACITY` is busy, not unable, so it
+    // stays in the table's view.
     const views = this.options.views
       .routingViews()
       .filter((worker) => refusals?.has(worker.id) !== true);
     const request = routable(waiter);
-    // ADR 0009 §4: the table runs before the stages, over the views left above -- a worker
-    // claimed this pass or one that answered `NO_CAPACITY` is busy, not unable, so it still makes
-    // a request servable; a worker with a cannot-serve refusal is out of them (architecture rule
-    // 13). A request on rows 1 to 5 never reaches `select`, and never enters the queue.
     const verdict = this.options.routing.assess(request, views);
     if (verdict.kind === "reject") {
       this.#rejectUnservable(waiter, verdict, refusals);
@@ -902,8 +877,6 @@ export class FleetLeaseCoordinator {
     const announceDispatched = (): void => {
       if (announced) return;
       announced = true;
-      // C2 (round 2 review): the full payload `docs/internal/EVENTS.md` always specified for this row --
-      // see `bus/index.ts`'s own doc comment on why it was narrowed and then restored.
       const createdAt = this.#createdAt.get(waiter);
       this.#emit("request.dispatched", {
         ...(waiter.request.model === undefined ? {} : { model: waiter.request.model }),
@@ -1181,8 +1154,6 @@ export class FleetLeaseCoordinator {
     return "settled";
   }
 
-  /** Gives a lease back to the worker that granted it, when the gateway will not route it. A
-   * failure is logged: the worker's own TTL ends the lease. */
   #releaseOnWorker(workerId: string, workerLeaseId: string): void {
     void this.#forwardToWorker(workerId, (client) =>
       client.releaseLease({ leaseId: workerLeaseId }),
@@ -1198,7 +1169,11 @@ export class FleetLeaseCoordinator {
   #enqueue(waiter: FleetWaiter): void {
     const alreadyQueued = this.#queue.isQueued(waiter);
     if (this.#queue.enqueue(waiter) && !alreadyQueued) {
-      this.#emit("lease.queued", { queuePosition: this.#queue.depth, requestId: waiter.id });
+      this.#emit("lease.queued", {
+        queuePosition:
+          lineOf(waiter.request) === "physical" ? this.#queue.physicalDepth : this.#queue.depth,
+        requestId: waiter.id,
+      });
     }
   }
 
@@ -1362,29 +1337,22 @@ export class FleetLeaseCoordinator {
   }
 }
 
-/**
- * ADR 0009 §3: the worker is sent its own name for an exact model, so it resolves exactly what
- * routing matched. The client's name is kept only for a worker the catalog does not match, which
- * no registered policy picks. A class request has no model to send (ADR 0015 §8): the worker
- * applies its own rules to the class, so it stays as it arrived.
- */
+/** A class request has no model to send: the worker applies its own rules to the class. */
 function forwardedModel(
   request: RoutableRequest,
   views: readonly WorkerView[],
   decision: RoutingDecision,
 ): ModelName {
-  if (request.model === undefined) return {};
+  // A physical request is matched by the worker against its enrolled devices, as typed.
+  if (request.model === undefined || request.physical === true) return {};
   const view = views.find((worker) => worker.id === decision.workerId);
   return { model: (view === undefined ? undefined : matchRequest(view, request)) ?? request.model };
 }
 
-/** The refusal for a lease ID this gateway already holds (ADR 0020), with the code and details a
- * worker gives the same refusal. */
 function leaseIdTaken(leaseId: string): DispatchError {
   return new DispatchError("LEASE_ID_TAKEN", `lease ID ${leaseId} is already in use`, { leaseId });
 }
 
-/** The `model` a forward overrides the request's own with: none for a class request. */
 interface ModelName {
   readonly model?: string;
 }
@@ -1397,5 +1365,6 @@ function routable(waiter: FleetWaiter): RoutableRequest {
     ...(waiter.request.osVersion === undefined ? {} : { osVersion: waiter.request.osVersion }),
     ...(waiter.request.imageTag === undefined ? {} : { imageTag: waiter.request.imageTag }),
     ...(waiter.request.mode === undefined ? {} : { mode: waiter.request.mode }),
+    ...(lineOf(waiter.request) === "physical" ? { physical: true as const } : {}),
   };
 }

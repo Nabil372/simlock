@@ -2854,14 +2854,10 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
     );
   });
 
-  it("reports stalled-transition for a reclaiming physical record past its threshold and --fix quarantines it, arming no retry", async () => {
+  it("reports stalled-transition for a reclaiming physical record past its threshold, priced at the physical reclaim estimate, and --fix quarantines it", async () => {
     const { clock, driver, eventBus, registry } = await physicalHarness([
       physical("reclaiming", { lastLeaseEndedAt: 1_000 }),
     ]);
-    // A retry timer's first act is a serialized decision: compare the spy before and after the
-    // clock passes the backoff, rather than counting the shared clock's timers.
-    const decisions = new SerializedDecision();
-    const decisionRuns = vi.spyOn(decisions, "run");
     const quarantine = new QuarantineCoordinator({
       claims: new DeviceOperationClaims(),
       clock,
@@ -2871,31 +2867,33 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
         retryBackoffMs: 30_000,
         retryBackoffMultiplier: 2,
       },
-      decisions,
+      decisions: new SerializedDecision(),
       drivers: new DriverCatalog([driver]),
       eventBus,
       notifyAvailability: () => {},
       registry,
     });
-
-    const report = await new Doctor({
+    const doctor = new Doctor({
       decisions: new SerializedDecision(),
       clock,
-      config: config(),
+      config: config({ minimumThresholdMs: 0, thresholdMultiplier: 1 }),
       drivers: [driver],
       eventBus,
       quarantine,
       registry,
-    }).reconcile({ fix: true });
-    const runsAfterFix = decisionRuns.mock.calls.length;
-    clock.advance(300_000);
-    for (let count = 0; count < 100; count += 1) await Promise.resolve();
+    });
+
+    const report = await doctor.reconcile({ fix: true });
 
     expect(report.findings).toEqual([
-      expect.objectContaining({ deviceId: "dev_reclaiming", kind: "stalled-transition" }),
+      expect.objectContaining({
+        deviceId: "dev_reclaiming",
+        kind: "stalled-transition",
+        thresholdMs: 90_000,
+      }),
     ]);
     expect(registry.snapshot.devices[0]?.state).toBe("quarantined");
-    expect(decisionRuns).toHaveBeenCalledTimes(runsAfterFix);
+    quarantine.dispose();
   });
 });
 
@@ -2904,9 +2902,6 @@ function sequence() {
   return { generate: () => `${next++}` };
 }
 
-/** Attaches a fixed `advisories()` result to a `FakeDriver` instance -- `FakeDriver` itself
- * never implements the optional method, so tests that need a driver reporting advisories add it
- * ad hoc rather than growing the fake's own surface for a single test file's needs. */
 function withAdvisories(
   driver: FakeDriver,
   advisories: readonly { readonly code: string; readonly message: string }[],

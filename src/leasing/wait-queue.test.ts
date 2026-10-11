@@ -108,13 +108,52 @@ describe("WaitQueue", () => {
       { id: unqueued.id },
     ]);
 
-    // The waiter ahead is granted: the ones behind it move up, and a settled one is gone.
     queue.resolve(starting, grant());
     await starting.promise;
     expect(queue.places()).toEqual([
       { id: second.id, queuePosition: 1 },
       { id: third.id, queuePosition: 2 },
       { id: unqueued.id },
+    ]);
+  });
+
+  it("counts head, depth and places() over virtual waiters only, and physicalDepth and a physical waiter's place over physical waiters only, in arrival order", async () => {
+    const { queue } = createQueue();
+    const physicalRequest = {
+      model: "iPhone 15 Pro",
+      physical: true,
+      platform: "ios",
+    } as const satisfies DeviceRequest;
+    const createPhysical = (requesterId: string) =>
+      queue.create(physicalRequest, { ownerId: requesterId, requesterId });
+    const firstPhysical = createPhysical("first-physical");
+    const firstVirtual = createWaiter(queue, "first-virtual");
+    const secondPhysical = createPhysical("second-physical");
+    const secondVirtual = createWaiter(queue, "second-virtual");
+    for (const waiter of [firstPhysical, firstVirtual, secondPhysical, secondVirtual]) {
+      queue.enqueue(waiter);
+    }
+
+    expect(queue.depth).toBe(2);
+    expect(queue.physicalDepth).toBe(2);
+    expect(queue.head).toBe(firstVirtual);
+    expect(queue.places()).toEqual([
+      { id: firstPhysical.id, queuePosition: 1 },
+      { id: firstVirtual.id, queuePosition: 1 },
+      { id: secondPhysical.id, queuePosition: 2 },
+      { id: secondVirtual.id, queuePosition: 2 },
+    ]);
+
+    queue.resolve(firstVirtual, grant());
+    await firstVirtual.promise;
+
+    expect(queue.depth).toBe(1);
+    expect(queue.physicalDepth).toBe(2);
+    expect(queue.head).toBe(secondVirtual);
+    expect(queue.places()).toEqual([
+      { id: firstPhysical.id, queuePosition: 1 },
+      { id: secondPhysical.id, queuePosition: 2 },
+      { id: secondVirtual.id, queuePosition: 1 },
     ]);
   });
 

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 
@@ -21,11 +21,14 @@ import {
   type DriverEstimate,
   type DriverReality,
   type DriverToolVersion,
+  type PhysicalDriverDevice,
   type ObservedMark,
   type ObservedRunState,
   type PassthroughCommand,
   type PassthroughContext,
   type PhysicalInspection,
+  type PresentPhysical,
+  uninstallPlan,
   PassthroughRefusedError,
   removeListedComponent,
   type DeviceClass,
@@ -42,7 +45,8 @@ import type {
   ScriptedProcessEntry,
 } from "./types.js";
 
-/** Minimal clock contract this driver needs -- kept local so it stays type-only-decoupled. */
+type VirtualDriverDevice = DriverDevice & { readonly physical: false };
+
 export interface FakeDriverClock {
   now(): number;
   setTimer(delayMs: number, callback: () => void): unknown;
@@ -59,19 +63,9 @@ const DEFAULT_SCRIPT: FakeDriverPlatformScript = {
   availableOsVersions: ["18.0"],
 };
 
-/** The `simlock <tool>` name each fake platform stands in for, matching the real drivers. */
 /**
- * Deliberately fake scoping variables every fake-driver grant carries unless a script overrides
- * them. Nothing reads these -- they exist to be *recognised*: `environment` is built by a driver,
- * forwarded verbatim by the core, validated at the contract boundary, and rendered by the CLI,
- * MCP and HTTP. A test that finds these exact values at the far end has proved the map survived
- * every one of those layers untouched, which no assertion on a plausible-looking real value can
- * (a real-looking path could just as easily have been reconstructed somewhere downstream).
- *
- * The keys mirror the shape the real drivers contribute so nothing downstream is special-cased.
- * `SIMLOCK_FAKE_TRACER` is the sentinel proper. `SIMLOCK_FAKE_AWKWARD` carries a space and an
- * apostrophe on purpose: `simlock lease --export-env` emits shell `export` lines for `eval`, so
- * a value that survives that round trip byte for byte proves the quoting as well as the routing.
+ * Recognisable sentinels, so a test can prove the environment map survived every layer untouched.
+ * `SIMLOCK_FAKE_AWKWARD` has a space and an apostrophe to prove `--export-env` quoting.
  */
 export const FAKE_LEASE_ENVIRONMENT: Readonly<Record<Platform, Readonly<Record<string, string>>>> =
   {
@@ -401,12 +395,6 @@ export class OutOfProcessFakeDriver implements Driver {
     return { address: defaultAddress(deviceId), deviceId, driverData: { fakeDeviceId: deviceId } };
   }
 
-  /**
-   * Re-reads the script's `address` on every boot -- see `FakeDriverPlatformScript.address`.
-   * `options` is logged alongside the call. A script with `slimmableOsVersions` reports
-   * `"slim"` for a prepare boot of a slim-spec device and `"full"` otherwise, as the iOS driver
-   * does; without it no mode is reported. `slimPassFails` turns that `"slim"` into `"full"`.
-   */
   async makeReady(
     device: DriverDevice,
     options: { readonly purpose: "prepare" | "recover"; readonly mode: "slim" | "full" },
@@ -425,31 +413,81 @@ export class OutOfProcessFakeDriver implements Driver {
   }
 
   async reclaim(
-    device: DriverDevice,
+    device: VirtualDriverDevice | PhysicalDriverDevice,
     options: { readonly clean: "standard" | "full" },
   ): Promise<{
     readonly state: "ready" | "shutdown";
-    readonly strategy: "erase" | "snapshot" | "wipe";
+    readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+    readonly missingApps?: readonly string[];
   }> {
     const script = await this.#beforeCall("reclaim", [device, options]);
+    if (device.physical) return this.#reclaimPhysical(device, script);
     const state = script.reclaimResult ?? "ready";
     const strategy = script.reclaimStrategy ?? "erase";
     this.#devices.set(device.deviceId, state);
     return { state, strategy };
   }
 
-  reclaimStrategy(_options: {
-    readonly clean: "standard" | "full";
-  }): "erase" | "snapshot" | "wipe" {
-    return "erase";
+  async #reclaimPhysical(
+    device: PhysicalDriverDevice,
+    script: FakeDriverPlatformScript,
+  ): Promise<{
+    readonly state: "ready";
+    readonly strategy: "uninstall";
+    readonly missingApps: readonly string[];
+  }> {
+    const scripted = script.physicalDevices?.find((candidate) =>
+      candidate.ids.includes(device.deviceId),
+    );
+    const installed = scripted?.installedApps ?? scripted?.apps ?? [];
+    const plan = uninstallPlan(installed, device.enrolledApps);
+    for (const app of plan.uninstall) {
+      await this.#appendLog("uninstall", [device.deviceId, app]);
+    }
+    if (plan.uninstall.length > 0) {
+      await this.#writeInstalledApps(device.deviceId, installed, plan.uninstall);
+    }
+    return {
+      missingApps: plan.missing,
+      state: "ready",
+      strategy: "uninstall",
+    };
   }
 
-  async shutdown(device: DriverDevice): Promise<void> {
+  async #writeInstalledApps(
+    deviceId: string,
+    installed: readonly string[],
+    removed: readonly string[],
+  ): Promise<void> {
+    if (this.#scriptPath === undefined) return;
+    const parsed = JSON.parse(await readFile(this.#scriptPath, "utf8")) as FakeDriverScript;
+    const platformScript = parsed[this.platform];
+    if (platformScript === undefined) return;
+    const physicalDevices = (platformScript.physicalDevices ?? []).map((candidate) =>
+      candidate.ids.includes(deviceId)
+        ? { ...candidate, installedApps: installed.filter((app) => !removed.includes(app)) }
+        : candidate,
+    );
+    const next: FakeDriverScript = {
+      ...parsed,
+      [this.platform]: { ...platformScript, physicalDevices },
+    };
+    await writeFile(this.#scriptPath, JSON.stringify(next, null, 2), "utf8");
+  }
+
+  reclaimStrategy(
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+    _options: { readonly clean: "standard" | "full" },
+  ): "erase" | "snapshot" | "wipe" | "uninstall" {
+    return device.physical ? "uninstall" : "erase";
+  }
+
+  async shutdown(device: VirtualDriverDevice): Promise<void> {
     await this.#beforeCall("shutdown", [device]);
     this.#devices.set(device.deviceId, "shutdown");
   }
 
-  async destroy(device: DriverDevice): Promise<void> {
+  async destroy(device: VirtualDriverDevice): Promise<void> {
     await this.#beforeCall("destroy", [device]);
     this.#devices.delete(device.deviceId);
   }
@@ -475,6 +513,16 @@ export class OutOfProcessFakeDriver implements Driver {
     };
   }
 
+  async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
+    const script = await this.#beforeCall("listPresentPhysical", [enrolledIds]);
+    return enrolledIds.map((driverDeviceId) => {
+      const scripted = script.physicalDevices?.find((candidate) =>
+        candidate.ids.includes(driverDeviceId),
+      );
+      return { driverDeviceId, present: scripted !== undefined && scripted.present !== false };
+    });
+  }
+
   async inspectPhysical(id: string): Promise<PhysicalInspection> {
     const script = await this.#beforeCall("inspectPhysical", [id]);
     const device = script.physicalDevices?.find((candidate) => candidate.ids.includes(id));
@@ -493,8 +541,7 @@ export class OutOfProcessFakeDriver implements Driver {
     };
   }
 
-  /** Read straight from the script, not through `#beforeCall`: the daemon asks for these on
-   * its own schedule, and a test's call log should hold only what the test caused. */
+  /** Not through `#beforeCall`, so a test's call log holds only what the test caused. */
   async toolVersions(): Promise<readonly DriverToolVersion[]> {
     return (await this.#readScript()).toolVersions ?? [];
   }
@@ -523,24 +570,21 @@ export class OutOfProcessFakeDriver implements Driver {
     return this.#lastKnownEstimateMs?.[estimate.operation] ?? 0;
   }
 
-  /** Synchronous like `estimate`, and cached the same way: the last script read wins. */
-  leaseEnvironment(): Readonly<Record<string, string>> {
-    // Defaults to the recognisable fakes rather than `{}`: a grant that carried nothing would
-    // make "the environment reached the CLI" and "there was never anything to carry" look
-    // identical at the far end. A script that sets `leaseEnvironment` still wins.
+  leaseEnvironment(
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+  ): Readonly<Record<string, string>> {
+    if (device.physical && this.#lastKnownLeaseEnvironment === undefined) {
+      return this.platform === "ios"
+        ? { SIMLOCK_DEVICE_UDID: device.deviceId }
+        : { ANDROID_ADB_SERVER_PORT: "5037", ANDROID_SERIAL: device.deviceId };
+    }
+    // Not `{}`: an empty grant would look the same as an environment that never reached the CLI.
     return this.#lastKnownLeaseEnvironment ?? FAKE_LEASE_ENVIRONMENT[this.platform];
   }
 
-  /**
-   * Synchronous and script-free, unlike everything else here: the refusal rules are the
-   * behaviour under test, and a rule that depended on a prior script read would not be
-   * exercised by the very first command a test runs.
-   */
+  /** Script-free: a rule that depended on a prior script read would not hold for a test's first command. */
   passthrough(args: readonly string[], context?: PassthroughContext): PassthroughCommand {
-    // Mirrors the Android driver's no-terminal rule (ADR 0005 §19c) in the smallest form that
-    // proves the fact travels: the daemon tells the driver there is no terminal, and the
-    // driver -- not the daemon -- decides what that rules out. Like the refusal lists above,
-    // this is a mirror and never evidence for the real driver's own rule.
+    // A mirror of the Android no-terminal rule, never evidence for the real driver's own rule.
     if (context?.hasTerminal === false && this.platform === "android" && isBareShell(args)) {
       throw new PassthroughRefusedError(
         this.passthroughTool,

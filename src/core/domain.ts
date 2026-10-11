@@ -1,12 +1,13 @@
-import { type OsConstraint as RequestedOs, satisfies } from "../contract/os-range.js";
+import { requestedClass } from "../contract/operations.js";
+import {
+  type OsConstraint as RequestedOs,
+  parseOsConstraint,
+  satisfies,
+} from "../contract/os-range.js";
 import type { DeviceRequest } from "./driver.js";
 
 export type Platform = "ios" | "android";
 
-/**
- * ADR 0015 §3: the kind of device a model is. Declared here beside `Platform` rather than
- * imported from the contract; which family or tag is which class is the driver's to say.
- */
 export const DEVICE_CLASSES = [
   "phone",
   "tablet",
@@ -18,7 +19,6 @@ export const DEVICE_CLASSES = [
 ] as const;
 export type DeviceClass = (typeof DEVICE_CLASSES)[number];
 
-/** The mode a device actually has: slimmed by its driver, or not. */
 export type DeviceMode = "slim" | "full";
 
 /**
@@ -163,13 +163,6 @@ export interface FittableSpec {
   readonly imageTag?: string | undefined;
 }
 
-/**
- * The one place a requirement meets a device (ADR 0015 §6; architecture rule 10). Holds when the
- * platform is equal, the model is equal or `classOf` says the device's model is the requested
- * class, the OS satisfies the constraint, and the image tag is equal or both absent. It does not
- * read the mode. `sameSpec` stays what names pool identity everywhere else. A physical spec fits
- * no requirement: every requirement is virtual until a request can ask for a physical device.
- */
 export function fits(
   requirement: DeviceRequirement,
   spec: FittableSpec,
@@ -599,14 +592,8 @@ export function transitionEnteredAt(record: DeviceRecord): number | undefined {
   }
 }
 
-/** Request-scoped progress for the lease action currently being performed. */
 export type LeaseProgress =
   | { readonly stage: "queued"; readonly queuePosition: number }
-  /**
-   * The request waits on a component download (ADR 0010 §3). `component` is the string the
-   * driver named, carried unread. `waiting` is true while another install on the platform runs
-   * ahead of it. `percent`, a whole number from 0 to 100, is there when the installer printed one.
-   */
   | {
       readonly stage: "downloading";
       readonly component: string;
@@ -616,3 +603,78 @@ export type LeaseProgress =
   | { readonly stage: "provisioning"; readonly etaMs: number }
   | { readonly stage: "booting"; readonly etaMs: number }
   | { readonly stage: "reclaiming"; readonly etaMs: number };
+
+export interface PhysicalRequest {
+  readonly platform: Platform;
+  readonly model?: string;
+  readonly class?: DeviceClass;
+  readonly osVersion?: string;
+}
+
+export interface FittablePhysical {
+  readonly spec: {
+    readonly platform: Platform;
+    readonly model: string;
+    readonly osVersion: string;
+    readonly class?: PhysicalClass;
+  };
+  readonly class?: PhysicalClass;
+}
+
+export function fitsPhysical(device: FittablePhysical, request: PhysicalRequest): boolean {
+  const { spec } = device;
+  if (spec.platform !== request.platform) return false;
+  if (request.model === undefined) {
+    if ((device.class ?? spec.class) !== requestedClass({ class: request.class })) return false;
+  } else if (spec.model.toLowerCase() !== request.model.toLowerCase()) {
+    return false;
+  }
+  if (request.osVersion === undefined) return true;
+  const constraint = parseOsConstraint(request.osVersion);
+  return constraint.ok && satisfies(spec.osVersion, constraint.constraint);
+}
+
+/** A range is not echoed: its text is what the message names as the fix. */
+function osPhrase(osVersion: string | undefined): readonly string[] {
+  if (osVersion === undefined) return [];
+  const parsed = parseOsConstraint(osVersion);
+  return parsed.ok && parsed.constraint.kind === "range"
+    ? ["os in the requested range"]
+    : [`os ${osVersion}`];
+}
+
+function rangeAround(osVersion: string): string {
+  const parts = osVersion.split(".").map(Number);
+  const raised = parts.map((part, index) => (index === parts.length - 1 ? part + 1 : part));
+  return `>=${parts.join(".")} <${raised.join(".")}`;
+}
+
+export function noPhysicalMatch(request: PhysicalRequest): {
+  readonly message: string;
+  readonly details: {
+    readonly platform: Platform;
+    readonly model?: string;
+    readonly class?: DeviceClass;
+    readonly osVersion?: string;
+  };
+} {
+  const named = [
+    request.model === undefined ? `class ${request.class ?? "phone"}` : `model ${request.model}`,
+    ...osPhrase(request.osVersion),
+  ];
+  const range =
+    request.platform === "ios" &&
+    request.osVersion !== undefined &&
+    /^\d+(\.\d+)?$/.test(request.osVersion)
+      ? `; --os is exact, for any ${request.osVersion}.x write --os "${rangeAround(request.osVersion)}"`
+      : "";
+  return {
+    details: {
+      platform: request.platform,
+      ...(request.model === undefined ? {} : { model: request.model }),
+      ...(request.class === undefined ? {} : { class: request.class }),
+      ...(request.osVersion === undefined ? {} : { osVersion: request.osVersion }),
+    },
+    message: `no enrolled physical device can match ${request.platform} ${named.join(" ")}${range}`,
+  };
+}

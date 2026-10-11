@@ -5,7 +5,8 @@ export type DeviceOperation =
   | "nuke"
   | "recovery"
   | "reclaim"
-  | "enrollment";
+  | "enrollment"
+  | "grant";
 
 export interface DeviceOperationClaim {
   readonly deviceId: string;
@@ -14,10 +15,6 @@ export interface DeviceOperationClaim {
   release(): void;
 }
 
-/**
- * Tracks exclusive per-device operations only. It intentionally contains no
- * device lifecycle, cleanup, or leasing policy.
- */
 export class DeviceOperationClaims {
   readonly #claims = new Map<string, DeviceOperationClaim>();
 

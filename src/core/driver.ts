@@ -4,10 +4,13 @@ import type { RootRejectionReason } from "./device-root.js";
 import type {
   DeviceClass,
   DeviceMode,
+  DeviceRecord,
   DeviceSpec,
   DeviceTransitionUpdate,
   PhysicalClass,
+  PhysicalDevice,
   Platform,
+  VirtualDevice,
   VirtualSpec,
 } from "./domain.js";
 
@@ -19,59 +22,66 @@ export interface ExactDeviceRequest {
   readonly imageTag?: string;
 }
 
-/**
- * A lease request as it arrived (ADR 0015 §1): an exact model, a class, or neither, which means
- * `phone`. Transports carry it unfilled; the acquisition coordinator resolves it into the exact
- * request a driver takes.
- */
 export interface DeviceRequest extends Omit<ExactDeviceRequest, "model"> {
   readonly model?: string;
   readonly class?: DeviceClass;
+  readonly physical?: boolean;
 }
 
 export interface DriverDevice {
   readonly deviceId: string;
   readonly driverData: unknown;
-  /**
-   * The opaque string platform tooling accepts right now -- a simctl UDID for iOS, an adb
-   * serial (`emulator-<port>`) for Android. The core carries it without interpreting it; only
-   * the owning driver module knows what it means. Unlike `deviceId`, which identifies the
-   * device for as long as it exists, this can change across a boot -- see `Driver.makeReady`.
-   */
   readonly address: string;
-  /**
-   * The mode the driver actually produced for this device, as of its last `makeReady` --
-   * platform-neutral so the core can report it without reading a driver's opaque
-   * `driverData`. `"slim"` means the driver cut the device's feature set (the iOS driver's
-   * slim pass); `"full"` means it did not. `undefined` means the driver does not slim at all
-   * -- every non-iOS driver -- and is stored as `"full"` (see `readyTransitionUpdate`).
-   */
   readonly mode?: DeviceMode;
 }
 
-/**
- * A device the driver may boot, shut down, destroy and erase: one Simlock created in a root it
- * owns (ADR 0022 §5). The core builds it from a `VirtualDevice`, so a driver call that takes it
- * does not compile for a physical record. A physical driver device, and the `reclaim` that takes
- * it, come with the physical reclaim.
- */
 export type VirtualDriverDevice = DriverDevice & { readonly physical: false };
 
-/**
- * A device a driver listed from its own root (`listManaged`) as a driver device that may be
- * destroyed. The root holds only simulators and emulators, so what it lists is virtual.
- */
+export type PhysicalDriverDevice = DriverDevice & {
+  readonly physical: true;
+  readonly enrolledApps: readonly string[];
+};
+
+export function isPhysicalDriverDevice(device: DriverDevice): device is PhysicalDriverDevice {
+  return (device as Partial<PhysicalDriverDevice>).physical === true;
+}
+
+export interface PresentPhysical {
+  readonly driverDeviceId: string;
+  readonly present: boolean;
+}
+
+export function toDriverDevice(device: VirtualDevice): VirtualDriverDevice;
+export function toDriverDevice(device: PhysicalDevice): PhysicalDriverDevice;
+export function toDriverDevice(device: DeviceRecord): VirtualDriverDevice | PhysicalDriverDevice;
+export function toDriverDevice(device: DeviceRecord): VirtualDriverDevice | PhysicalDriverDevice {
+  const base = {
+    address: device.address ?? "",
+    deviceId: device.driverDeviceId,
+    driverData: device.driverData,
+  };
+  return device.physical
+    ? { ...base, enrolledApps: device.enrolledApps, physical: true }
+    : { ...base, physical: false };
+}
+
+export function uninstallPlan(
+  listedNow: readonly string[],
+  enrolledApps: readonly string[],
+): { readonly uninstall: readonly string[]; readonly missing: readonly string[] } {
+  const enrolled = new Set(enrolledApps);
+  const listed = new Set(listedNow);
+  return {
+    missing: enrolledApps.filter((app) => !listed.has(app)),
+    uninstall: listedNow.filter((app) => !enrolled.has(app)),
+  };
+}
+
 export function virtualDriverDevice(device: DriverDevice): VirtualDriverDevice {
   return { ...device, physical: false };
 }
 
-/**
- * Builds a `DeviceTransitionUpdate` from a driver's freshly re-read device. It always writes
- * `mode`, defaulting a driver's `undefined` to `"full"` here and nowhere else, so a stale
- * `"slim"` can never outlive a re-boot that did not slim. Shared by every readiness path that
- * commits a driver's post-`makeReady` result (`ManagedDeviceLifecycle`)
- * so they can't drift on this.
- */
+/** Always writes `mode`, defaulting `undefined` to `"full"` here and nowhere else, so a stale `"slim"` cannot outlive a re-boot that did not slim. */
 export function readyTransitionUpdate(readyDevice: DriverDevice): DeviceTransitionUpdate {
   return {
     address: readyDevice.address,
@@ -102,71 +112,37 @@ export interface ObservedMark {
   readonly durable: string | undefined;
   /** Token in the region an erase destroys, or undefined when absent. */
   readonly erasable: string | undefined;
-  /**
-   * False when the erasable region could not be read at all this tick -- an
-   * Android mark lives on the userdata partition and is only reachable over
-   * `adb` while the emulator runs. Unreadable is not the same as absent and
-   * must never be reported as an erase.
-   */
+  /** Unreadable is not absent and must never be reported as an erase. */
   readonly erasableReadable: boolean;
 }
 
 export interface ObservedDevice extends DriverDevice {
   readonly runState: ObservedRunState;
-  /** Undefined from drivers that do not implement provenance marks. */
   readonly mark?: ObservedMark;
 }
 
-/** Reality observable by a driver without trusting the registry. */
 export interface DriverReality {
-  /** Devices whose membership in the driver's root proves that Simlock created them. */
   readonly devices: readonly ObservedDevice[];
-  /** Running device processes from that same root, not necessarily in the registry. */
   readonly processes: readonly DriverDevice[];
 }
 
 export interface ReclaimResult {
   readonly state: "ready" | "shutdown";
-  readonly strategy: "erase" | "snapshot" | "wipe";
+  readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+  readonly missingApps?: readonly string[];
 }
 
 export type ReclaimStrategy = ReclaimResult["strategy"];
 
 /**
- * What `estimate` is being asked to price. `reclaim` carries the clean level because it is
- * the input `reclaimStrategy` already selects on, and the strategies it picks between differ
- * by an order of magnitude -- an iOS `erase` runs tens of seconds while an Android `snapshot`
- * restore runs in a few. A single blended reclaim number cannot be right for both, and the
- * callers that consume it (a requester's ETA, `Doctor`'s stalled-transition threshold) are
- * both misled by one that is wrong in the optimistic direction.
+ * `reclaim` carries the clean level because the strategies differ by an order of magnitude
+ * (iOS `erase` tens of seconds, Android `snapshot` restore a few); one blended number is wrong for both.
  */
 export type DriverEstimate =
   | { readonly operation: "provision" }
   | { readonly operation: "boot" }
   | { readonly operation: "reclaim"; readonly clean: "standard" | "full" };
 
-/**
- * What a driver can resolve right now, read from the platform SDK without
- * side effects: resolvable device models plus installed runtimes / system
- * images, and which installed runtime `resolveSpec` would pick by default
- * (the newest). `defaultRuntime` is `undefined` when no runtime is installed.
- *
- * `modelRuntimes` has an entry for every name in `models`: the installed runtimes that model
- * pairs with, decided by the same function `resolveSpec` uses, so every listed pair resolves
- * (ADR 0008 §3). An empty list means no installed runtime pairs with that model.
- *
- * `modelAliases` maps a name in `models` to the other names `resolveSpec` accepts for it, from
- * the same matcher `resolveSpec` uses; a model with no other name has no entry. `images` is
- * present only for a driver whose runtimes come as installed images, one entry per image.
- *
- * `modelClasses` maps a name in `models` to its class when the platform's tools report one; a
- * model they say nothing usable about has no entry. The core carries it and reads nothing from
- * it.
- *
- * `customModels` names the values from `models` that exist because of something on this
- * machine, not because of the platform's tools. The core carries it and never reads it; a
- * driver with no such models omits the field.
- */
 export interface DriverCatalogEntry {
   readonly models: readonly string[];
   readonly runtimes: readonly string[];
@@ -345,67 +321,36 @@ export interface Driver {
   makeReady(
     device: VirtualDriverDevice,
     options: {
-      /**
-       * What this readiness call is for. `"prepare"` (the default) may do work that changes
-       * the device's configuration -- a fresh boot, a driver's own opt-in configuration pass
-       * (the iOS driver's slim apply). `"recover"` is the one caller (`ManagedDeviceLifecycle.
-       * recoverLeased`, safety rule 2's narrow crash-recovery exception) that reboots a device
-       * that is still `leased`: it must do the minimum needed to get that device running again
-       * and must never change its configuration, so a driver treats `"recover"` as "boot only,
-       * do not apply anything new".
-       */
+      /** `"recover"` reboots a still-`leased` device: boot only, never change its configuration. */
       readonly purpose: "prepare" | "recover";
-      /**
-       * The mode the device's spec plans (`specMode`). The registry is the only record of it
-       * (ADR 0007 §7): a driver keeps no copy and reads it from here on every boot. A
-       * `"recover"` boot still applies nothing new, whatever this says.
-       */
+      /** The registry is the only record of the mode (ADR 0007 §7); a driver keeps no copy. */
       readonly mode: DeviceMode;
     },
   ): Promise<DriverDevice>;
   reclaim(
-    device: VirtualDriverDevice,
+    device: VirtualDriverDevice | PhysicalDriverDevice,
     options: { readonly clean: "standard" | "full" },
   ): Promise<ReclaimResult>;
-  reclaimStrategy(options: { readonly clean: "standard" | "full" }): ReclaimStrategy;
+  reclaimStrategy(
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+    options: { readonly clean: "standard" | "full" },
+  ): ReclaimStrategy;
   shutdown(device: VirtualDriverDevice): Promise<void>;
   destroy(device: VirtualDriverDevice): Promise<void>;
   listManaged(): Promise<DriverReality>;
   inspectPhysical(id: string): Promise<PhysicalInspection>;
+  listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]>;
   /** Read-only: must never trigger a runtime / system-image download. */
   listCatalog(): Promise<DriverCatalogEntry>;
   estimate(estimate: DriverEstimate, spec: DeviceSpec): number;
-  /**
-   * Opaque environment a lease holder needs to reach a device in this driver's root --
-   * containment cuts both ways, so a grant that did not carry it would hand out a device
-   * nobody could address. The core forwards it verbatim; no key here means anything to it.
-   */
-  leaseEnvironment(): Readonly<Record<string, string>>;
-  /**
-   * Releases whatever this driver holds outside its own process -- Android supervises an
-   * adb server it must reap by pid, since nothing else can (`docs/internal/KNOWN-PITFALLS.md`).
-   * Optional because most drivers hold nothing; the daemon calls it on every shutdown
-   * path and never lets a failure here abort the rest of one.
-   */
+  leaseEnvironment(
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+  ): Readonly<Record<string, string>>;
+  /** Android must reap the adb server it supervises by pid; nothing else can. */
   dispose?(): Promise<void>;
-  /**
-   * The `simlock <tool>` name this driver answers to (`simctl`, `adb`), when it wraps a
-   * platform tool at all. Spelled `| undefined` rather than left plain optional so a
-   * driver that decides at construction time whether it has one can still say so.
-   */
+  /** Spelled `| undefined` so a driver that decides at construction can still say it has none. */
   readonly passthroughTool?: string | undefined;
-  /**
-   * Scoped command for `simlock <tool> <args>`, or `PassthroughRefusedError` for a verb
-   * this driver will not proxy. Both halves are the driver's business: only it knows
-   * which flag points its tool at the root it owns, and only it knows which verbs would
-   * change a device's lifecycle behind the registry's back (ADR 0001, decision 7).
-   *
-   * `context` says what the caller can offer the command, which is the one thing about the
-   * *caller* a driver's refusal list legitimately depends on: `device.exec` runs the command
-   * on the daemon's machine with no pseudo-terminal (ADR 0005 §19c), so a driver may refuse
-   * something there that it allows for a local `simlock <tool>` invocation with a terminal
-   * behind it. Omitted means a terminal is available -- today's local path, unchanged.
-   */
+  /** `device.exec` has no pseudo-terminal (ADR 0005 §19c), so a driver may refuse there what it allows locally. */
   passthrough?(args: readonly string[], context?: PassthroughContext): PassthroughCommand;
   /**
    * Looks for a registry device in the location this platform used before Simlock owned a

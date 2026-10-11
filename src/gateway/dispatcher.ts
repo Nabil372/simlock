@@ -111,25 +111,15 @@ export interface GatewayDispatcherOptions {
    * not supply one -- revocation still writes the store either way.
    */
   readonly closeUplinksForToken?: (tokenId: string) => Promise<void>;
-  /** Times each call for its `operation` log line. */
   readonly clock: Clock;
   readonly logger?: Logger;
   /** Classifies a thrown error for the `operation` log line (`classifyError` in production),
    * injected because `src/gateway` imports nothing from `src/core`. Unset or `undefined`:
    * `INTERNAL`. */
   readonly errorCode?: (error: unknown) => string | undefined;
-  /** The gateway's own health, for `status.get`. */
   readonly health: () => "starting" | "running" | "failed";
-  /** The gateway's own machine, for `status.get` (ADR 0008 §8): read once at start, no tools. */
   readonly host: AggregateStatusOptions["host"];
   readonly awaitReady: () => Promise<void>;
-  /**
-   * #118: admission, dispatch, and lease/exec forwarding. Every lease-lifecycle handler and
-   * `device.exec` below is a thin translation from contract input to a `coordinator` call; the
-   * two ownership lookups (`ownerId`, `leaseRequesterId`) and the pending-request lookup
-   * (`pendingRequestOwner`) it also exposes feed `dispatch()`'s `authorizeLookups` directly, the
-   * same shape a worker's own `Dispatcher` supplies from its registry and queue.
-   */
   readonly coordinator: Pick<
     FleetLeaseCoordinator,
     | "request"
@@ -139,15 +129,12 @@ export interface GatewayDispatcherOptions {
     | "releaseAll"
     | "exec"
     | "queueDepth"
+    | "physicalQueueDepth"
     | "ownerId"
     | "leaseRequesterId"
     | "pendingRequestOwner"
     | "waitingRequests"
   >;
-  /** #118: read-only access for `lease.list`/`list.get`/`status.get`'s lease projection
-   * (`FleetLeaseIndex#project`/`#all`) -- kept separate from `coordinator` because this
-   * dispatcher only ever *reads* it, never mutates it. `isGatewayRequester` marks the requests
-   * this gateway sent a worker, which `list.get`'s `requests` already lists as its own. */
   readonly leaseIndex: Pick<FleetLeaseIndex, "project" | "all" | "isGatewayRequester">;
 }
 
@@ -243,12 +230,8 @@ export class GatewayDispatcher {
     });
   }
 
-  // ---- handlers -----------------------------------------------------------------------------
-
   #statusGet: Handler<"status.get"> = () => {
-    // ADR 0011 §3: a gateway serves the console on its own listener, as a worker does.
     const consoleUrl = consoleUrlField(this.options.config.http);
-    // While starting, the fleet has not been read: the answer is the gateway and its host only.
     if (this.options.health() === "starting") {
       return {
         daemon: { health: "starting", mode: "gateway", ...consoleUrl },
@@ -258,7 +241,7 @@ export class GatewayDispatcher {
     const status = aggregateStatus(this.options.workers.views(), {
       health: this.options.health(),
       host: this.options.host,
-      // ADR 0005 §20: the gateway's own fleet queue depth, and the requests waiting in it.
+      physicalQueueDepth: this.options.coordinator.physicalQueueDepth,
       queueDepth: this.options.coordinator.queueDepth,
       waiting: [...this.options.coordinator.waitingRequests()],
       leaseIndex: this.options.leaseIndex,

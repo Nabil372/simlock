@@ -87,51 +87,29 @@ type Env = AuthEnv;
 /** Upper bound on `?wait=` long-polls; bounds how long an abandoned poll can pin resources. */
 const MAX_LONG_POLL_SECONDS = 60;
 
-/**
- * Strict (ADR 0007 §10): a body carrying a key this route does not know, the retired `full`
- * included, is `400 BAD_REQUEST` rather than having it silently dropped.
- */
 const leaseRequestBodySchema = z
   .object({
     allowDownload: z.boolean().optional(),
     class: deviceClassSchema.optional(),
     device: z.string().min(1).optional(),
     imageTag: imageTagSchema.optional(),
-    // ADR 0020: the lease ID the requester chooses. Shape and bounds are the contract's own.
     leaseId: leaseIdSchema.optional(),
     mode: z.enum(["slim", "full"]).optional(),
     noWait: z.boolean().optional(),
-    // ADR §27a (H7, round 2 review): declared and forwarded, not silently dropped -- the shared
-    // dispatcher's own `lease.request` handler is the one place that decides whether this token
-    // may set it (`FORBIDDEN` for non-admin), the same gate every other transport is held to.
+    // Forwarded, not dropped: the dispatcher's `lease.request` handler alone decides whether this token may set it.
     owner: z.string().min(1).optional(),
     os: z.string().min(1).optional(),
+    physical: z.boolean().optional(),
     platform: z.enum(["ios", "android"]),
     timeoutMs: z.number().int().positive().optional(),
     ttlMs: z.number().int().positive().optional(),
   })
   .strict()
-  // The contract's own check, told this body's name for the model so the 400 names `device`.
   .superRefine((body, context) =>
     refuseModelWithClass("device")({ model: body.device, class: body.class }, context),
   );
 
-/**
- * `POST /v1/leases/{id}/exec`'s body: `device.exec`'s input minus `leaseId`, which the path
- * already names. Restated here rather than derived from the operation schema because that is
- * how every other route in this file states its body -- and because omitting `leaseId` from a
- * `.strict()` operation schema is not something `z.omit` can express without also dropping the
- * strictness that makes a typo an error.
- *
- * `tool` is a plain string, matching the operation: a name no driver on this machine wraps is
- * `UNKNOWN_PASSTHROUGH_TOOL` (422) from the driver catalog, not a malformed body -- `400` here
- * means the body's *shape* is wrong, nothing more.
- *
- * `stdin` and `requesterId` accept `null` as well as an omitted key, and normalize it to
- * omitted: the documented example sends `"stdin": null, "requesterId": null` to show the
- * fields exist, and a serializer that writes every optional field as `null` should not be a
- * `400`.
- */
+/** `stdin` and `requesterId` also accept `null` and normalize it to omitted: the documented example sends them as `null`. */
 const execBodySchema = z
   .object({
     tool: z.string().min(1),
@@ -173,7 +151,6 @@ function toLeaseRequestInput(body: z.infer<typeof leaseRequestBodySchema>): Leas
   };
 }
 
-/** The body's fields that name who owns the lease and what its ID is, not how to wait. */
 function leaseRequestNameFields(body: z.infer<typeof leaseRequestBodySchema>) {
   return {
     ...(body.owner === undefined ? {} : { owner: body.owner }),
@@ -190,23 +167,14 @@ function leaseRequestOptionFields(body: z.infer<typeof leaseRequestBodySchema>) 
     ...(body.allowDownload === undefined ? {} : { allowDownload: body.allowDownload }),
     ...(body.mode === undefined ? {} : { mode: body.mode }),
     ...(body.imageTag === undefined ? {} : { imageTag: body.imageTag }),
+    ...(body.physical === undefined ? {} : { physical: body.physical }),
   };
 }
 
-/** The gateway-owned subscriptions `createHttpApp` starts, attached to the returned app so a caller can dispose them on shutdown without this module exposing the tracker/notices instances themselves. */
 export interface HttpAppDisposable {
   readonly dispose: () => void;
 }
 
-/**
- * `Request -> Response` app: no `node:http`, no `serve()` -- see `server.ts` for that. ADR
- * 0003 §2: "the HTTP app becomes routing plus a bearer-token-to-session adapter, calling the
- * same dispatcher in-process". Every route that maps onto a daemon operation calls
- * `deps.dispatch(...)`, which runs the exact same input parsing, role check, `authorize` hook,
- * and startup-readiness parking the socket path gets -- this file no longer re-implements any
- * of those. What's left here: HTTP routing, request/response (de)serialization, and the
- * lease-request resource's HTTP shape over the daemon's stored requests, and the notice buffer.
- */
 // fallow-ignore-next-line complexity -- route wiring for one focused resource surface; splitting it would scatter the shared closures (tracker, notices) across files for no clarity gain.
 export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposable {
   const app = new Hono<Env>();

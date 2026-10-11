@@ -180,6 +180,7 @@
                   "LeaseRequestBook",
                   "LeaseRequestForbiddenError",
                   "LeaseRequestOptions",
+                  "lineOf",
                   "QueuePlace",
                   "QueueTimeoutError",
                   "ReplayedLeaseRequestError",
