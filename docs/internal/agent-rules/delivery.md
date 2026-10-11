@@ -83,27 +83,16 @@ is open, done means closed as completed.
    the maintainer clears it by re-adding the label it came from.
 
 3. **The body is the spec. Comments are discussion. Assumptions are
-   proposals.** Whoever implements an issue reads its body, the documents it
-   links, [always-in-scope.md](always-in-scope.md), the latest `## Handoff`
-   comment if there is one, and for a bug the triage report and any
-   `## Decision` comment — never the rest of the comment thread.
-   A comment changes nothing until a spec session folds it into the body. The
-   body is cumulative: sections are added and amended in place, never
+   proposals.** What an implementer reads, and how it closes a small gap as
+   an `Assumption:` line, is in [coding.md](coding.md) rules 1 and 2.
+   The body is cumulative: sections are added and amended in place, never
    restated in comments, and GitHub's edit history is the record of what
-   changed.
-   A small gap that the body, the rules in this directory, the accepted ADRs
-   and `always-in-scope.md` all leave open — a wording, an order, a bound
-   the spec implies — is closed by the implementer the conservative way and
-   recorded as one `Assumption:` line under `## Assumptions` in the PR body.
-   An assumption is a visible proposal that the spec review checks and the
-   maintainer may reject, never a change to the spec: the body stays the
-   spec. Delivery stops for a person only when building would contradict the
-   body, a rule or an accepted ADR, or would change behaviour a user sees in
-   a way nobody decided. The agent that asked folds the person's answer in
-   before work resumes, so every later agent reads it as spec: into a task
-   or feature body, as a line in the section it settles and a Tests line
-   that pins it; for a bug, whose body stays the reporter's (rule 5), as
-   one comment headed `## Decision`, read with the triage report.
+   changed. When delivery stops for a person, the agent that asked folds the
+   person's answer in before work resumes, so every later agent reads it as
+   spec: into a task or feature body, as a line in the section it settles
+   and a Tests line that pins it; for a bug, whose body stays the reporter's
+   (rule 5), as one comment headed `## Decision`, read with the triage
+   report.
 
 4. **Every spec session starts by reconciling.** Before writing anything, the
    session fetches every comment created after the body's `lastEditedAt`, on
@@ -162,10 +151,8 @@ is open, done means closed as completed.
    A `feature:planned` issue is done when every sub-issue is closed. The
    delivering agent merges its own PR, but only through the gate in rule
    15.
-   Verification is part of delivery, not a step after it: every task PR
-   walks its Done when, and the PR that closes the last open sub-issue also
-   walks the parent's Completion conditions. The maintainer closes the
-   feature.
+   Verification is part of delivery, not a step after it ([coding.md](coding.md)
+   rule 5). The maintainer closes the feature.
 
 10. **ADR status follows the feature.** A decision made during a spec session
     that constrains more than one task, or would be expensive to reverse,
@@ -174,11 +161,7 @@ is open, done means closed as completed.
     feature closes. A feature does not leave `feature:spec` while any ADR it
     links is still *Proposed*.
 
-11. **The branch is named from the issue, and only from the issue.** Work on
-    issue `<n>` of kind `<kind>` happens on `<kind>/<n>` — `task/118`,
-    `bug/79`, `feature/88` — and a bug's reproduction lives on
-    `bug/<n>-repro`. No slug, no author prefix, no date. A PR from such a
-    branch closes that issue and no other.
+11. **The branch is named from the issue:** [coding.md](coding.md) rule 3.
 
 12. **Everything an agent writes on an issue or a PR is short and plain.**
     Lead with the conclusion. Short sentences, common words, no filler, no
@@ -195,13 +178,7 @@ is open, done means closed as completed.
     use it to tell agent text from a person's, since agents post under a
     maintainer's account.
 
-13. **Assume every agent is in a worktree.** Several agents share one clone
-    through `git worktree`, so a branch may already be checked out somewhere
-    else and `git switch` to it will fail. Create branches in whatever
-    checkout you have, push them, and treat `origin/<branch>` as the truth;
-    to continue a branch another checkout holds, branch from
-    `origin/<branch>` rather than switching to it. Nothing depends on which
-    worktree a branch was made in.
+13. **Assume every agent is in a worktree:** [coding.md](coding.md) rule 4.
 
 14. **A PR is marked ready only after review, and every blocking finding
     is answered.** The PR opens as a draft once the spec's tests are

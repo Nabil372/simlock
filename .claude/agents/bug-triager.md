@@ -89,7 +89,7 @@ Say first which of three this is:
 ## 4. Push the reproduction
 
 Only the test goes on this branch: no fix, no pull request. Branch from
-`origin/main`, not `main` (rule 13):
+`origin/main`, not `main` (coding rule 4):
 
 ```bash
 git fetch origin
