@@ -1335,7 +1335,7 @@ A successful retry returns the device to `ready` (or `shutdown`) and it
 rejoins the warm pool; exhausting the retry budget destroys a virtual device
 (registry-only, never merely `shutdown`, since `shutdown` is reusable warm
 inventory to `AcquisitionPlanner` and would silently reintroduce a dirty
-device) and unenrols a physical one, which Simlock never destroys. `device.purge-failed` still fires as it always did; `device.quarantined`,
+device) and unenrols a physical one, which Simlock never destroys. `device.purge-failed` still fires for a virtual device, and for a physical one that is present; a physical device whose reclaim fails while it is not present emits none and goes `absent`. `device.quarantined`,
 `device.quarantine-recovered`, and `device.quarantine-abandoned` are the
 follow-up facts (see [EVENTS.md](EVENTS.md)).
 
@@ -1484,7 +1484,7 @@ Three things still wait for the purge, deliberately:
 The trade the backgrounding makes is where a purge failure surfaces: the
 caller is gone, so it cannot be rejected to. It does not go missing — a driver
 purge failure is already `QuarantineCoordinator`'s job and stays visible as
-`device.purge-failed` plus a `quarantined` device — and anything unexpected
+`device.purge-failed` plus a `quarantined` device (a physical device read not present instead goes `absent`, with neither) — and anything unexpected
 beyond that is logged by the coordinator rather than left unhandled.
 
 ### Lease subsystem boundaries and wiring

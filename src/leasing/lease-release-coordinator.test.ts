@@ -643,14 +643,13 @@ describe("LeaseReleaseCoordinator", () => {
       const held = await grantPhysical(harness, "UDID-A");
       let proceeding = true;
       let open!: () => void;
-      const busy = harness.decisions.run(
-        () => new Promise<void>((resolve) => void (open = resolve)),
-      );
-
       const pending = harness.coordinator.endForAbsentDevice(
         held.lease.id,
         "not-present",
         () => proceeding,
+      );
+      const busy = harness.decisions.run(
+        () => new Promise<void>((resolve) => void (open = resolve)),
       );
       await flush();
       proceeding = false;
