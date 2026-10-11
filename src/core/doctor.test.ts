@@ -1315,6 +1315,88 @@ describe("Doctor", () => {
     });
   });
 
+  it("reports no live-drift finding for a quarantined simulator while its retry holds its claim, and registry-device-missing once the fake no longer lists it", async () => {
+    const clock = new FakeClock(10_000);
+    const eventBus = new EventBus(clock);
+    const registry = await Registry.load({
+      clock,
+      eventBus,
+      filesystem: new MemoryFilesystem(),
+      idGenerator: sequence(),
+      statePath: "/state.json",
+    });
+    const device = await readyDevice(registry, "simlock-quarantined", "ios");
+    const lease = await registry.createLease({
+      deviceId: device.id,
+      ownerId: "agent",
+      requesterId: "agent",
+      ttlDeadline: 99_999,
+      ttlMs: 60_000,
+    });
+    await registry.beginRelease(lease.id);
+    await registry.enterQuarantine(device.id, 10_100);
+    const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
+    const listed = {
+      devices: [
+        {
+          address: "simlock-quarantined-address",
+          deviceId: "simlock-quarantined",
+          driverData: {},
+          runState: "running" as const,
+        },
+      ],
+      processes: [],
+    };
+    driver.setManagedReality(listed);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = driver.reclaim.bind(driver);
+    vi.spyOn(driver, "reclaim").mockImplementation(async (target, options) => {
+      await gate;
+      return original(target, options);
+    });
+    const claims = new DeviceOperationClaims();
+    const quarantine = new QuarantineCoordinator({
+      claims,
+      clock,
+      config: {
+        maxRetries: 3,
+        maxRetryBackoffMs: 300_000,
+        retryBackoffMs: 30_000,
+        retryBackoffMultiplier: 2,
+      },
+      decisions: new SerializedDecision(),
+      drivers: new DriverCatalog([driver]),
+      eventBus,
+      notifyAvailability: () => {},
+      registry,
+    });
+    quarantine.restore();
+    clock.advance(100);
+    await vi.waitFor(() => expect(claims.isClaimed(device.id)).toBe(true));
+    const reconcile = () =>
+      new Doctor({ claims, clock, config: config(), drivers: [driver], eventBus, registry })
+        .reconcile()
+        .then((report) =>
+          report.findings.filter(
+            (finding) => "deviceId" in finding && finding.deviceId === device.id,
+          ),
+        );
+
+    const whileListed = await reconcile();
+    driver.setManagedReality({ devices: [], processes: [] });
+    const whileGone = await reconcile();
+    release();
+
+    expect(whileListed).toEqual([]);
+    expect(whileGone).toEqual([
+      expect.objectContaining({ kind: "registry-device-missing", platform: "ios" }),
+    ]);
+    quarantine.dispose();
+  });
+
   it("--fix reconciles an unleased device's state to observed reality in both directions", async () => {
     const clock = new FakeClock(10_000);
     const eventBus = new EventBus(clock);

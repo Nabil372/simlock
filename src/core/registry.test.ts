@@ -863,7 +863,7 @@ describe("Registry", () => {
     const deleted = await registry.deleteQuarantined(device.id, "lease-end");
 
     expect(deleted.state).toBe("deleted");
-    expect(events).toEqual([{ deviceId: device.id, initiator: "lease-end" }]);
+    expect(events).toEqual([{ deviceId: device.id, initiator: "lease-end", physical: false }]);
   });
 
   it("rejects mutations for a device that is not registered", async () => {
@@ -2683,5 +2683,146 @@ describe("Registry: physical devices (ADR 0022 §1)", () => {
       lastLeaseEndedAt: 1_000,
       state: "reclaiming",
     });
+  });
+});
+
+describe("Registry: device.deleted carries physical, and enrollment writes (ADR 0022 §2)", () => {
+  async function load() {
+    const clock = new FakeClock(1_000);
+    const bus = new EventBus(clock);
+    let next = 1;
+    const registry = await Registry.load({
+      clock,
+      eventBus: bus,
+      filesystem: new MemoryFilesystem(),
+      idGenerator: { generate: () => `r${next++}` },
+      statePath,
+    });
+    const deleted: unknown[] = [];
+    bus.subscribe("device.deleted", (envelope) => deleted.push(envelope.payload));
+    return { bus, deleted, registry };
+  }
+
+  async function readyVirtual(registry: Registry, driverDeviceId: string) {
+    const device = await registry.registerDevice({
+      driverData: {},
+      driverDeviceId,
+      provisionDuration: 0,
+      spec,
+    });
+    await registry.transitionDevice(device.id, "ready", {
+      event: "device.ready",
+      payload: { bootDuration: 0, deviceId: device.id },
+    });
+    return device;
+  }
+
+  const input = {
+    apps: ["com.example.one"],
+    class: "phone",
+    driverDeviceId: "00008110-001A2B3C4D5E",
+    model: "iPhone 15 Pro",
+    osVersion: "18.4",
+    platform: "ios",
+  } as const;
+
+  it("carries physical false from deleteQuarantined, markDeviceMissing, endLeaseAndMarkDeviceMissing and a transitionDevice of a virtual record", async () => {
+    const { deleted, registry } = await load();
+    const quarantined = await readyVirtual(registry, "d1");
+    const lease = await registry.createLease({
+      deviceId: quarantined.id,
+      ownerId: "a",
+      requesterId: "a",
+      ttlDeadline: 9_000,
+      ttlMs: 8_000,
+    });
+    await registry.beginRelease(lease.id);
+    await registry.enterQuarantine(quarantined.id, 5_000);
+    await registry.deleteQuarantined(quarantined.id, "lease-end");
+    const missing = await readyVirtual(registry, "d2");
+    await registry.markDeviceMissing(missing.id, "doctor");
+    const leased = await readyVirtual(registry, "d3");
+    const held = await registry.createLease({
+      deviceId: leased.id,
+      ownerId: "a",
+      requesterId: "a",
+      ttlDeadline: 9_000,
+      ttlMs: 8_000,
+    });
+    await registry.endLeaseAndMarkDeviceMissing(held.id, "doctor", () => {});
+    const plain = await readyVirtual(registry, "d4");
+    await registry.transitionDevice(plain.id, "shutdown", {
+      event: "device.shutdown",
+      payload: { deviceId: plain.id, initiator: "idle" },
+    });
+    await registry.transitionDevice(plain.id, "deleted", {
+      event: "device.deleted",
+      payload: { deviceId: plain.id, initiator: "idle" },
+    });
+
+    expect(deleted).toEqual([
+      { deviceId: quarantined.id, initiator: "lease-end", physical: false },
+      { deviceId: missing.id, initiator: "doctor", physical: false },
+      { deviceId: leased.id, initiator: "doctor", physical: false },
+      { deviceId: plain.id, initiator: "idle", physical: false },
+    ]);
+  });
+
+  it("carries physical true and initiator operator from unenroll, after the commit", async () => {
+    const { deleted, registry } = await load();
+    const device = await registry.enrollPhysical(input);
+
+    await registry.unenrollPhysical(device.id);
+
+    expect(deleted).toEqual([{ deviceId: device.id, initiator: "operator", physical: true }]);
+    expect(registry.snapshot.devices[0]).toMatchObject({ id: device.id, state: "deleted" });
+  });
+
+  it("emits device.enrolled after the commit, reenrolled false for a new record and true for a rewrite", async () => {
+    const { bus, registry } = await load();
+    const seen: unknown[] = [];
+    bus.subscribe("device.enrolled", (envelope) =>
+      seen.push({ payload: envelope.payload, stored: registry.snapshot.devices.length }),
+    );
+
+    const device = await registry.enrollPhysical(input);
+    await registry.reenrollPhysical(device.id, { ...input, apps: ["a", "b"], model: "iPhone 16" });
+
+    expect(seen).toEqual([
+      {
+        payload: {
+          appCount: 1,
+          class: "phone",
+          deviceId: device.id,
+          driverDeviceId: input.driverDeviceId,
+          model: "iPhone 15 Pro",
+          osVersion: "18.4",
+          platform: "ios",
+          reenrolled: false,
+        },
+        stored: 1,
+      },
+      {
+        payload: expect.objectContaining({ appCount: 2, model: "iPhone 16", reenrolled: true }),
+        stored: 1,
+      },
+    ]);
+  });
+
+  it("refuses to re-enrol or unenrol a leased physical record, and a virtual one", async () => {
+    const { registry } = await load();
+    const device = await registry.enrollPhysical(input);
+    await registry.createLease({
+      deviceId: device.id,
+      ownerId: "a",
+      requesterId: "a",
+      ttlDeadline: 9_000,
+      ttlMs: 8_000,
+    });
+    const virtual = await readyVirtual(registry, "d1");
+
+    await expect(registry.reenrollPhysical(device.id, input)).rejects.toThrow(RegistryEventError);
+    await expect(registry.unenrollPhysical(device.id)).rejects.toThrow(RegistryEventError);
+    await expect(registry.unenrollPhysical(virtual.id)).rejects.toThrow(RegistryEventError);
   });
 });

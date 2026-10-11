@@ -1557,6 +1557,27 @@ describe("AndroidDriver", () => {
     expect(reality.processes).toEqual([expect.objectContaining({ deviceId: "simlock_running" })]);
   });
 
+  it("inspectPhysical refuses every ID as not-connected, with a message that it cannot read physical devices yet, and starts no process", async () => {
+    const filesystem = await androidFilesystem();
+    const runner = new ScriptedProcessRunner([]);
+    const driver = await createDriver(filesystem, runner);
+    const callsBefore = runner.calls.length;
+
+    const reads = await Promise.all([
+      driver.inspectPhysical("R58M123ABC"),
+      driver.inspectPhysical("emulator-5554"),
+    ]);
+
+    for (const read of reads) {
+      expect(read).toEqual({
+        enrollable: false,
+        message: "this driver cannot read physical devices yet",
+        reason: "not-connected",
+      });
+    }
+    expect(runner.calls).toHaveLength(callsBefore);
+  });
+
   it("listManaged passes a 30-second timeout to adb devices", async () => {
     const filesystem = await androidFilesystem();
     await filesystem.mkdirp(`${avdDirectory}/simlock_idle.avd`);

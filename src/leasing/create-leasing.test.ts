@@ -4121,3 +4121,54 @@ describe("createLeasing: a gateway dispatch is a probe (ADR 0021)", () => {
     });
   });
 });
+
+describe("createLeasing after a quarantine retry (ADR 0022 §2)", () => {
+  it("grants a request that waits at capacity the quarantined simulator, with no boot, once its retry succeeds", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" });
+    driver.failOn("reclaim", 1, new DriverCrashError("purge exploded"));
+    const harness = await createHarness({ driver });
+    const first = await harness.engine.request(request, { ownerId: "first", requesterId: "first" });
+    await harness.engine.release(first.lease.id, "explicit");
+    await harness.engine.settle();
+    expect(harness.registry.snapshot.devices[0]?.state).toBe("quarantined");
+    const bootsBefore = driver.calls.filter((call) => call.operation === "makeReady").length;
+    const waiting = harness.engine.request(request, { ownerId: "second", requesterId: "second" });
+    await flush();
+
+    harness.clock.advance(config().warmPool.quarantine.retryBackoffMs);
+    await flush();
+
+    const grant = await waiting;
+    expect(grant.device.id).toBe(first.device.id);
+    expect(driver.calls.filter((call) => call.operation === "makeReady")).toHaveLength(bootsBefore);
+    expect(driver.calls.filter((call) => call.operation === "provision")).toHaveLength(1);
+  });
+
+  it("reports a warm target of one for the quarantined simulator's spec as ready 1 in the pass the retry's device.quarantine-recovered starts", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" });
+    driver.failOn("reclaim", 1, new DriverCrashError("purge exploded"));
+    const harness = await createHarness({
+      driver,
+      warmPool: { targets: [{ count: 1, model: "iPhone 16", osVersion: "26.5", platform: "ios" }] },
+    });
+    await harness.engine.convergeRunningCapacity();
+    harness.bus.emit("daemon.started", { configSnapshot: {}, version: "test" }, "test");
+    await harness.engine.settle();
+    const first = await harness.engine.request(request, { ownerId: "first", requesterId: "first" });
+    await harness.engine.release(first.lease.id, "explicit");
+    await harness.engine.settle();
+    expect(harness.registry.snapshot.devices[0]?.state).toBe("quarantined");
+    expect(harness.engine.core.warmPoolReader.figures().targets[0]?.ready).toBe(0);
+
+    harness.clock.advance(config().warmPool.quarantine.retryBackoffMs);
+    await flush();
+    await harness.engine.settle();
+
+    expect(harness.registry.snapshot.devices[0]?.state).toBe("ready");
+    expect(harness.engine.core.warmPoolReader.figures().targets).toMatchObject([
+      { count: 1, ready: 1 },
+    ]);
+  });
+});

@@ -253,7 +253,7 @@ export const statusDeviceSchema = z
   .superRefine((device, context) => checkDeviceType(device, context, true))
   // `list.get` records carry a virtual device's driver address, and a worker view parses them
   // through this schema: it drops the address of a device whose canonical ID is not shown.
-  .transform((device) => {
+  .transform((device): typeof device => {
     if (device.physical || device.driverDeviceId === undefined) return device;
     const { driverDeviceId: _address, ...rest } = device;
     return rest;

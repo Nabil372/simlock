@@ -66,6 +66,9 @@ const ROLE_MATRIX: ReadonlyArray<{
   },
   // ADR 0010 §8: removal is destructive, so admin-only.
   { name: "component.remove", input: { platform: "ios", version: "26.4" }, role: "admin" },
+  // ADR 0022 §2: enrolling and unenrolling a physical device is an operator's decision.
+  { name: "device.add", input: { id: "00008110-001A2B3C4D5E", platform: "ios" }, role: "admin" },
+  { name: "device.remove", input: { id: "00008110-001A2B3C4D5E" }, role: "admin" },
 ];
 
 describe("operation role matrix", () => {
@@ -133,6 +136,8 @@ const EFFECT_MATRIX: ReadonlyArray<{
     effect: "write",
   },
   { name: "component.remove", input: { platform: "ios", version: "26.4" }, effect: "write" },
+  { name: "device.add", input: { id: "00008110-001A2B3C4D5E", platform: "ios" }, effect: "write" },
+  { name: "device.remove", input: { id: "00008110-001A2B3C4D5E" }, effect: "write" },
 ];
 
 function resolvedEffect(name: OperationName, input: unknown): unknown {
@@ -1262,5 +1267,31 @@ describe("lease.request names a model, a class, or nothing (ADR 0015 §1)", () =
     expect(requestedClass({ class: "tv" })).toBe("tv");
     expect(requestedClass({})).toBe("phone");
     expect(requestedClass({ model: "iPhone 16" })).toBeUndefined();
+  });
+});
+
+describe("device.add and device.remove ids (ADR 0022 §2)", () => {
+  const long = "x".repeat(201);
+
+  it.each([
+    ["201 characters", long],
+    ["a space", "00008110 001A2B3C4D5E"],
+    ["a tab", "00008110\t001A2B3C4D5E"],
+    ["a control character", "00008110\u0007001A2B3C4D5E"],
+    ["a leading dash", "-00008110-001A2B3C4D5E"],
+    ["nothing", ""],
+  ])("refuses an id with %s", (_case, id) => {
+    expect(OPERATIONS["device.add"].input.safeParse({ id, platform: "ios" }).success).toBe(false);
+    expect(OPERATIONS["device.remove"].input.safeParse({ id }).success).toBe(false);
+  });
+
+  it("takes an id of exactly 200 characters, and refuses a field it does not declare", () => {
+    const id = "x".repeat(200);
+
+    expect(OPERATIONS["device.add"].input.safeParse({ id, platform: "ios" }).success).toBe(true);
+    expect(
+      OPERATIONS["device.add"].input.safeParse({ id: "A", platform: "ios", worker: "w1" }).success,
+    ).toBe(false);
+    expect(OPERATIONS["device.remove"].input.safeParse({ id: "A", yes: true }).success).toBe(false);
   });
 });

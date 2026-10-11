@@ -94,6 +94,40 @@ describe("the page of a worker that has finished starting", () => {
     expect(shown).not.toContain("appear once startup finishes");
   });
 
+  it("marks a simulator Virtual and an enrolled device Physical, and shows a dash for the physical device's mode and image tag", () => {
+    const shown = detail({
+      ...RUNNING,
+      devices: [
+        {
+          physical: false,
+          id: "dev_sim",
+          mode: "full",
+          servesDefaultMode: true,
+          spec: {
+            imageTag: "google_apis",
+            model: "Pixel 9",
+            osVersion: "35",
+            physical: false,
+            platform: "android",
+          },
+          state: "ready",
+        },
+        {
+          class: "phone",
+          driverDeviceId: "00008110-001A2B3C4D5E",
+          id: "dev_phys",
+          physical: true,
+          servesDefaultMode: true,
+          spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+          state: "ready",
+        },
+      ],
+    });
+
+    expect(shown).toContain("Android Virtual Pixel 9 35 full google_apis");
+    expect(shown).toContain("iOS Physical iPhone 15 Pro 18.4 — —");
+  });
+
   it("says so where a worker's catalog and devices were never read", () => {
     const { catalog: _catalog, devices: _devices, ...unread } = RUNNING;
 
