@@ -783,6 +783,23 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
     expect(stateOf(harness, device)).toBe("ready");
   });
 
+  it("two ready devices read not present for the grace period both become absent, each judged on its own state", async () => {
+    const harness = await createHarness();
+    const first = await enrollIphone(harness, "UDID-A");
+    const second = await enrollIphone(harness, "UDID-B");
+    gone(harness, "UDID-A", "locked");
+    gone(harness, "UDID-B", "untrusted");
+    startWatcher(harness);
+
+    await tick(harness, 2);
+
+    expect([stateOf(harness, first), stateOf(harness, second)]).toEqual(["absent", "absent"]);
+    expect([absentReasonOf(harness, first), absentReasonOf(harness, second)]).toEqual([
+      "locked",
+      "untrusted",
+    ]);
+  });
+
   it("a tick where one device's action throws (its registry write fails) logs it, still acts on the other devices, and arms the next tick; that device's count is not reset, so the next not-present read acts on it again", async () => {
     const { logger, sink } = capturingLogger();
     const harness = await createHarness({ logger });

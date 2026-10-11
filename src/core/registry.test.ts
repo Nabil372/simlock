@@ -3224,6 +3224,38 @@ describe("Registry: absent physical devices (ADR 0022 §2, §8)", () => {
     ]);
   });
 
+  it("an absent physical device that device add makes ready emits device.ready, and a ready one that goes absent is not stamped reclaimingSince", async () => {
+    const { bus, loaded, transitionAny } = await stateFile({
+      physicalDevices: [{ ...physicalRecord, state: "ready" }],
+    });
+    const registry = await loaded();
+    const seen: string[] = [];
+    bus.subscribeAll((envelope) => seen.push(envelope.event));
+
+    await transitionAny(registry)(
+      "dev_physical",
+      "absent",
+      {
+        event: "device.absence-detected",
+        payload: { absentReason: "locked", deviceId: "dev_physical", previousState: "ready" },
+      },
+      { absentReason: "locked" },
+    );
+    const absent = registry.snapshot.devices.find((entry) => entry.id === "dev_physical");
+    await transitionAny(registry)(
+      "dev_physical",
+      "ready",
+      {
+        event: "device.ready",
+        payload: { bootDuration: 0, deviceId: "dev_physical" },
+      },
+      {},
+    );
+
+    expect(absent).not.toHaveProperty("reclaimingSince");
+    expect(seen).toEqual(["device.absence-detected", "device.ready"]);
+  });
+
   it("endLeaseAndMarkDeviceAbsent ends only the named lease, keeps every other device and lease, and emits from the registry", async () => {
     const { bus, loaded } = await stateFile({
       leases: [leaseOf("dev_other"), leaseOf("dev_physical")],
