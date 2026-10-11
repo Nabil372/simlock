@@ -156,11 +156,11 @@ does (see `docs/internal/ARCHITECTURE.md`, "Quarantine: present but not
 grantable") — `AcquisitionPlanner` and the idle-order eviction helpers select
 targets by exact state, so a quarantined device is simply invisible to every
 grant path with no special-casing required. `QuarantineCoordinator` retries
-the purge of a virtual device on a `Clock`-driven backoff (`warmPool.quarantine.{maxRetries,
+the purge of a device on a `Clock`-driven backoff (`warmPool.quarantine.{maxRetries,
 retryBackoffMs,retryBackoffMultiplier,maxRetryBackoffMs}`); a successful
 retry returns the device to the warm pool, and exhausting the retry budget
-destroys it (registry-only, as always). A quarantined physical device gets no
-retry yet: it stays quarantined. The device stays visible as
+destroys a virtual one (registry-only, as always) and unenrols a physical one,
+which Simlock never destroys. The device stays visible as
 `quarantined` in `simlock status` and `simlock list --devices` throughout.
 `device.purge-failed` still fires as before; `device.quarantined`,
 `device.quarantine-recovered`, and `device.quarantine-abandoned` are the new
@@ -1174,5 +1174,35 @@ and the record is safe: the older Simlock never sees the device, so it cannot
 treat a phone as a simulator.
 
 **What to do before a rollback:** release every lease on a physical device while
-the newer Simlock is still running. No upgrade note says so yet: the release that
-enrols physical devices adds one.
+the newer Simlock is still running. `docs/CLI.md`, "Leasing a physical device", says so.
+
+## Physical devices have no accident boundary
+
+A simulator or emulator lives in a root only Simlock reads, so a plain `simctl` or
+`adb` does not see it. An enrolled physical device is plugged into the host:
+every tool on it sees the device, and an agent can reach one it did not lease, by
+its UDID or serial, with a plain `xcrun` or `adb`.
+
+**The pitfall:** nothing stops an agent from installing on, or uninstalling from,
+a device another agent holds, or one nobody holds. A release's reclaim then
+uninstalls an app that agent installed on purpose, because it is not on the
+enrollment list.
+
+**Why it is accepted:** the platform tools give no way to hide a device from
+the host's other users, and the lease environment (`SIMLOCK_DEVICE_UDID`,
+`ANDROID_SERIAL`) is advice, as the device roots are.
+
+**What to do:** enrol a device again (`simlock device add`) after installing an
+app on it on purpose, so the app joins its list.
+
+## Two instances can enrol the same device
+
+Each Simlock instance keeps its own enrollment list, and nothing coordinates
+two of them on one phone. Each one's release uninstalls every app that is not on
+its own list, so the apps the other instance's agents installed go too.
+
+**Why it is accepted:** one host runs one daemon in the common case, and a
+second instance on the same machine is a configuration mistake the host's
+tools give no way to detect.
+
+**What to do:** enrol a device in one Simlock instance only.

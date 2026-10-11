@@ -225,7 +225,7 @@ directly shows its holder's id as that worker reports it.
 | Device | The platform and the model it asked for, or the class for a request that named a class, or only the platform for one that named neither; and the runtime, mode and image tag when it named them |
 | Worker | The worker whose own queue it waits in, or `—` for a request in a gateway's queue |
 | Stage | `queued` while it waits its turn, `starting` while the daemon is working on it: placing it as it arrives, or finding, creating, booting or downloading a device for it |
-| Place in queue | Where it stands, counting from 1, the requests ahead of it that are already starting included; `—` while starting |
+| Place in queue | Where it stands in its own line, counting from 1, the requests ahead of it in that line that are already starting included; `—` while starting. A request for a physical device waits in a line of its own and shows `(physical)` after its place, for example `1 (physical)` |
 | Waiting for | How long since the daemon received it |
 
 On a gateway the list has the gateway's own queue and, for each connected
