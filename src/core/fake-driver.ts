@@ -213,7 +213,9 @@ export class FakeDriver implements Driver {
   /** Bumped on every `makeReady` boot -- mirrors a real driver reassigning a port per boot. */
   readonly #bootCounts = new Map<string, number>();
   #managedReality: DriverReality | undefined;
-  #physicalDevices: readonly FakePhysicalDevice[];
+  /** What `setPhysicalDevices` replaced, or the option when it never ran. */
+  #physicalDevices: readonly FakePhysicalDevice[] | undefined;
+  readonly #scriptedPhysicalDevices: FakeDriverOptions["physicalDevices"];
 
   constructor(options: FakeDriverOptions) {
     this.#availableOsVersions = new Set(options.availableOsVersions ?? ["latest"]);
@@ -239,7 +241,7 @@ export class FakeDriver implements Driver {
     this.deviceRoot = options.deviceRoot ?? `/fake/${options.platform}`;
     this.#reclaimResult = options.reclaimResult ?? "ready";
     this.#reclaimStrategy = options.reclaimStrategy ?? "wipe";
-    this.#physicalDevices = options.physicalDevices ?? [];
+    this.#scriptedPhysicalDevices = options.physicalDevices;
     this.#install = options;
     this.#receipts = preinstalledReceipts(this.#availableOsVersions);
   }
@@ -553,7 +555,8 @@ export class FakeDriver implements Driver {
 
   async inspectPhysical(id: string): Promise<PhysicalInspection> {
     await this.#beforeCall("inspectPhysical", id);
-    const device = this.#physicalDevices.find((candidate) => candidate.ids.includes(id));
+    const scripted = this.#physicalDevices ?? this.#scriptedPhysicalDevices ?? [];
+    const device = scripted.find((candidate) => candidate.ids.includes(id));
     if (device === undefined) {
       return { enrollable: false, message: `${id} is not connected`, reason: "not-connected" };
     }

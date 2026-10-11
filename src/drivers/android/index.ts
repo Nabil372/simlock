@@ -1015,7 +1015,6 @@ export class AndroidDriver implements Driver {
     });
   }
 
-  // fallow-ignore-next-line unused-class-member -- called through the core's Driver interface.
   async inspectPhysical(_id: string): Promise<PhysicalInspection> {
     return {
       enrollable: false,

@@ -58,7 +58,6 @@ export {
   type DriverDevice,
   type DriverEstimate,
   type DriverReality,
-  type DriverRefusalReason,
   type DriverRejection,
   type DriverToolVersion,
   InsufficientDiskSpaceError,
@@ -127,9 +126,7 @@ export {
   DeviceBusyError,
   DeviceNotEnrollableError,
   PhysicalEnrollment,
-  PhysicalInspectionError,
   UnknownEnrolledDeviceError,
-  type PhysicalEnrollmentResult,
 } from "./physical-enrollment.js";
 export { DeviceProvisioner } from "./device-provisioner.js";
 export {

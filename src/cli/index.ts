@@ -1973,46 +1973,76 @@ async function runDevice(
   if (command !== "add" && command !== "remove") {
     throw new UsageError(withHelpHint(`Unknown device command: ${command}`));
   }
-  const values = commandArgs(argv.slice(1), {
+  const parsed = parseDeviceArgs(command, argv.slice(1));
+  if (parsed === "help") {
+    environment.stdout.write(DEVICE_USAGE);
+    return 0;
+  }
+  const client = await connectDaemonClient(environment, token);
+  try {
+    const { line, result } =
+      parsed.platform === undefined
+        ? await removeDevice(client, parsed.id)
+        : await addDevice(client, parsed.id, parsed.platform);
+    environment.stdout.write(`${parsed.json ? JSON.stringify(result) : line}\n`);
+    return 0;
+  } finally {
+    await client.close();
+  }
+}
+
+/** `device add`'s arguments: one ID and `--platform`; `device remove`'s: one ID. */
+function parseDeviceArgs(
+  command: "add" | "remove",
+  argv: readonly string[],
+):
+  | {
+      readonly id: string;
+      readonly json: boolean;
+      readonly platform: "ios" | "android" | undefined;
+    }
+  | "help" {
+  const values = commandArgs(argv, {
     help: { type: "boolean", short: "h" },
     json: { type: "boolean" },
     ...(command === "add" ? { platform: { type: "string" as const } } : {}),
   });
-  if (values.help) {
-    environment.stdout.write(DEVICE_USAGE);
-    return 0;
-  }
+  if (values.help) return "help";
   const [id, ...extra] = values.positionals;
   if (id === undefined || extra.length > 0) {
     throw new UsageError(withHelpHint(`device ${command} takes exactly one <id>`));
   }
-  const platform = values.platform;
-  if (command === "add" && platform !== "ios" && platform !== "android") {
+  const json = values.json === true;
+  if (command === "remove") return { id, json, platform: undefined };
+  if (values.platform !== "ios" && values.platform !== "android") {
     throw new UsageError(
       withHelpHint(
         "device add needs --platform ios or --platform android, to say which driver reads the device",
       ),
     );
   }
-  const client = await connectDaemonClient(environment, token);
-  try {
-    if (command === "add") {
-      const result = await client.addDevice({ id, platform: platform as "ios" | "android" });
-      environment.stdout.write(
-        values.json === true ? `${JSON.stringify(result)}\n` : `${describeEnrolled(result)}\n`,
-      );
-      return 0;
-    }
-    const result = await client.removeDevice({ id });
-    environment.stdout.write(
-      values.json === true
-        ? `${JSON.stringify(result)}\n`
-        : `Removed ${result.driverDeviceId}. It is no longer enrolled; nothing on the device changed.\n`,
-    );
-    return 0;
-  } finally {
-    await client.close();
-  }
+  return { id, json, platform: values.platform };
+}
+
+async function addDevice(
+  client: SimlockAdminClient,
+  id: string,
+  platform: "ios" | "android",
+): Promise<{ readonly line: string; readonly result: unknown }> {
+  const result = await client.addDevice({ id, platform });
+  return { line: describeEnrolled(result), result };
+}
+
+async function removeDevice(
+  client: SimlockAdminClient,
+  id: string,
+): Promise<{ readonly line: string; readonly result: unknown }> {
+  const result = await client.removeDevice({ id });
+  return { line: describeRemoved(result), result };
+}
+
+function describeRemoved(result: { readonly driverDeviceId: string }): string {
+  return `Removed ${result.driverDeviceId}. It is no longer enrolled; nothing on the device changed.`;
 }
 
 /** `Enrolled iPhone 15 Pro (iOS 18.4) as <ID>[ again], 12 user apps recorded.` */

@@ -12,7 +12,7 @@
 import type { DeviceClass, Platform } from "./schemas.js";
 
 /** Why a device cannot be enrolled (ADR 0022 §2); `DEVICE_NOT_ENROLLABLE`'s `reason`. */
-export const DEVICE_NOT_ENROLLABLE_REASONS = [
+const DEVICE_NOT_ENROLLABLE_REASONS = [
   "not-connected",
   "network-only",
   "untrusted",

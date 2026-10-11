@@ -49,14 +49,14 @@ export class UnknownEnrolledDeviceError extends Error {
 }
 
 /** A driver's `inspectPhysical` threw, or named another device than the one asked for. */
-export class PhysicalInspectionError extends Error {
+class PhysicalInspectionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PhysicalInspectionError";
   }
 }
 
-export interface PhysicalEnrollmentResult {
+interface PhysicalEnrollmentResult {
   readonly device: PhysicalDevice;
   readonly reenrolled: boolean;
 }
@@ -65,10 +65,15 @@ export interface PhysicalEnrollmentOptions {
   readonly claims: Pick<DeviceOperationClaims, "claim" | "tryClaim">;
   readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: { get(platform: Platform): Driver };
-  readonly registry: Pick<
-    Registry,
-    "enrollPhysical" | "reenrollPhysical" | "snapshot" | "unenrollPhysical"
-  >;
+  readonly registry: PhysicalEnrollmentRegistry;
+}
+
+/** The four registry members enrollment uses; `Registry` is what the composition root passes. */
+export interface PhysicalEnrollmentRegistry {
+  readonly snapshot: Pick<Registry["snapshot"], "devices" | "virtualDevices">;
+  enrollPhysical(input: PhysicalEnrollmentInput): Promise<PhysicalDevice>;
+  reenrollPhysical(deviceId: string, input: PhysicalEnrollmentInput): Promise<PhysicalDevice>;
+  unenrollPhysical(deviceId: string): Promise<PhysicalDevice>;
 }
 
 /**
@@ -124,6 +129,7 @@ export class PhysicalEnrollment {
     }
   }
 
+  // fallow-ignore-next-line unused-class-member -- called through the dispatcher's enrollment port.
   async remove(id: string): Promise<PhysicalDevice> {
     return this.options.decisions.run(() => {
       const existing = this.#enrolled(id);
