@@ -721,8 +721,6 @@ export class Doctor {
   }
 
   /**
-   * Destroys a stranded pre-root device and then records what that leaves behind.
-   *
    * The destroy reaches outside the driver's root, which every other path in Simlock is
    * forbidden to do -- and is permitted here for one reason: the device is in the registry.
    * Registry-only destruction (safety rule 1) is a rule about *what may be destroyed*, and

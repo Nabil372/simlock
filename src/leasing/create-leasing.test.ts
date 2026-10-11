@@ -1904,7 +1904,6 @@ describe("createLeasing fresh lease identity (#75)", () => {
       lease: { defaultTtlMs: 14_400_000 },
     });
     const granted = await harness.engine.request(request, { ownerId: "a", requesterId: "a" });
-    // The device vanished from driver reality: recovery gives up and ends the lease as lost.
     harness.driver.setManagedReality({ devices: [], processes: [] });
 
     harness.engine.healthMonitor.start();
