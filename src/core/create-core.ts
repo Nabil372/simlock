@@ -25,6 +25,7 @@ import type { DeviceRequest, Driver, DriverRejection, PrerequisiteCheck } from "
 import { DriverCatalog, type ModelPreferences } from "./driver-catalog.js";
 import { ManagedDeviceLifecycle } from "./managed-device-lifecycle.js";
 import { type AcquisitionMaintenance, type LeaseMaintenance, NukeService } from "./nuke-service.js";
+import { PhysicalEnrollment } from "./physical-enrollment.js";
 import { QuarantineCoordinator } from "./quarantine-coordinator.js";
 import { ReclaimCoordinator } from "./reclaim-coordinator.js";
 import type { Registry } from "./registry.js";
@@ -127,6 +128,8 @@ export interface Core {
   readonly deviceLifecycle: ManagedDeviceLifecycle;
   readonly doctor: Doctor;
   readonly drivers: DriverCatalog;
+  /** `device add` and `device remove`: enrols and unenrols physical devices (ADR 0022 §2). */
+  readonly enrollment: PhysicalEnrollment;
   readonly nuke: NukeService;
   readonly provisioner: DeviceProvisioner;
   readonly quarantine: QuarantineCoordinator;
@@ -238,6 +241,7 @@ export function createCore(options: CoreOptions): Core {
     registry,
   });
   const quarantine = new QuarantineCoordinator({
+    claims,
     clock: options.clock,
     config: options.config.warmPool.quarantine,
     decisions,
@@ -258,6 +262,7 @@ export function createCore(options: CoreOptions): Core {
     quarantine,
     registry,
   });
+  const enrollment = new PhysicalEnrollment({ claims, decisions, drivers, registry });
   const cleanup = new CleanupExecutor({
     eventBus: options.eventBus,
     lifecycle: deviceLifecycle,
@@ -360,6 +365,7 @@ export function createCore(options: CoreOptions): Core {
     deviceLifecycle,
     doctor,
     drivers,
+    enrollment,
     nuke,
     provisioner,
     quarantine,

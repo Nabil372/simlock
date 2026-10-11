@@ -193,9 +193,11 @@ export const deviceRecordSchema = z
  * - `stalled`: the stall decoration, surfaced as "stalled": a caller waiting on capacity can see
  *   that a slot is held by a transition that is not finishing.
  *
- * What stays off, and why: `driverDeviceId` (the driver address of a device the caller does
- * not hold is not actionable -- a non-owning agent cannot drive it, and a holder already gets
- * it on their grant), `driverData` (opaque driver-private blob, unbounded contents),
+ * What stays off, and why: `driverDeviceId` of a virtual device (the driver address of a device
+ * the caller does not hold is not actionable -- a non-owning agent cannot drive it, and a holder
+ * already gets it on their grant). A physical device differs: its canonical ID is how an operator
+ * names it to `device remove`, and it names a device on the desk, not a driver address only its
+ * holder can use, so it is shown to every role. Also off: `driverData` (opaque driver-private blob, unbounded contents),
  * `createdAt`/`lastLeaseEndedAt` (internal bookkeeping timestamps the human formatter never
  * reads), `recoveringSince`/`recoveryAttempts` (crash-recovery bookkeeping -- `safety.md` rule
  * 2 scopes that privilege narrowly, and broadcasting its progress to every agent is not part of
@@ -218,6 +220,8 @@ export const statusDeviceSchema = z
     mode: deviceModeSchema.optional(),
     /** Present exactly when `physical` is `true`. */
     class: physicalClassSchema.optional(),
+    /** A physical device's canonical ID, the ID `device remove` takes; never set on a virtual one. */
+    driverDeviceId: z.string().optional(),
     /**
      * ADR 0009 §6: whether the device's pool mode (its spec's mode, full when it names none) is the
      * worker's default mode for the device's platform -- the pool a request naming no mode draws
@@ -246,7 +250,14 @@ export const statusDeviceSchema = z
      */
     workerId: z.string().optional(),
   })
-  .superRefine((device, context) => checkDeviceType(device, context, true));
+  .superRefine((device, context) => checkDeviceType(device, context, true))
+  // `list.get` records carry a virtual device's driver address, and a worker view parses them
+  // through this schema: it drops the address of a device whose canonical ID is not shown.
+  .transform((device) => {
+    if (device.physical || device.driverDeviceId === undefined) return device;
+    const { driverDeviceId: _address, ...rest } = device;
+    return rest;
+  });
 
 /**
  * The device a `lease.request`/`lease.renew` grant carries -- deliberately narrower than

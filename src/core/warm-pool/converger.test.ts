@@ -478,7 +478,11 @@ describe("warm pool converger", () => {
     await vi.waitFor(() => expect(rig.shutdownCalls).toEqual(["a"]));
     expect(rig.waitingDemand).toHaveBeenCalledTimes(1);
     rig.eventBus.emit("device.shutdown", { deviceId: "x", initiator: "test" }, "test");
-    rig.eventBus.emit("device.deleted", { deviceId: "y", initiator: "test" }, "test");
+    rig.eventBus.emit(
+      "device.deleted",
+      { deviceId: "y", initiator: "test", physical: false },
+      "test",
+    );
     release();
     await rig.pool.settle();
 
@@ -764,7 +768,7 @@ describe("warm pool converger", () => {
       ],
       ["lease.released", { deviceId: "d", leaseId: "l", ownerId: "o", reason: "explicit" }],
       ["device.shutdown", { deviceId: "d", initiator: "test" }],
-      ["device.deleted", { deviceId: "d", initiator: "test" }],
+      ["device.deleted", { deviceId: "d", initiator: "test", physical: false }],
       ["cleanup.executed", { action: "shutdown", reason: "r", ruleName: "n", target: "d" }],
     ] as const;
     const rig = harness([]);

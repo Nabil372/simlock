@@ -3004,7 +3004,11 @@ describe("createLeasing warm pool", () => {
     await seedReady(harness);
     await seedReady(harness);
 
-    harness.bus.emit("device.deleted", { deviceId: "x", initiator: "test" }, "test");
+    harness.bus.emit(
+      "device.deleted",
+      { deviceId: "x", initiator: "test", physical: false },
+      "test",
+    );
     await harness.engine.settle();
     expect(harness.registry.snapshot.devices.map((item) => item.state)).toEqual(["ready", "ready"]);
 

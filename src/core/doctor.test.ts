@@ -1225,6 +1225,7 @@ describe("Doctor", () => {
         processes: [],
       });
       const quarantine = new QuarantineCoordinator({
+        claims: new DeviceOperationClaims(),
         clock,
         config: {
           maxRetries: 3,
@@ -2494,6 +2495,7 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
     const decisions = new SerializedDecision();
     const decisionRuns = vi.spyOn(decisions, "run");
     const quarantine = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: {
         maxRetries: 3,

@@ -6,6 +6,7 @@ import type {
   DeviceMode,
   DeviceSpec,
   DeviceTransitionUpdate,
+  PhysicalClass,
   Platform,
   VirtualSpec,
 } from "./domain.js";
@@ -250,6 +251,42 @@ export interface DriverToolVersion {
   readonly build?: string;
 }
 
+/**
+ * Why a driver refuses to enrol a device (ADR 0022 §2): every `DEVICE_NOT_ENROLLABLE` reason
+ * except `enrolled-on-other-platform`, which only the core can know. `virtual-device` is a
+ * driver's too, for any virtual device it reads that is not Simlock's own.
+ */
+export type DriverRefusalReason =
+  | "not-connected"
+  | "network-only"
+  | "untrusted"
+  | "developer-mode-off"
+  | "os-too-old"
+  | "unsupported-kind"
+  | "locked"
+  | "unreadable"
+  | "virtual-device";
+
+/**
+ * What a driver read of a physical device (ADR 0022 §5). `driverDeviceId` is the canonical ID
+ * whatever ID was asked. `apps` are the app IDs the enrolment app list holds; which apps, per
+ * platform, is the driver's. A refusal carries the driver's reason and its own message.
+ */
+export type PhysicalInspection =
+  | {
+      readonly enrollable: true;
+      readonly driverDeviceId: string;
+      readonly model: string;
+      readonly osVersion: string;
+      readonly class: PhysicalClass;
+      readonly apps: readonly string[];
+    }
+  | {
+      readonly enrollable: false;
+      readonly reason: DriverRefusalReason;
+      readonly message: string;
+    };
+
 export interface Driver {
   readonly platform: Platform;
   /**
@@ -369,6 +406,13 @@ export interface Driver {
   shutdown(device: VirtualDriverDevice): Promise<void>;
   destroy(device: VirtualDriverDevice): Promise<void>;
   listManaged(): Promise<DriverReality>;
+  /**
+   * Reads a physical device by whatever ID an operator typed, for `device add` (ADR 0022 §5). A
+   * read: it changes nothing on the device. A device it cannot enrol is a refusal with the
+   * driver's reason and message, and so is a read that failed or timed out (`unreadable`, naming
+   * the read): the core relays it and a throw is a driver bug.
+   */
+  inspectPhysical(id: string): Promise<PhysicalInspection>;
   /** Read-only: must never trigger a runtime / system-image download. */
   listCatalog(): Promise<DriverCatalogEntry>;
   estimate(estimate: DriverEstimate, spec: DeviceSpec): number;

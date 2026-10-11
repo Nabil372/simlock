@@ -192,7 +192,30 @@ export interface EventMap {
     readonly deviceRoot: string;
   };
   "device.shutdown": { readonly deviceId: string; readonly initiator: string };
-  "device.deleted": { readonly deviceId: string; readonly initiator: string };
+  /**
+   * Removed from the registry, and from disk for a virtual device (ADR 0022 §9). `physical` is
+   * the record's own flag; `initiator` is `operator` for a physical device unenrolled by
+   * `device remove`.
+   */
+  "device.deleted": {
+    readonly deviceId: string;
+    readonly initiator: string;
+    readonly physical: boolean;
+  };
+  /**
+   * An admin enrolled a physical device with `device add`, or enrolled one already enrolled
+   * again (`reenrolled`), which replaced the record's model, OS version, class and app list.
+   */
+  "device.enrolled": {
+    readonly deviceId: string;
+    readonly platform: string;
+    readonly driverDeviceId: string;
+    readonly model: string;
+    readonly osVersion: string;
+    readonly class: "phone" | "tablet";
+    readonly appCount: number;
+    readonly reenrolled: boolean;
+  };
   "device.slimmed": {
     readonly deviceId: string;
     readonly address: string;

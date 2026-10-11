@@ -146,10 +146,15 @@ export function DeviceTable({
       numeric: true,
     },
     { cell: (device) => platformName(device.spec.platform), header: "Platform" },
+    { cell: (device) => (device.physical ? "Physical" : "Virtual"), header: "Type" },
     { cell: (device) => device.spec.model, header: "Model" },
     { cell: (device) => device.spec.osVersion, header: "Runtime", mono: true },
-    { cell: (device) => device.mode, header: "Mode" },
-    { cell: (device) => device.spec.imageTag ?? "—", header: "Image tag", mono: true },
+    { cell: (device) => (device.physical ? "—" : device.mode), header: "Mode" },
+    {
+      cell: (device) => (device.physical ? "—" : (device.spec.imageTag ?? "—")),
+      header: "Image tag",
+      mono: true,
+    },
   ];
   return (
     <DataTable

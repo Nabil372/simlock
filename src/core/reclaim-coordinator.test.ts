@@ -57,7 +57,7 @@ class TestRegistry {
     if (event.event === "device.reclaimed") {
       this.eventBus.emit(event.event, event.payload, "test-registry");
     } else {
-      this.eventBus.emit(event.event, event.payload, "test-registry");
+      this.eventBus.emit(event.event, { ...event.payload, physical: false }, "test-registry");
     }
     return updated;
   }

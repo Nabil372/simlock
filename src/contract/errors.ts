@@ -11,6 +11,22 @@
  */
 import type { DeviceClass, Platform } from "./schemas.js";
 
+/** Why a device cannot be enrolled (ADR 0022 §2); `DEVICE_NOT_ENROLLABLE`'s `reason`. */
+export const DEVICE_NOT_ENROLLABLE_REASONS = [
+  "not-connected",
+  "network-only",
+  "untrusted",
+  "developer-mode-off",
+  "os-too-old",
+  "unsupported-kind",
+  "locked",
+  "unreadable",
+  "virtual-device",
+  "enrolled-on-other-platform",
+] as const;
+
+export type DeviceNotEnrollableReason = (typeof DEVICE_NOT_ENROLLABLE_REASONS)[number];
+
 export type ErrorKind = "transport" | "protocol" | "domain";
 
 /** Per-code `details` shapes. `Record<string, never>` means "no details, an empty object". */
@@ -94,6 +110,25 @@ export interface ErrorDetailsMap {
   /** ADR 0010 §8: a `component.remove` while an install or removal runs or waits on the platform. */
   COMPONENT_BUSY: Record<string, never>;
   UNKNOWN_LEASE: { readonly leaseId: string };
+  /**
+   * ADR 0022 §2: `device.add` of a device that cannot be enrolled. `id` is the ID as typed;
+   * `canonicalId` is set when the core knows it (`enrolled-on-other-platform`, and a refusal of
+   * the second inspection). The driver picks every reason but `enrolled-on-other-platform`, and
+   * `virtual-device` for Simlock's own simulators and emulators is the core's.
+   */
+  DEVICE_NOT_ENROLLABLE: {
+    readonly platform: Platform;
+    readonly id: string;
+    readonly reason: DeviceNotEnrollableReason;
+    readonly canonicalId?: string;
+  };
+  /**
+   * ADR 0022 §2: `device.add` or `device.remove` of a device something else holds: `leased`, a
+   * `reclaiming` device or one whose `reclaim` claim is held, or `busy` under another enrollment.
+   */
+  DEVICE_BUSY: { readonly id: string; readonly reason: "leased" | "reclaiming" | "busy" };
+  /** `device.remove` of an ID with no enrolled device: no record, or a `deleted` one. */
+  UNKNOWN_DEVICE: { readonly id: string };
   /** A `simlock <tool>` verb the owning driver will not proxy (ADR 0001, decision 7). Carries
    * the tool so a caller can say which wrapper refused without re-parsing the message. */
   PASSTHROUGH_REFUSED: { readonly tool: string };
@@ -204,6 +239,9 @@ const CODES_WITH_DECLARED_DETAILS_BY_CODE: Record<CodeWithDeclaredDetails, true>
   DOWNLOADS_DISABLED: true,
   COMPONENT_IN_USE: true,
   UNKNOWN_LEASE: true,
+  DEVICE_NOT_ENROLLABLE: true,
+  DEVICE_BUSY: true,
+  UNKNOWN_DEVICE: true,
   PASSTHROUGH_REFUSED: true,
   UNKNOWN_PASSTHROUGH_TOOL: true,
   UNSUPPORTED_IN_GATEWAY_MODE: true,
@@ -308,6 +346,17 @@ export const ERROR_TABLE: { readonly [Code in SimlockErrorCode]: ErrorTableEntry
     httpStatus: 422,
   },
   UNKNOWN_LEASE: { code: "UNKNOWN_LEASE", kind: "domain", cliExitCode: 1, httpStatus: 404 },
+  // A device that cannot be enrolled is a fact about the device, as `RUNTIME_MISSING` is about
+  // the host: 422 and 12. A busy device passes once what holds it ends, as `NO_CAPACITY` does:
+  // 409 and 11. An unknown device is the "what you named does not exist" class: 404 and 12.
+  DEVICE_NOT_ENROLLABLE: {
+    code: "DEVICE_NOT_ENROLLABLE",
+    kind: "domain",
+    cliExitCode: 12,
+    httpStatus: 422,
+  },
+  DEVICE_BUSY: { code: "DEVICE_BUSY", kind: "domain", cliExitCode: 11, httpStatus: 409 },
+  UNKNOWN_DEVICE: { code: "UNKNOWN_DEVICE", kind: "domain", cliExitCode: 12, httpStatus: 404 },
   // Both are caller errors -- a refused verb and an unknown wrapper are things the request got
   // wrong, not states of the host -- so they take the usage exit code and a 4xx.
   PASSTHROUGH_REFUSED: {

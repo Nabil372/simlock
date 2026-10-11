@@ -8,6 +8,7 @@ import {
   MemoryFilesystem,
   MemoryLogSink,
 } from "../ports/index.js";
+import { DeviceOperationClaims } from "./device-operation-claims.js";
 import { DriverCatalog } from "./driver-catalog.js";
 import type { VirtualDevice, VirtualSpec } from "./domain.js";
 import { FakeDriver } from "./fake-driver.js";
@@ -144,7 +145,9 @@ async function createHarness(
   const target = { ...device("dev_1", driverDevice.deviceId), ...options.target };
   const registry = new FakeRegistry([target]);
   const notifyAvailability = vi.fn();
+  const claims = new DeviceOperationClaims();
   const coordinator = new QuarantineCoordinator({
+    claims,
     clock,
     config: options.config ?? retryConfig,
     decisions: new SerializedDecision(),
@@ -154,7 +157,7 @@ async function createHarness(
     notifyAvailability,
     registry,
   });
-  return { bus, clock, coordinator, driver, notifyAvailability, registry, target };
+  return { bus, claims, clock, coordinator, driver, notifyAvailability, registry, target };
 }
 
 function eventsOf(bus: EventBus): readonly EventEnvelope[] {
@@ -549,6 +552,7 @@ describe("QuarantineCoordinator", () => {
     const notifyAvailability = vi.fn();
     const bus = new EventBus(clock);
     const coordinator = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: retryConfig,
       decisions: new SerializedDecision(),
@@ -578,6 +582,7 @@ describe("QuarantineCoordinator", () => {
       },
     ]);
     const coordinator = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: retryConfig,
       decisions: new SerializedDecision(),
@@ -603,6 +608,7 @@ describe("QuarantineCoordinator", () => {
       { ...device("dev_ready", driverDevice.deviceId), state: "ready", quarantineNextRetryAt: 500 },
     ]);
     const coordinator = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: retryConfig,
       decisions: new SerializedDecision(),
@@ -669,6 +675,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
     const decisions = new SerializedDecision();
     const decisionRuns = vi.spyOn(decisions, "run");
     const coordinator = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: retryConfig,
       decisions,

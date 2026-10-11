@@ -991,6 +991,64 @@ export const componentRemove = defineOperation({
   }),
 });
 
+// ---- device.add, device.remove (ADR 0022 §2) -----------------------------------------------
+
+/** The longest ID `device.add` and `device.remove` take: an ID is a claim, bounded before use. */
+const ENROLLED_DEVICE_ID_MAX_LENGTH = 200;
+
+/** An ID as an operator types it: no whitespace or control character, and not an option. */
+const enrollmentDeviceIdSchema = z
+  .string()
+  .min(1)
+  .max(ENROLLED_DEVICE_ID_MAX_LENGTH)
+  .refine(
+    (id) => [...id].every((character) => !/\s/u.test(character) && !isControlCharacter(character)),
+    "must not contain whitespace or control characters",
+  )
+  .refine((id) => !id.startsWith("-"), "must not start with -");
+
+function isControlCharacter(character: string): boolean {
+  const code = character.codePointAt(0) ?? 0;
+  return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+}
+
+/**
+ * Enrolls a physical device plugged into the host this daemon runs on, admin-only. The driver
+ * reads the device; the record is written only if the driver says it can be enrolled. `id` in
+ * the output is the registry ID, `driverDeviceId` the canonical one. `reenrolled` is true when
+ * the device already had a record, which kept its registry ID and took a fresh read.
+ */
+// fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
+export const deviceAdd = defineOperation({
+  name: "device.add",
+  role: "admin",
+  effect: "write",
+  input: z.object({ platform: platformSchema, id: enrollmentDeviceIdSchema }).strict(),
+  output: z.object({
+    id: z.string(),
+    driverDeviceId: z.string(),
+    platform: platformSchema,
+    model: z.string(),
+    osVersion: z.string(),
+    class: z.enum(["phone", "tablet"]),
+    appCount: z.number().int().nonnegative(),
+    reenrolled: z.boolean(),
+  }),
+});
+
+/**
+ * Forgets an enrolled physical device, admin-only. `id` is the canonical ID. Nothing is sent
+ * to the device.
+ */
+// fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
+export const deviceRemove = defineOperation({
+  name: "device.remove",
+  role: "admin",
+  effect: "write",
+  input: z.object({ id: enrollmentDeviceIdSchema }).strict(),
+  output: z.object({ id: z.string(), driverDeviceId: z.string() }),
+});
+
 // ---- the full registry ----------------------------------------------------------------------
 
 export const OPERATIONS = {
@@ -1024,6 +1082,8 @@ export const OPERATIONS = {
   "component.list": componentList,
   "worker.install-component": workerInstallComponent,
   "component.remove": componentRemove,
+  "device.add": deviceAdd,
+  "device.remove": deviceRemove,
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;

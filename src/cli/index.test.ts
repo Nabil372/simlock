@@ -1425,6 +1425,65 @@ describe("CLI: daemon status (ADR 0003 §11)", () => {
   });
 });
 
+describe("CLI: device add and device remove (ADR 0022 §2)", () => {
+  async function runDevice(argv: string[]) {
+    const output = outputCapture();
+    let connected = false;
+    const code = await runCli(
+      argv,
+      output.environmentWith({
+        connectAdmin: async () => {
+          connected = true;
+          return fakeClient();
+        },
+      }),
+    );
+    return { code, connected, stderr: output.stderr, stdout: output.stdout };
+  }
+
+  it.each([
+    ["an unknown subcommand", ["device", "enroll", "X"]],
+    ["two IDs", ["device", "add", "--platform", "ios", "A", "B"]],
+    ["--yes, which remove does not take", ["device", "remove", "--yes", "X"]],
+    ["no --platform", ["device", "add", "X"]],
+  ])("exits 2 with USAGE and contacts nobody for %s", async (_case, argv) => {
+    const result = await runDevice(argv);
+
+    expect(result.code).toBe(2);
+    expect(result.connected).toBe(false);
+    expect(JSON.parse(result.stderr)).toEqual({
+      error: { code: "USAGE", message: expect.any(String) },
+    });
+  });
+
+  it("device --help prints both forms", async () => {
+    const result = await runDevice(["device", "--help"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("simlock device add --platform <ios|android> <id> [--json]");
+    expect(result.stdout).toContain("simlock device remove <id> [--json]");
+  });
+
+  it("prints one line for an enrollment, naming the platform's OS, and the JSON with --json", async () => {
+    const line = await runDevice(["device", "add", "--platform", "ios", "UDID-1"]);
+    const json = await runDevice(["device", "add", "--platform", "android", "SER-1", "--json"]);
+
+    expect(line.stdout).toBe(
+      "Enrolled iPhone 15 Pro (iOS 18.4) as UDID-1, 2 user apps recorded.\n",
+    );
+    expect(JSON.parse(json.stdout)).toMatchObject({ driverDeviceId: "SER-1", platform: "android" });
+  });
+
+  it("prints one line for a removal, with no confirmation", async () => {
+    const result = await runDevice(["device", "remove", "UDID-1"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe(
+      "Removed UDID-1. It is no longer enrolled; nothing on the device changed.\n",
+    );
+  });
+});
+
 describe("CLI: component remove (ADR 0010 §8)", () => {
   /** A client that records every removal it is asked for and answers it. */
   function removingClient(asked: unknown[]) {
@@ -5196,6 +5255,18 @@ function fakeClient(overrides: Partial<SimlockAdminClient> = {}): SimlockAdminCl
         platform: input.platform,
         version: input.version,
       }),
+    addDevice: (input) =>
+      Promise.resolve({
+        appCount: 2,
+        class: "phone" as const,
+        driverDeviceId: input.id,
+        id: "dev_9",
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        platform: input.platform,
+        reenrolled: false,
+      }),
+    removeDevice: (input) => Promise.resolve({ driverDeviceId: input.id, id: input.id }),
     ...overrides,
   };
   return base;

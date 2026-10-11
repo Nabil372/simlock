@@ -17,6 +17,7 @@ import {
   DriverCrashError,
   type DriverEstimate,
   type DriverReality,
+  type PhysicalInspection,
   ensureOwnedRoot,
   type EnsureOwnedRootOptions,
   type InstalledComponent,
@@ -1279,6 +1280,15 @@ export class IosSimctlDriver implements Driver {
     // reports a failure that says nothing about whether the delete can proceed.
     await this.#invokeLegacySimctl(["shutdown", udid], COMMAND_TIMEOUT_MS);
     await this.#legacySimctl(["delete", udid], COMMAND_TIMEOUT_MS);
+  }
+
+  // fallow-ignore-next-line unused-class-member -- called through the core's Driver interface.
+  async inspectPhysical(_id: string): Promise<PhysicalInspection> {
+    return {
+      enrollable: false,
+      message: "this driver cannot read physical devices yet",
+      reason: "not-connected",
+    };
   }
 
   async listManaged(): Promise<DriverReality> {

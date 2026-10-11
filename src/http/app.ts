@@ -152,6 +152,9 @@ const componentInstallBodySchema = z
   })
   .strict();
 
+/** Shape only: the platform and the ID's bounds are `device.add`'s own contract schema's answer. */
+const deviceAddBodySchema = z.object({ id: z.string(), platform: z.string() }).strict();
+
 /** A route's JSON body, validated against its schema; a body that fails is `400 BAD_REQUEST`. */
 function jsonBody<Schema extends z.ZodTypeAny>(schema: Schema) {
   return zValidator("json", schema, (result, c) => {
@@ -298,6 +301,26 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
         version: c.req.param("version"),
         ...(dryRun === undefined ? {} : { dryRun: dryRun === "true" }),
       },
+      buildHttpSession(c.get("identity")),
+    );
+    return c.json(result);
+  });
+
+  // ADR 0022 §2: an admin enrols and unenrols a device plugged into this host. The role check,
+  // the bounds on `id` and what a refusal says are the operations' own, through the dispatcher.
+  app.post("/v1/devices", agentAuth, jsonBody(deviceAddBodySchema), async (c) => {
+    const result = await deps.dispatch(
+      "device.add",
+      c.req.valid("json"),
+      buildHttpSession(c.get("identity")),
+    );
+    return c.json(result);
+  });
+
+  app.delete("/v1/devices/:id", agentAuth, async (c) => {
+    const result = await deps.dispatch(
+      "device.remove",
+      { id: c.req.param("id") },
       buildHttpSession(c.get("identity")),
     );
     return c.json(result);

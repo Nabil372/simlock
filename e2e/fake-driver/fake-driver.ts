@@ -25,6 +25,7 @@ import {
   type ObservedRunState,
   type PassthroughCommand,
   type PassthroughContext,
+  type PhysicalInspection,
   PassthroughRefusedError,
   removeListedComponent,
   type DeviceClass,
@@ -471,6 +472,28 @@ export class OutOfProcessFakeDriver implements Driver {
         runState: runStateFor(status),
       })),
       processes: [],
+    };
+  }
+
+  /**
+   * Reads the scripted physical device `id` names, from the script as it is now. An ID no entry
+   * lists is `not-connected`, as a device that is not plugged in is.
+   */
+  async inspectPhysical(id: string): Promise<PhysicalInspection> {
+    const script = await this.#beforeCall("inspectPhysical", [id]);
+    const device = script.physicalDevices?.find((candidate) => candidate.ids.includes(id));
+    if (device === undefined) {
+      return { enrollable: false, message: `${id} is not connected`, reason: "not-connected" };
+    }
+    if (device.refusal !== undefined) return { enrollable: false, ...device.refusal };
+    const [canonical] = device.ids;
+    return {
+      apps: [...(device.apps ?? [])],
+      class: device.class ?? "phone",
+      driverDeviceId: canonical ?? id,
+      enrollable: true,
+      model: device.model ?? "Fake Phone",
+      osVersion: device.osVersion ?? "1.0",
     };
   }
 

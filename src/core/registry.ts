@@ -105,6 +105,16 @@ export interface RegisterDeviceInput {
   readonly provisionDuration: number;
 }
 
+/** What a driver's read of a physical device gives a record: everything `device.add` writes. */
+export interface PhysicalEnrollmentInput {
+  readonly platform: Platform;
+  readonly driverDeviceId: string;
+  readonly model: string;
+  readonly osVersion: string;
+  readonly class: PhysicalClass;
+  readonly apps: readonly string[];
+}
+
 export interface ReleasedLease {
   readonly device: DeviceRecord;
   readonly lease: LeaseRecord;
@@ -138,7 +148,11 @@ export type RegistryDeviceEvent =
   | { readonly event: "device.ready"; readonly payload: EventMap["device.ready"] }
   | { readonly event: "device.reclaimed"; readonly payload: EventMap["device.reclaimed"] }
   | { readonly event: "device.shutdown"; readonly payload: EventMap["device.shutdown"] }
-  | { readonly event: "device.deleted"; readonly payload: EventMap["device.deleted"] };
+  | {
+      readonly event: "device.deleted";
+      /** `physical` is the record's own: the registry adds it when it emits. */
+      readonly payload: Omit<EventMap["device.deleted"], "physical">;
+    };
 
 class RegistryLoadError extends Error {
   constructor(message: string) {
@@ -302,7 +316,7 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     await this.#commit(devices, this.#leases);
 
     if (event !== undefined) {
-      this.#emitDeviceEvent(event);
+      this.#emitDeviceEvent(event, updated);
     }
 
     return cloneDevice(updated);
@@ -455,7 +469,11 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     const devices = [...this.#devices];
     devices[index] = updated as DeviceRecord;
     await this.#commit(devices, this.#leases);
-    this.options.eventBus.emit("device.deleted", { deviceId, initiator }, "registry");
+    this.options.eventBus.emit(
+      "device.deleted",
+      { deviceId, initiator, physical: device.physical },
+      "registry",
+    );
     return cloneDevice(updated as DeviceRecord);
   }
 
@@ -545,7 +563,11 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
       return cloneDevice(device);
     }
     const deleted = await this.#commitMissing(device, this.#leases);
-    this.options.eventBus.emit("device.deleted", { deviceId, initiator }, "registry");
+    this.options.eventBus.emit(
+      "device.deleted",
+      { deviceId, initiator, physical: device.physical },
+      "registry",
+    );
     return cloneDevice(deleted);
   }
 
@@ -575,7 +597,11 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     );
     const ended = { device: cloneDevice(deleted), lease: cloneLease(lease) };
     announceLeaseEnd(ended);
-    this.options.eventBus.emit("device.deleted", { deviceId: device.id, initiator }, "registry");
+    this.options.eventBus.emit(
+      "device.deleted",
+      { deviceId: device.id, initiator, physical: device.physical },
+      "registry",
+    );
     return ended;
   }
 
@@ -600,6 +626,118 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     );
     await this.#commit(devices, leases);
     return deleted;
+  }
+
+  /**
+   * Writes a new physical device `ready` (ADR 0022 §2): the first enrollment of a canonical ID.
+   * `device.enrolled` follows the commit.
+   */
+  async enrollPhysical(input: PhysicalEnrollmentInput): Promise<PhysicalDevice> {
+    const now = this.options.clock.now();
+    const record: PhysicalDevice = {
+      createdAt: now,
+      driverData: {},
+      driverDeviceId: input.driverDeviceId,
+      enrolledApps: [...input.apps],
+      id: `dev_${this.options.idGenerator.generate()}`,
+      physical: true,
+      readyAt: now,
+      spec: {
+        class: input.class,
+        model: input.model,
+        osVersion: input.osVersion,
+        physical: true,
+        platform: input.platform,
+      },
+      state: "ready",
+    };
+    await this.#commit([...this.#devices, record], this.#leases);
+    this.#emitEnrolled(record, false);
+    return cloneDevice(record) as PhysicalDevice;
+  }
+
+  /**
+   * Rewrites an enrolled physical device from a fresh read (ADR 0022 §2): model, OS version,
+   * class and app list replaced, `ready`, the quarantine fields cleared, the registry ID kept.
+   * Only a `ready` or `quarantined` record is rewritten.
+   */
+  async reenrollPhysical(
+    deviceId: string,
+    input: PhysicalEnrollmentInput,
+  ): Promise<PhysicalDevice> {
+    const { device, index } = this.#requireDeviceRecord(deviceId);
+    if (!device.physical || (device.state !== "ready" && device.state !== "quarantined")) {
+      throw new RegistryEventError(`Cannot re-enrol device: ${deviceId}`);
+    }
+    const {
+      quarantineAttempts: _quarantineAttempts,
+      quarantineNextRetryAt: _quarantineNextRetryAt,
+      quarantinedAt: _quarantinedAt,
+      deferredReclaimLeaseId: _deferred,
+      ...kept
+    } = device;
+    const updated: PhysicalDevice = {
+      ...kept,
+      enrolledApps: [...input.apps],
+      readyAt: this.options.clock.now(),
+      spec: {
+        class: input.class,
+        model: input.model,
+        osVersion: input.osVersion,
+        physical: true,
+        platform: device.spec.platform,
+      },
+      state: "ready",
+    };
+    const devices = [...this.#devices];
+    devices[index] = updated;
+    await this.#commit(devices, this.#leases);
+    this.#emitEnrolled(updated, true);
+    return cloneDevice(updated) as PhysicalDevice;
+  }
+
+  /**
+   * Writes an enrolled physical device `deleted` (ADR 0022 §2): it is forgotten, and nothing is
+   * done to the device. `device.deleted` follows the commit with `initiator: "operator"`.
+   */
+  async unenrollPhysical(deviceId: string): Promise<PhysicalDevice> {
+    const { device, index } = this.#requireDeviceRecord(deviceId);
+    if (!device.physical || (device.state !== "ready" && device.state !== "quarantined")) {
+      throw new RegistryEventError(`Cannot unenrol device: ${deviceId}`);
+    }
+    const {
+      quarantineAttempts: _quarantineAttempts,
+      quarantineNextRetryAt: _quarantineNextRetryAt,
+      quarantinedAt: _quarantinedAt,
+      ...kept
+    } = device;
+    const updated = transition(kept, "deleted");
+    const devices = [...this.#devices];
+    devices[index] = updated;
+    await this.#commit(devices, this.#leases);
+    this.options.eventBus.emit(
+      "device.deleted",
+      { deviceId, initiator: "operator", physical: true },
+      "registry",
+    );
+    return cloneDevice(updated) as PhysicalDevice;
+  }
+
+  #emitEnrolled(device: PhysicalDevice, reenrolled: boolean): void {
+    this.options.eventBus.emit(
+      "device.enrolled",
+      {
+        appCount: device.enrolledApps.length,
+        class: device.spec.class,
+        deviceId: device.id,
+        driverDeviceId: device.driverDeviceId,
+        model: device.spec.model,
+        osVersion: device.spec.osVersion,
+        platform: device.spec.platform,
+        reenrolled,
+      },
+      "registry",
+    );
   }
 
   async createLease({
@@ -905,7 +1043,7 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return records;
   }
 
-  #emitDeviceEvent(event: RegistryDeviceEvent): void {
+  #emitDeviceEvent(event: RegistryDeviceEvent, device: DeviceRecord): void {
     switch (event.event) {
       case "device.ready":
         this.options.eventBus.emit(event.event, event.payload, "registry");
@@ -917,7 +1055,11 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
         this.options.eventBus.emit(event.event, event.payload, "registry");
         return;
       case "device.deleted":
-        this.options.eventBus.emit(event.event, event.payload, "registry");
+        this.options.eventBus.emit(
+          event.event,
+          { ...event.payload, physical: device.physical },
+          "registry",
+        );
     }
   }
 }

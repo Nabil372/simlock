@@ -10,14 +10,18 @@ import {
   type Config,
   type DeviceRecord,
   type DeviceRequest,
+  DeviceBusyError,
+  DeviceNotEnrollableError,
   type Doctor,
   type Driver,
   type HostFacts,
   isStalledTransition,
   type Nuke,
   type PhysicalClass,
+  type PhysicalEnrollment,
   type Registry,
   type StallInput,
+  UnknownEnrolledDeviceError,
   effectiveAllowDownload,
   RuntimeMissingError,
   transitionEnteredAt,
@@ -118,6 +122,8 @@ export interface DispatcherOptions {
    * Injected because `error-code.ts` imports this module. Unset or `undefined`: `INTERNAL`. */
   readonly errorCode?: (error: unknown) => string | undefined;
   readonly nuke?: Nuke;
+  /** Answers `device.add` and `device.remove`; optional for the tests that never enrol one. */
+  readonly enrollment?: Pick<PhysicalEnrollment, "add" | "remove">;
   /**
    * Builds the scoped command behind `simlock simctl` / `simlock adb` (ADR 0001, decision 7).
    * Optional for the same reason as `nuke`/`doctor`: the many tests that never issue a
@@ -276,6 +282,8 @@ export class Dispatcher {
       "component.install": this.#componentInstall,
       "component.list": this.#componentList,
       "component.remove": this.#componentRemove,
+      "device.add": this.#deviceAdd,
+      "device.remove": this.#deviceRemove,
       "worker.list": this.#workerList,
       "worker.drain": unsupportedOnWorker("worker.drain"),
       "worker.undrain": unsupportedOnWorker("worker.undrain"),
@@ -814,6 +822,45 @@ export class Dispatcher {
   };
 
   /**
+   * ADR 0022 §2: enrols the physical device the driver reads for `id`. A refusal and a busy device
+   * carry their reason as details, so a transport can show them; every other failure is
+   * classified as it is thrown.
+   */
+  #deviceAdd: Handler<"device.add"> = async (input) => {
+    try {
+      const { device, reenrolled } = await this.#requireEnrollment().add(input.platform, input.id);
+      return {
+        appCount: device.enrolledApps.length,
+        class: device.spec.class,
+        driverDeviceId: device.driverDeviceId,
+        id: device.id,
+        model: device.spec.model,
+        osVersion: device.spec.osVersion,
+        platform: device.spec.platform,
+        reenrolled,
+      };
+    } catch (error: unknown) {
+      throw describeEnrollmentError(error);
+    }
+  };
+
+  #deviceRemove: Handler<"device.remove"> = async (input) => {
+    try {
+      const device = await this.#requireEnrollment().remove(input.id);
+      return { driverDeviceId: device.driverDeviceId, id: device.driverDeviceId };
+    } catch (error: unknown) {
+      throw describeEnrollmentError(error);
+    }
+  };
+
+  #requireEnrollment(): Pick<PhysicalEnrollment, "add" | "remove"> {
+    if (this.options.enrollment === undefined) {
+      throw new DispatchError("INTERNAL", "Device enrollment is unavailable");
+    }
+    return this.options.enrollment;
+  }
+
+  /**
    * ADR §11: the daemon is the only owner of `tokens.json` -- `TokenStore.create` never
    * persists the plaintext `secret`, only its hash, exactly as it did when the CLI called it
    * directly.
@@ -898,6 +945,28 @@ function killQuietly(handle: StreamingProcessHandle, signal: NodeJS.Signals): vo
   } catch {
     // Already gone.
   }
+}
+
+/** The refusals of `device.add` and `device.remove` as the dispatcher's own, with their details. */
+function describeEnrollmentError(error: unknown): unknown {
+  if (error instanceof DeviceNotEnrollableError) {
+    return new DispatchError("DEVICE_NOT_ENROLLABLE", error.message, {
+      id: error.id,
+      platform: error.platform,
+      reason: error.reason,
+      ...(error.canonicalId === undefined ? {} : { canonicalId: error.canonicalId }),
+    });
+  }
+  if (error instanceof DeviceBusyError) {
+    return new DispatchError("DEVICE_BUSY", error.message, {
+      id: error.id,
+      reason: error.reason,
+    });
+  }
+  if (error instanceof UnknownEnrolledDeviceError) {
+    return new DispatchError("UNKNOWN_DEVICE", error.message, { id: error.id });
+  }
+  return error;
 }
 
 /** ADR 0012 §2: an operation that acts on a gateway's workers, asked of a worker. */

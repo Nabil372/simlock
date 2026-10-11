@@ -159,6 +159,8 @@ export interface DaemonServerEngineOptions {
   readonly queue: QueueControl;
   readonly reaper: CleanupReaper;
   readonly healthMonitor?: LeaseHealthMonitor | undefined;
+  /** `device.add` and `device.remove`; absent in tests that never enrol a device. */
+  readonly enrollment?: DispatcherOptions["enrollment"];
   readonly nuke?: Nuke;
   /** Builds the scoped command behind `simlock simctl` / `simlock adb`; absent in tests that never use them. */
   readonly passthrough?: PassthroughResolver;
@@ -320,6 +322,7 @@ function buildDispatcher(
     instanceId: options.instanceId,
     leases: options.leases,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    ...(options.enrollment === undefined ? {} : { enrollment: options.enrollment }),
     ...(options.nuke === undefined ? {} : { nuke: options.nuke }),
     ...(options.passthrough === undefined ? {} : { passthrough: options.passthrough }),
     ...(options.processRunner === undefined ? {} : { processRunner: options.processRunner }),
@@ -1187,6 +1190,10 @@ export class DaemonServer {
           frame.payload,
           this.#session(connection),
         );
+      case "device.add":
+        return this.#dispatcher.dispatch("device.add", frame.payload, this.#session(connection));
+      case "device.remove":
+        return this.#dispatcher.dispatch("device.remove", frame.payload, this.#session(connection));
       // "daemon.stop" is deliberately absent from this switch: `#dispatchLine` intercepts it
       // itself, ahead of the protocol-mismatch and `#stopping` gates (ADR §6's frozen exception,
       // scoped to protocol version only -- still gated on a completed handshake and the `admin`

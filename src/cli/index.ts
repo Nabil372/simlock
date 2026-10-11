@@ -75,6 +75,9 @@ Commands:
                               List installed runtimes and system images
   component remove <ios|android> <version> [--dry-run] [--yes]
                               Remove a runtime or system image Simlock installed
+  device add --platform <ios|android> <id> [--json]
+                              Enrol a physical device plugged into this host
+  device remove <id> [--json] Forget an enrolled physical device; the device is untouched
   simctl <args...>            Run xcrun simctl against Simlock's iOS device set
   adb <args...>               Run adb against Simlock's adb server
   mcp                         Start the stdio MCP server
@@ -628,6 +631,8 @@ export async function runCli(
         return await runWorker(rest.slice(1), environment, token);
       case "component":
         return await runComponent(rest.slice(1), environment, token);
+      case "device":
+        return await runDevice(rest.slice(1), environment, token);
       case "simctl":
       case "adb":
         // Named here rather than discovered from the drivers on purpose: these are
@@ -1943,6 +1948,85 @@ async function runWorkerAction(
         : await client.removeWorker({ workerId });
   writeResult(environment, result);
   return 0;
+}
+
+const DEVICE_USAGE =
+  "Usage: simlock device add --platform <ios|android> <id> [--json]\n" +
+  "       simlock device remove <id> [--json]\n";
+
+/**
+ * ADR 0022 §2: `device add` and `device remove` render the daemon's `device.add` and
+ * `device.remove` as one line, or with `--json` as the operation's output. Argument parsing and
+ * rendering only: what can be enrolled, and why not, is the platform driver's answer. `remove`
+ * asks for nothing: it changes nothing on the device (safety rule 5).
+ */
+async function runDevice(
+  argv: readonly string[],
+  environment: CliEnvironment,
+  token: string | undefined,
+): Promise<number> {
+  const command = argv[0];
+  if (command === undefined || isHelp(command)) {
+    environment.stdout.write(DEVICE_USAGE);
+    return 0;
+  }
+  if (command !== "add" && command !== "remove") {
+    throw new UsageError(withHelpHint(`Unknown device command: ${command}`));
+  }
+  const values = commandArgs(argv.slice(1), {
+    help: { type: "boolean", short: "h" },
+    json: { type: "boolean" },
+    ...(command === "add" ? { platform: { type: "string" as const } } : {}),
+  });
+  if (values.help) {
+    environment.stdout.write(DEVICE_USAGE);
+    return 0;
+  }
+  const [id, ...extra] = values.positionals;
+  if (id === undefined || extra.length > 0) {
+    throw new UsageError(withHelpHint(`device ${command} takes exactly one <id>`));
+  }
+  const platform = values.platform;
+  if (command === "add" && platform !== "ios" && platform !== "android") {
+    throw new UsageError(
+      withHelpHint(
+        "device add needs --platform ios or --platform android, to say which driver reads the device",
+      ),
+    );
+  }
+  const client = await connectDaemonClient(environment, token);
+  try {
+    if (command === "add") {
+      const result = await client.addDevice({ id, platform: platform as "ios" | "android" });
+      environment.stdout.write(
+        values.json === true ? `${JSON.stringify(result)}\n` : `${describeEnrolled(result)}\n`,
+      );
+      return 0;
+    }
+    const result = await client.removeDevice({ id });
+    environment.stdout.write(
+      values.json === true
+        ? `${JSON.stringify(result)}\n`
+        : `Removed ${result.driverDeviceId}. It is no longer enrolled; nothing on the device changed.\n`,
+    );
+    return 0;
+  } finally {
+    await client.close();
+  }
+}
+
+/** `Enrolled iPhone 15 Pro (iOS 18.4) as <ID>[ again], 12 user apps recorded.` */
+function describeEnrolled(result: {
+  readonly appCount: number;
+  readonly driverDeviceId: string;
+  readonly model: string;
+  readonly osVersion: string;
+  readonly platform: "ios" | "android";
+  readonly reenrolled: boolean;
+}): string {
+  const os = `${result.platform === "ios" ? "iOS" : "Android"} ${result.osVersion}`;
+  const apps = `${String(result.appCount)} user app${result.appCount === 1 ? "" : "s"}`;
+  return `Enrolled ${result.model} (${os}) as ${result.driverDeviceId}${result.reenrolled ? " again" : ""}, ${apps} recorded.`;
 }
 
 const COMPONENT_USAGE =

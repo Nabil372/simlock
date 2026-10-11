@@ -195,6 +195,15 @@ export class GatewayDispatcher {
         "component.remove",
         "component.remove removes a component from one machine; run it against a worker",
       ),
+      // ADR 0022 §2: a device is plugged into one machine, and a gateway asks no worker.
+      "device.add": unsupportedByDesign(
+        "device.add",
+        "device.add enrols a device plugged into one machine; run it on the worker the device is plugged into",
+      ),
+      "device.remove": unsupportedByDesign(
+        "device.remove",
+        "device.remove unenrols a device plugged into one machine; run it on the worker the device is plugged into",
+      ),
 
       "lease.request": this.#leaseRequest,
       "lease.renew": this.#leaseRenew,

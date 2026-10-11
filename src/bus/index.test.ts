@@ -37,6 +37,7 @@ const EVENT_NAMES: Record<EventName, true> = {
   "device.quarantine-stranded": true,
   "device.shutdown": true,
   "device.deleted": true,
+  "device.enrolled": true,
   "device.slimmed": true,
   "component.install-started": true,
   "component.installed": true,

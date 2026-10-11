@@ -89,6 +89,10 @@ export type WorkerInstallComponentInput = OpInput<"worker.install-component">;
 export type WorkerInstallComponentOutput = OpOutput<"worker.install-component">;
 export type ComponentRemoveInput = OpInput<"component.remove">;
 export type ComponentRemoveOutput = OpOutput<"component.remove">;
+export type DeviceAddInput = OpInput<"device.add">;
+export type DeviceAddOutput = OpOutput<"device.add">;
+export type DeviceRemoveInput = OpInput<"device.remove">;
+export type DeviceRemoveOutput = OpOutput<"device.remove">;
 
 // ---- pushes ---------------------------------------------------------------------------------
 

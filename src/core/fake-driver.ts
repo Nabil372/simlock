@@ -1,5 +1,12 @@
 import type { Clock } from "../ports/index.js";
-import type { DeviceClass, DeviceMode, DeviceSpec, Platform, VirtualSpec } from "./domain.js";
+import type {
+  DeviceClass,
+  DeviceMode,
+  DeviceSpec,
+  PhysicalClass,
+  Platform,
+  VirtualSpec,
+} from "./domain.js";
 import {
   type ComponentInstallProgress,
   type ComponentInstallResult,
@@ -13,12 +20,14 @@ import {
   type DriverDevice,
   type DriverEstimate,
   type DriverReality,
+  type DriverRefusalReason,
   type InstalledComponent,
   type LegacyDevice,
   type ObservedRunState,
   type PassthroughCommand,
   PassthroughRefusedError,
   type PassthroughContext,
+  type PhysicalInspection,
   removeListedComponent,
   RuntimeMissingError,
   UnknownModelError,
@@ -34,6 +43,8 @@ export type FakeDriverOperation =
   | "shutdown"
   | "destroy"
   | "listManaged"
+  /** Logged with the ID the operator typed. */
+  | "inspectPhysical"
   | "listCatalog"
   | "listComponents"
   | "removeComponent"
@@ -43,6 +54,19 @@ export type FakeDriverOperation =
   | "destroyLegacy";
 
 export type DriverEstimateOperation = "provision" | "boot" | "reclaim";
+
+/**
+ * One physical device the fake can read. `ids` lists every ID it answers to: the first is its
+ * canonical ID, the rest are aliases. A `refusal` refuses every one of them.
+ */
+export interface FakePhysicalDevice {
+  readonly ids: readonly string[];
+  readonly model?: string;
+  readonly osVersion?: string;
+  readonly class?: PhysicalClass;
+  readonly apps?: readonly string[];
+  readonly refusal?: { readonly reason: DriverRefusalReason; readonly message: string };
+}
 
 export interface FakeDriverCall {
   readonly arguments: readonly unknown[];
@@ -128,6 +152,8 @@ export interface FakeDriverOptions {
   readonly legacyDevices?: Readonly<Record<string, LegacyDevice>>;
   readonly reclaimResult?: "ready" | "shutdown";
   readonly reclaimStrategy?: "erase" | "snapshot" | "wipe";
+  /** The physical devices `inspectPhysical` reads; an ID none lists is `not-connected`. */
+  readonly physicalDevices?: readonly FakePhysicalDevice[];
 }
 
 export class FakeDriverUnknownDeviceError extends Error {
@@ -187,6 +213,7 @@ export class FakeDriver implements Driver {
   /** Bumped on every `makeReady` boot -- mirrors a real driver reassigning a port per boot. */
   readonly #bootCounts = new Map<string, number>();
   #managedReality: DriverReality | undefined;
+  #physicalDevices: readonly FakePhysicalDevice[];
 
   constructor(options: FakeDriverOptions) {
     this.#availableOsVersions = new Set(options.availableOsVersions ?? ["latest"]);
@@ -212,6 +239,7 @@ export class FakeDriver implements Driver {
     this.deviceRoot = options.deviceRoot ?? `/fake/${options.platform}`;
     this.#reclaimResult = options.reclaimResult ?? "ready";
     this.#reclaimStrategy = options.reclaimStrategy ?? "wipe";
+    this.#physicalDevices = options.physicalDevices ?? [];
     this.#install = options;
     this.#receipts = preinstalledReceipts(this.#availableOsVersions);
   }
@@ -515,6 +543,29 @@ export class FakeDriver implements Driver {
         runState: runStateFor(status),
       })),
       processes: [],
+    };
+  }
+
+  /** Replaces the scripted physical devices; the next `inspectPhysical` reads the new ones. */
+  setPhysicalDevices(devices: readonly FakePhysicalDevice[]): void {
+    this.#physicalDevices = devices;
+  }
+
+  async inspectPhysical(id: string): Promise<PhysicalInspection> {
+    await this.#beforeCall("inspectPhysical", id);
+    const device = this.#physicalDevices.find((candidate) => candidate.ids.includes(id));
+    if (device === undefined) {
+      return { enrollable: false, message: `${id} is not connected`, reason: "not-connected" };
+    }
+    if (device.refusal !== undefined) return { enrollable: false, ...device.refusal };
+    const [canonical] = device.ids;
+    return {
+      apps: [...(device.apps ?? [])],
+      class: device.class ?? "phone",
+      driverDeviceId: canonical ?? id,
+      enrollable: true,
+      model: device.model ?? "Fake Phone",
+      osVersion: device.osVersion ?? "1.0",
     };
   }
 

@@ -38,7 +38,11 @@ import type {
   ComponentRemoveInput,
   ComponentRemoveOutput,
   DaemonStopOutput,
+  DeviceAddInput,
+  DeviceAddOutput,
   DeviceRecoveredPush,
+  DeviceRemoveInput,
+  DeviceRemoveOutput,
   DeviceUnhealthyPush,
   ExecInput,
   ExecOutput,
@@ -97,7 +101,11 @@ export type {
   ComponentRemoveInput,
   ComponentRemoveOutput,
   DaemonStopOutput,
+  DeviceAddInput,
+  DeviceAddOutput,
   DeviceRecoveredPush,
+  DeviceRemoveInput,
+  DeviceRemoveOutput,
   DeviceUnhealthyPush,
   ExecInput,
   ExecOutput,
@@ -277,6 +285,22 @@ export interface SimlockAdminClient extends SimlockClient {
    * counts as details) or `COMPONENT_BUSY`.
    */
   removeComponent(input: ComponentRemoveInput): Promise<ComponentRemoveOutput>;
+
+  /**
+   * ADR 0022 §2: enrols the physical device plugged into the host this daemon runs on, named by
+   * any ID the platform's driver reads. A device it cannot enrol is `DEVICE_NOT_ENROLLABLE` with
+   * the driver's reason; a leased, reclaiming or busy one is `DEVICE_BUSY`. A device already
+   * enrolled is enrolled again: its record is kept and its model, OS version, class and apps are
+   * read anew (`reenrolled: true`). A gateway answers `UNSUPPORTED_IN_GATEWAY_MODE`.
+   */
+  addDevice(input: DeviceAddInput): Promise<DeviceAddOutput>;
+
+  /**
+   * ADR 0022 §2: forgets an enrolled physical device, named by its canonical ID. Nothing is sent
+   * to the device. `UNKNOWN_DEVICE` for an ID with no enrolled device, `DEVICE_BUSY` for a leased
+   * or reclaiming one. A gateway answers `UNSUPPORTED_IN_GATEWAY_MODE`.
+   */
+  removeDevice(input: DeviceRemoveInput): Promise<DeviceRemoveOutput>;
 }
 
 /** Internal: builds either client. `admin` toggles only which methods the returned object
@@ -407,6 +431,8 @@ function buildDegradedClient(
     installComponent: () => rejected(),
     installComponentOnWorkers: () => rejected(),
     removeComponent: () => rejected(),
+    addDevice: () => rejected(),
+    removeDevice: () => rejected(),
   };
   return client;
 }
@@ -651,6 +677,14 @@ class SimlockClientImpl {
 
   removeComponent(input: ComponentRemoveInput): Promise<ComponentRemoveOutput> {
     return this.#call("component.remove", input);
+  }
+
+  addDevice(input: DeviceAddInput): Promise<DeviceAddOutput> {
+    return this.#call("device.add", input);
+  }
+
+  removeDevice(input: DeviceRemoveInput): Promise<DeviceRemoveOutput> {
+    return this.#call("device.remove", input);
   }
 
   // ---- abort (ADR §10) ------------------------------------------------------------------------
