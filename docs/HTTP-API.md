@@ -1214,8 +1214,8 @@ simulated (hence the thin Android catalog), trimmed to one worker:
       },
       "downloads": {"policy": "on-request", "timeoutMs": 1200000},
       "lease": {"maxTtlMs": 14400000},
-      "queueDepth": 0,          // simulator and emulator requests waiting
-      "physicalQueueDepth": 0,  // physical requests waiting, in their own line
+      "queueDepth": 0,
+      "physicalQueueDepth": 0,
       "leases": [],
       "devices": [],
       "installs": [
