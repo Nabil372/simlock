@@ -21,6 +21,7 @@ import {
 } from "../core/index.js";
 import {
   type LeaseHealthMonitor,
+  type PhysicalDeviceWatcher,
   type DeviceModeReader,
   type LeaseCommands,
   type QueueControl,
@@ -153,6 +154,7 @@ export interface DaemonServerEngineOptions {
   readonly queue: QueueControl;
   readonly reaper: CleanupReaper;
   readonly healthMonitor?: LeaseHealthMonitor | undefined;
+  readonly physicalDeviceWatcher?: PhysicalDeviceWatcher | undefined;
   readonly enrollment?: DispatcherOptions["enrollment"];
   readonly nuke?: Nuke;
   readonly passthrough?: PassthroughResolver;
@@ -567,6 +569,7 @@ export class DaemonServer {
     // device.crash-detected during the startup window, because the only emitter is
     // this monitor.
     this.#engine?.healthMonitor?.start();
+    this.#engine?.physicalDeviceWatcher?.start();
   }
 
   async #converge(): Promise<void> {
@@ -616,6 +619,7 @@ export class DaemonServer {
     this.#workerDispatcher?.dispose();
     this.#engine?.reaper.dispose();
     this.#engine?.healthMonitor?.dispose();
+    this.#engine?.physicalDeviceWatcher?.dispose();
     // ADR 0004 §3: a stop releases nothing. Every lease persists with its deadline, and the
     // next daemon ends the ones whose device is not running (ADR 0019) and restores the timer of
     // each other from its deadline (leasing's `LeaseStartup`); one whose deadline passed in

@@ -54,6 +54,7 @@ async function createHarness() {
     async reclaim(released: ReleasedLease) {
       reclaims.push(released);
     },
+    reclaimReturned: async () => undefined,
   };
   const claims = new DeviceOperationClaims();
   const availability: { count: number; onNotify: (() => void) | undefined } = {
@@ -447,7 +448,10 @@ describe("LeaseReleaseCoordinator", () => {
         logger,
         notifyAvailability: () => undefined,
         registry: harness.registry,
-        reclaim: { reclaim: async () => Promise.reject(new Error("reclaim failed")) },
+        reclaim: {
+          reclaim: async () => Promise.reject(new Error("reclaim failed")),
+          reclaimReturned: async () => undefined,
+        },
       });
 
       // Vitest fails a test on an unhandled rejection, so simply not throwing here

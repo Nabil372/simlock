@@ -414,6 +414,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     eventBus,
     eventHistory,
     healthMonitor: leasing.healthMonitor,
+    physicalDeviceWatcher: leasing.physicalDeviceWatcher,
     hostFacts: () => fitHostFacts(hostFacts.current()),
     instanceId,
     host: new DaemonEndpointHost({

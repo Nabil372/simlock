@@ -155,7 +155,7 @@ device counts against running capacity, and a quarantined physical device never
 does (see `docs/internal/ARCHITECTURE.md`, "Quarantine: present but not
 grantable") — `AcquisitionPlanner` and the idle-order eviction helpers select
 targets by exact state, so a quarantined device is simply invisible to every
-grant path with no special-casing required. `QuarantineCoordinator` retries
+grant path with no special-casing required. A physical device whose reclaim fails while it is not present is `absent` instead (ADR 0022 §8). `QuarantineCoordinator` retries
 the purge of a device on a `Clock`-driven backoff (`warmPool.quarantine.{maxRetries,
 retryBackoffMs,retryBackoffMultiplier,maxRetryBackoffMs}`); a successful
 retry returns the device to the warm pool, and exhausting the retry budget

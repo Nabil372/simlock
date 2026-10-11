@@ -43,9 +43,13 @@ const deviceStateSchema = z.enum([
   "leased",
   "reclaiming",
   "quarantined",
+  "absent",
   "shutdown",
   "deleted",
 ]);
+
+/** Why an `absent` physical device is absent (ADR 0022 §8). */
+const absentReasonSchema = z.enum(["locked", "untrusted", "not-present"]);
 
 /** The mode a device actually has (ADR 0007 §9) -- the same two words on every surface. */
 const deviceModeSchema = z.enum(["slim", "full"]);
@@ -148,6 +152,8 @@ export const deviceRecordSchema = z
     quarantineAttempts: z.number().optional(),
     quarantineNextRetryAt: z.number().optional(),
     address: z.string().optional(),
+    /** Set only on an `absent` physical device. */
+    absentReason: absentReasonSchema.optional(),
     /** Always present: see `checkDeviceType`. */
     physical: z.boolean(),
     /** Present exactly when `physical` is `false`. */
@@ -185,6 +191,8 @@ export const statusDeviceSchema = z
     foreignProvenanceDetectedAt: z.number().optional(),
     quarantineAttempts: z.number().optional(),
     quarantineNextRetryAt: z.number().optional(),
+    /** Set only on an `absent` physical device. */
+    absentReason: absentReasonSchema.optional(),
     transitionAgeMs: z.number().optional(),
     stalled: z.boolean().optional(),
     /**

@@ -24,6 +24,7 @@ const DEVICE_STATES: Tones = {
   provisioning: "idle",
   reclaiming: "idle",
   quarantined: "error",
+  absent: "warn",
   shutdown: "idle",
   deleted: "idle",
 };

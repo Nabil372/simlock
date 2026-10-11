@@ -2442,7 +2442,11 @@ function formatStatus(status: StatusGetOutput, now: number): string {
     ].filter((marker) => marker !== undefined);
     const suffix = markers.length === 0 ? "" : ` (${markers.join(", ")})`;
     const where = device.workerId === undefined ? "" : ` on ${device.workerId}`;
-    return `Device ${device.id}${where}: ${device.state}, ${deviceKind(device)}${suffix}`;
+    const state =
+      device.state === "absent" && device.absentReason !== undefined
+        ? `absent (${device.absentReason})`
+        : device.state;
+    return `Device ${device.id}${where}: ${state}, ${deviceKind(device)}${suffix}`;
   });
   // ADR 0004: `lastRenewedAt` is a stored field written at grant and on every renew, so unlike
   // the derived `lastHeartbeatAt` it replaces, every lease has one to render.

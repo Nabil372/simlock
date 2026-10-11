@@ -1,5 +1,6 @@
 import { type Logger, NoopLogger } from "../ports/index.js";
 import {
+  type AbsentReason,
   type DeviceOperationClaims,
   type LeaseRecord,
   type ReleasedLease,
@@ -52,6 +53,7 @@ export interface LeaseReleaseLifecycle {
     options?: { readonly deferReclaim?: boolean },
   ): Promise<ReleasedLease>;
   endForMissingDevice(leaseId: string, reason: "expired" | "device-lost"): Promise<ReleasedLease>;
+  endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<ReleasedLease>;
   renew(leaseId: string, ttlMs?: number): Promise<LeaseRecord>;
 }
 
@@ -71,7 +73,7 @@ export interface LeaseReleaseCoordinatorOptions {
    */
   readonly notifyAvailability: () => void;
   readonly registry: LeaseReleaseRegistry;
-  readonly reclaim: Pick<ReclaimCoordinator, "reclaim">;
+  readonly reclaim: Pick<ReclaimCoordinator, "reclaim" | "reclaimReturned">;
 }
 
 /**
@@ -169,6 +171,49 @@ export class LeaseReleaseCoordinator
         default:
           throw new Error(`Unknown startup ending for ${leaseId}: ${String(ending.device)}`);
       }
+    });
+  }
+
+  /**
+   * Ends a lease whose physical device the watcher read not present for the grace period: the
+   * lease and the device's move to `absent` are one write, and no reclaim starts (ADR 0022 §8).
+   * Admitted like every release, so it waits out nuke maintenance. A lease that is already gone
+   * is not an error: the release that took it came first.
+   */
+  async endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<boolean> {
+    return this.#runNormal(() =>
+      this.options.decisions.run(async () => {
+        if (!this.options.registry.snapshot.leases.some((lease) => lease.id === leaseId)) {
+          return false;
+        }
+        await this.options.lifecycle.endForAbsentDevice(leaseId, absentReason);
+        return true;
+      }),
+    );
+  }
+
+  /**
+   * Runs work the watcher does on a device that is not a release (ending a `ready` device's
+   * presence, rewriting a reason) under the same maintenance admission as every release, so none
+   * of it lands while an operator reset walks the devices.
+   */
+  async admit<Result>(work: () => Promise<Result>): Promise<Result> {
+    return this.#runNormal(work);
+  }
+
+  /**
+   * Starts the reclaim of a physical device that is back, or one a killed daemon left
+   * `reclaiming`, under the same admission. The reclaim joins the background reclaims, so nuke's
+   * `beginMaintenance` and a graceful stop wait for it.
+   */
+  async reclaimReturned(deviceId: string, osVersion?: string): Promise<boolean> {
+    return this.#runNormal(async () => {
+      const started = await this.options.reclaim.reclaimReturned(deviceId, osVersion);
+      if (started === undefined) return false;
+      const tracked = started.settled.then(() => undefined);
+      this.#backgroundReclaims.add(tracked);
+      void tracked.finally(() => this.#backgroundReclaims.delete(tracked));
+      return true;
     });
   }
 

@@ -31,6 +31,7 @@ import { LeaseRequestBook, type WaitingRequest } from "./lease-request-book.js";
 import { LeaseReconciler } from "./lease-reconciler.js";
 import { emitLeaseRefusal } from "./lease-refusal.js";
 import { LeaseStartup } from "./lease-startup.js";
+import { PhysicalDeviceWatcher } from "./physical-device-watcher.js";
 import { type LeaseRequestOptions, WaitQueue } from "./wait-queue.js";
 
 export interface LeasingOptions {
@@ -90,6 +91,11 @@ export interface Leasing extends LeaseCommands, QueueControl, DeviceModeReader {
    * startup convergence.
    */
   readonly healthMonitor: LeaseHealthMonitor | undefined;
+  /**
+   * Always wired, whatever `health.enabled` says. Not started; the daemon arms it after startup
+   * convergence, beside the health monitor.
+   */
+  readonly physicalDeviceWatcher: PhysicalDeviceWatcher;
   /** Administrative lease expiry used by doctor reconciliation. */
   expire(leaseId: string): Promise<void>;
   /** The first step of startup: settles the requests a restart left open. */
@@ -234,6 +240,18 @@ export function createLeasing(options: LeasingOptions): Leasing {
           },
         });
 
+  const physicalDeviceWatcher = new PhysicalDeviceWatcher({
+    claims: core.claims,
+    clock: options.clock,
+    config: options.config,
+    decisions,
+    drivers: core.drivers,
+    kick: () => acquisition.kick(),
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
+    registry,
+    releaser: releaseCoordinator,
+  });
+
   return {
     corePorts: {
       leaseExpirer: {
@@ -243,6 +261,7 @@ export function createLeasing(options: LeasingOptions): Leasing {
       },
       leaseMaintenance: { acquisition, leases: releaseCoordinator },
       notifyAvailability: () => acquisition.kick(),
+      physicalDeviceReady: (deviceId) => physicalDeviceWatcher.reset(deviceId),
       warmPoolDemand: {
         get maintenanceActive() {
           return acquisition.maintenanceActive;
@@ -254,6 +273,7 @@ export function createLeasing(options: LeasingOptions): Leasing {
     },
     requests,
     healthMonitor,
+    physicalDeviceWatcher,
     request: async (
       request: DeviceRequest,
       requestOptions: LeaseRequestOptions,
@@ -268,12 +288,19 @@ export function createLeasing(options: LeasingOptions): Leasing {
       await releaseCoordinator.expire(leaseId);
     },
     settleRequests: async () => startup.settleRequests(),
-    reconcile: async (read: StartupRead) => startup.reconcile(read),
+    reconcile: async (read: StartupRead) => {
+      await startup.reconcile(read);
+      physicalDeviceWatcher.recordInterrupted();
+    },
     announceQueueDepth: () => {
       options.eventBus.emit("queue.changed", { depth: queue.depth }, "wait-queue");
     },
-    settle: async () => releaseCoordinator.settleBackgroundReclaims(),
+    settle: async () => {
+      await physicalDeviceWatcher.settle();
+      await releaseCoordinator.settleBackgroundReclaims();
+    },
     dispose: () => {
+      physicalDeviceWatcher.dispose();
       expiry.dispose();
     },
     get queueDepth(): number {

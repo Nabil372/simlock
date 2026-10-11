@@ -147,7 +147,7 @@ export class ReclaimCoordinator {
     if (device.deferredReclaimLeaseId !== undefined && mayBeGranted(device)) {
       const claim = this.options.claims.tryClaim(device.id, "reclaim");
       if (claim === undefined) return false;
-      this.#wipeInBackground(device, claim, device.deferredReclaimLeaseId);
+      void this.#wipeInBackground(device, claim, device.deferredReclaimLeaseId);
       return true;
     }
 
@@ -178,23 +178,25 @@ export class ReclaimCoordinator {
    * `osVersion` the device is `absent` and comes back: one decision checks that and commits
    * `absent -> reclaiming` with the new OS version. Without it the device is already
    * `reclaiming` and nothing is written. A claim held, or a device no longer in that state,
-   * means there is nothing to do: false. The returned promise settles once the reclaim has
-   * started; the reclaim itself is awaited by `settle`.
+   * means there is nothing to do: undefined. The returned promise settles once the reclaim has
+   * started; `settled` is the reclaim itself, and `settle` awaits it too.
    */
-  async reclaimReturned(deviceId: string, osVersion?: string): Promise<boolean> {
+  async reclaimReturned(
+    deviceId: string,
+    osVersion?: string,
+  ): Promise<{ readonly settled: Promise<void> } | undefined> {
     const known = this.#physicalDevice(deviceId);
-    if (known === undefined) return false;
+    if (known === undefined) return undefined;
     const claim = this.options.claims.tryClaim(known.id, "reclaim");
-    if (claim === undefined) return false;
+    if (claim === undefined) return undefined;
     let device: PhysicalDevice | undefined;
     try {
       device = await this.options.decisions.run(() => this.#beginReturned(known.id, osVersion));
     } finally {
       if (device === undefined) claim.release();
     }
-    if (device === undefined) return false;
-    this.#wipeInBackground(device, claim);
-    return true;
+    if (device === undefined) return undefined;
+    return { settled: this.#wipeInBackground(device, claim) };
   }
 
   /** The enrolled physical record a registry ID, or the canonical ID of its device, names. */
@@ -232,7 +234,11 @@ export class ReclaimCoordinator {
    * and a failure logged rather than thrown, once the wipe settles: no caller awaits it. A
    * driver failure never gets that far, since `#purge` hands it to quarantine.
    */
-  #wipeInBackground(device: DeviceRecord, claim: DeviceOperationClaim, leaseId?: string): void {
+  #wipeInBackground(
+    device: DeviceRecord,
+    claim: DeviceOperationClaim,
+    leaseId?: string,
+  ): Promise<void> {
     const wipe = this.#purge(device, leaseId)
       .catch((error: unknown) => {
         this.options.logger?.error("deferred wipe failed", {
@@ -247,6 +253,7 @@ export class ReclaimCoordinator {
       });
     this.#backgroundWipes.add(wipe);
     void wipe.finally(() => this.#backgroundWipes.delete(wipe));
+    return wipe;
   }
 
   /**
@@ -353,7 +360,7 @@ export class ReclaimCoordinator {
   }
 
   /**
-   * A physical reclaim that failed is read once more (task 2 quarantines every failure): a device
+   * A physical reclaim that failed is read once more (a failed reclaim used to quarantine the device whether or not it was there): a device
    * that is not present, or whose read could not be made, is `absent` and not `quarantined`, since
    * its reclaim runs again when it is back. A present device falls through to quarantine.
    */

@@ -1,6 +1,7 @@
 import type { EventBus, EventMap } from "../bus/index.js";
 import type { Clock } from "../ports/index.js";
 import {
+  type AbsentReason,
   type DeviceRecord,
   type LeaseGrant,
   type LeaseRecord,
@@ -34,6 +35,11 @@ export interface LeaseLifecycleRegistry {
   endLeaseAndMarkDeviceMissing(
     leaseId: string,
     initiator: string,
+    announceLeaseEnd: (ended: ReleasedLease) => void,
+  ): Promise<ReleasedLease>;
+  endLeaseAndMarkDeviceAbsent(
+    leaseId: string,
+    absentReason: AbsentReason,
     announceLeaseEnd: (ended: ReleasedLease) => void,
   ): Promise<ReleasedLease>;
 }
@@ -171,6 +177,18 @@ export class LeaseLifecycle {
   ): Promise<ReleasedLease> {
     return this.options.registry.endLeaseAndMarkDeviceMissing(leaseId, "doctor", (ended) =>
       this.#announceEnd(ended, reason),
+    );
+  }
+
+  /**
+   * Ends a lease whose physical device the watcher read not present for the grace period, and
+   * moves the device `leased -> absent` in the same write (`lease.released`, reason `device-lost`,
+   * then `device.absence-detected`). Nothing is left to wipe: the device is gone.
+   */
+  // fallow-ignore-next-line unused-class-member -- reached through LeaseReleaseCoordinator's lifecycle port.
+  async endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<ReleasedLease> {
+    return this.options.registry.endLeaseAndMarkDeviceAbsent(leaseId, absentReason, (ended) =>
+      this.#announceEnd(ended, "device-lost"),
     );
   }
 

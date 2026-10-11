@@ -859,8 +859,12 @@ export class Dispatcher {
     readonly transitionAgeMs?: number;
     readonly stalled?: true;
   } {
+    // `reclaimingSince` only ages a transition: it stays off the wire (`transitionAgeMs` carries it).
+    const { reclaimingSince: _internal, ...onTheWire } = device as DeviceRecord & {
+      readonly reclaimingSince?: number;
+    };
     const decorated = {
-      ...device,
+      ...onTheWire,
       ...(device.physical ? { class: device.spec.class } : {}),
       servesDefaultMode: this.options.deviceModes.servesDefaultMode(device.spec),
     };
