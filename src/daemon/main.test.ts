@@ -530,8 +530,10 @@ describe("startDaemon wires core and leasing together", () => {
     readonly device: { readonly id: string };
   };
 
-  /** Lets real I/O that a mutated daemon would still be doing finish, so "nothing happened" is
-   * a statement about the daemon and not about how early the test looked. */
+  /** Lets the work a mutated daemon would still be doing finish, so "nothing happened" is a
+   * statement about the daemon and not about how early the test looked. Only sound when that
+   * work is all in memory: a timer fires after it however loaded the machine is, but real I/O
+   * (a process spawn, a real file) can outlast it. */
   const settleRealTime = async () => new Promise<void>((resolve) => setTimeout(resolve, 25));
 
   async function leasedIos(options: ConstructorParameters<typeof FakeDriver>[0]) {
@@ -709,11 +711,18 @@ describe("startDaemon wires core and leasing together", () => {
     const writeHeld = new Promise<void>((resolve) => {
       releaseWrite = resolve;
     });
+    let reachWrite: () => void = () => undefined;
+    const writeReached = new Promise<void>((resolve) => {
+      reachWrite = resolve;
+    });
     class HoldingFilesystem extends MemoryFilesystem {
       async writeFileAtomic(
         ...arguments_: Parameters<MemoryFilesystem["writeFileAtomic"]>
       ): Promise<void> {
-        if (holdWrites && arguments_[0] === statePath) await writeHeld;
+        if (holdWrites && arguments_[0] === statePath) {
+          reachWrite();
+          await writeHeld;
+        }
         return super.writeFileAtomic(...arguments_);
       }
     }
@@ -740,7 +749,11 @@ describe("startDaemon wires core and leasing together", () => {
       started = true;
       return daemon;
     });
-    await settleRealTime();
+    // Waits on the write, not on real time: the steps before it include real I/O, so under load
+    // they outlast any fixed sleep. From the write on, a startup that did not wait for it only
+    // has in-memory work left, which finishes before the next macrotask.
+    await Promise.race([writeReached, starting]);
+    await new Promise((resolve) => setImmediate(resolve));
     const startedWhileEndingPending = started;
     releaseWrite();
     const daemon = await starting;
