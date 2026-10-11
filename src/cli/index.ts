@@ -929,6 +929,7 @@ async function runLease(
     mode: { type: "string" },
     "no-wait": { type: "boolean" },
     os: { type: "string" },
+    physical: { type: "boolean" },
     platform: { type: "string" },
     timeout: { type: "string" },
     ttl: { type: "string" },
@@ -937,6 +938,7 @@ async function runLease(
     environment.stdout.write(
       "Usage: simlock lease --platform <ios|android> [--device <model> | --class <class>]\n" +
         "                     [--os <version|range>] [--mode <slim|full>] [--image-tag <tag>] [--agent-id <id>]\n" +
+        "                     [--physical]\n" +
         "                     [--timeout <duration>] [--lease-id <id>]\n" +
         "                     [--no-wait] [--detach] [--ttl <duration>] [--allow-download]\n" +
         "                     [--export-env] [--bind-pid <pid>]\n",
@@ -1089,6 +1091,8 @@ async function runLease(
         ...(typeof values.device === "string" ? { model: values.device } : {}),
         ...(typeof values.class === "string" ? { class: values.class as DeviceClass } : {}),
         ...(typeof values.os === "string" ? { osVersion: values.os } : {}),
+        // Only when asked for: a request without it never gets a physical device (ADR 0022).
+        ...(values.physical === true ? { physical: true } : {}),
         platform,
         // Sent as typed: the contract, not the CLI, decides which modes exist, and answers
         // anything else with `BAD_REQUEST`.
@@ -1322,6 +1326,7 @@ function formatWaitingRequests(requests: readonly WaitingRequestEntry[], now: nu
       const { spec } = request;
       const device = [
         spec.platform,
+        spec.physical === true ? "physical" : undefined,
         spec.model ?? `class ${String(requestedClass(spec))}`,
         spec.osVersion,
         spec.mode === undefined ? undefined : `mode ${spec.mode}`,

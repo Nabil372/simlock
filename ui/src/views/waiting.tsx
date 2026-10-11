@@ -75,7 +75,7 @@ export function WaitingTable(props: {
       },
       header: "Stage",
     },
-    { cell: (request) => request.queuePosition ?? "—", header: "Place in queue", numeric: true },
+    { cell: (request) => queuePlace(request), header: "Place in queue", numeric: true },
     {
       cell: (request) => formatDuration(now - request.createdAt),
       header: "Waiting for",
@@ -92,6 +92,14 @@ export function WaitingTable(props: {
       wide
     />
   );
+}
+
+/** A place counts within the request's own line, so a physical request's says which one it is. */
+function queuePlace(request: WaitingRequest): string {
+  if (request.queuePosition === undefined) return "—";
+  return request.spec.physical === true
+    ? `${String(request.queuePosition)} (physical)`
+    : String(request.queuePosition);
 }
 
 function WorkerCell(props: {

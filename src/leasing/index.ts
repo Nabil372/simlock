@@ -13,7 +13,6 @@ export {
 export {
   LeaseIdTakenError,
   type LeaseRequestOptions,
-  lineOf,
   QueueTimeoutError,
   type QueuePlace,
   RequestCancelledError,
