@@ -1806,7 +1806,7 @@ add again gets a new record.
   `network-only`, `untrusted`, `developer-mode-off`, `os-too-old`,
   `unsupported-kind`, `locked`, `unreadable`, `virtual-device` (a simulator or
   emulator, including every one Simlock manages) or
-  `enrolled-on-other-platform`. The message says why and what to do.
+  `enrolled-on-other-platform`. The message says why.
 - `DEVICE_BUSY` (exit 11): the device is `leased`, is `reclaiming`, or
   another operation holds it, such as another `device add` (`busy`).
 - `NO_DRIVER` (exit 12): this machine has no driver for the platform.
