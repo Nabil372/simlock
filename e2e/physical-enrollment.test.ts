@@ -3,6 +3,9 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { PROTOCOL_VERSION_RANGE } from "../src/contract/index.js";
+import { NodeIpcTransport } from "../src/ports/index.js";
+import { SimlockWire, WireCallError } from "../src/simlock-client/wire.js";
 import type { FakeDriverRefusalReason, ScriptedPhysicalDevice } from "./fake-driver/types.js";
 import { freeLoopbackPort, waitFor, withDaemon, type TestEnv } from "./helpers/index.js";
 
@@ -288,6 +291,35 @@ describe("simlock device add", () => {
       expect(await named(daemon.env, "device.enrolled")).toEqual([]);
     },
   );
+
+  it("by a client whose hello range ends at the previous protocol version is refused with PROTOCOL_VERSION_UNSUPPORTED, so it never sends device.add to a daemon that would answer UNKNOWN_REQUEST", async () => {
+    const daemon = await httpDaemon({ ios: { physicalDevices: [IPHONE] } });
+    const previous = PROTOCOL_VERSION_RANGE.max - 1;
+    const wire = new SimlockWire(await new NodeIpcTransport().connect(daemon.env.socketPath));
+
+    try {
+      const refused = await wire
+        .call("hello", {
+          clientVersion: "1.0.0",
+          protocolRange: { max: previous, min: previous },
+          protocolVersion: previous,
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+
+      expect(refused).toBeInstanceOf(WireCallError);
+      expect((refused as WireCallError).code).toBe("PROTOCOL_VERSION_UNSUPPORTED");
+      expect((refused as WireCallError).details).toMatchObject({
+        client: { max: previous, min: previous },
+        daemon: PROTOCOL_VERSION_RANGE,
+      });
+      expect(await rows(daemon.env)).toEqual([]);
+    } finally {
+      await wire.close();
+    }
+  });
 
   it("of an ID no scripted device lists answers DEVICE_NOT_ENROLLABLE not-connected", async () => {
     const daemon = await httpDaemon({ ios: { physicalDevices: [IPHONE] } });
