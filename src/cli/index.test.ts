@@ -3936,6 +3936,58 @@ describe("CLI: lease pushes and exit codes (own logic, not the dispatcher's)", (
     expect(inputs[1]).not.toHaveProperty("imageTag");
   });
 
+  it("sends physical: true for --physical, and no physical field without it", async () => {
+    const inputs: Record<string, unknown>[] = [];
+    const client = fakeClient({
+      requestLease: (input) => {
+        inputs.push(input as unknown as Record<string, unknown>);
+        return Promise.resolve({
+          device: {
+            class: "phone",
+            driverDeviceId: "00008110-001A2B3C4D5E",
+            id: "dev_1",
+            physical: true,
+            spec: {
+              class: "phone",
+              model: "iPhone 15 Pro",
+              osVersion: "18.4",
+              physical: true,
+              platform: "ios",
+            },
+          },
+          environment: {},
+          lease: {
+            id: "lse_1",
+            deviceId: "dev_1",
+            requesterId: "test-requester",
+            ownerId: "test-requester",
+            grantedAt: 0,
+            lastRenewedAt: 0,
+            idChosenByRequester: false,
+            ttlMs: 60_000,
+            ttlDeadline: 60_000,
+          },
+          timing: {
+            estimatedProvisionMs: 0,
+            estimatedBootMs: 0,
+            estimatedReclaimMs: 0,
+            estimatedReadyMs: 0,
+          },
+        });
+      },
+    });
+    const lease = ["lease", "--platform", "ios", "--detach"];
+
+    await runCli(
+      [...lease, "--physical"],
+      outputCapture().environmentWith({ connectAdmin: async () => client }),
+    );
+    await runCli(lease, outputCapture().environmentWith({ connectAdmin: async () => client }));
+
+    expect(inputs[0]?.physical).toBe(true);
+    expect(inputs[1]).not.toHaveProperty("physical");
+  });
+
   it("fails the removed full flag as an unknown option, before connecting", async () => {
     const output = outputCapture();
     let connected = false;
@@ -5945,6 +5997,40 @@ describe("simlock lease: a request names a model, a class, or nothing", () => {
     expect(output.stdout).toBe(
       "Request req_1: a, ios class watch, queued at 1, waiting 0s\n" +
         "Request req_2: b, android class phone, queued at 2, waiting 0s\n",
+    );
+  });
+
+  it("prints physical in a waiting physical request's line, and nothing for a simulator request", async () => {
+    const output = outputCapture();
+    const client = fakeClient({
+      list: async () => [
+        {
+          createdAt: 0,
+          id: "req_1",
+          queuePosition: 1,
+          requesterId: "a",
+          spec: { model: "iPhone 15 Pro", physical: true, platform: "ios" },
+          stage: "queued",
+        },
+        {
+          createdAt: 0,
+          id: "req_2",
+          queuePosition: 1,
+          requesterId: "b",
+          spec: { model: "iPhone 16", platform: "ios" },
+          stage: "queued",
+        },
+      ],
+    });
+
+    await runCli(
+      ["list", "--requests"],
+      output.environmentWith({ connectAdmin: async () => client }),
+    );
+
+    expect(output.stdout).toBe(
+      "Request req_1: a, ios physical iPhone 15 Pro, queued at 1, waiting 0s\n" +
+        "Request req_2: b, ios iPhone 16, queued at 1, waiting 0s\n",
     );
   });
 

@@ -258,6 +258,34 @@ describe("Registry lease requests", () => {
     ]);
   });
 
+  it("loads a stored request whose physical is false, or anything but true, as virtual", async () => {
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    const record = (id: string, physical: unknown) => ({
+      createdAt: 1_000,
+      id,
+      ownerId: "agent",
+      request: { model: "iPhone 16", physical, platform: "ios" },
+      requesterId: "agent",
+      state: "open",
+    });
+    await filesystem.writeFileAtomic(
+      statePath,
+      JSON.stringify({
+        devices: [],
+        leaseRequests: [record("req_false", false), record("req_text", "yes")],
+        leases: [],
+      }),
+    );
+
+    const { registry } = await loadRegistry({ filesystem });
+
+    expect(registry.leaseRequests().map((loaded) => [loaded.id, loaded.request])).toEqual([
+      ["req_false", { model: "iPhone 16", platform: "ios" }],
+      ["req_text", { model: "iPhone 16", platform: "ios" }],
+    ]);
+  });
+
   it("loads a stored request's image tag, and drops a record whose image tag is not a string", async () => {
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
