@@ -1,7 +1,7 @@
 import type { DeviceOperationClaims } from "./device-operation-claims.js";
 import type { PhysicalDevice, Platform } from "./domain.js";
 import type { Driver, DriverRefusalReason } from "./driver.js";
-import type { PhysicalEnrollmentInput, Registry } from "./registry.js";
+import type { PhysicalEnrollmentInput, RegistrySnapshot } from "./registry.js";
 import type { SerializedDecision } from "./serialized-decision.js";
 
 /** Every driver reason, and the one only the core can know. */
@@ -70,7 +70,7 @@ export interface PhysicalEnrollmentOptions {
 
 /** The four registry members enrollment uses; `Registry` is what the composition root passes. */
 export interface PhysicalEnrollmentRegistry {
-  readonly snapshot: Pick<Registry["snapshot"], "devices" | "virtualDevices">;
+  readonly snapshot: Pick<RegistrySnapshot, "devices" | "virtualDevices">;
   enrollPhysical(input: PhysicalEnrollmentInput): Promise<PhysicalDevice>;
   reenrollPhysical(deviceId: string, input: PhysicalEnrollmentInput): Promise<PhysicalDevice>;
   unenrollPhysical(deviceId: string): Promise<PhysicalDevice>;

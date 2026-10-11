@@ -295,6 +295,7 @@ type DaemonHealth = "starting" | "running" | "failed";
  * needs a new dependency (`device.exec` added two). The two closures the dispatcher needs from
  * the server's own live state are passed in rather than reached for.
  */
+// fallow-ignore-next-line complexity -- one conditional spread per optional dependency, as the comment above says.
 function buildDispatcher(
   options: DaemonServerCommonOptions & DaemonServerEngineOptions,
   hooks: {

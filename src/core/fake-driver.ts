@@ -561,15 +561,7 @@ export class FakeDriver implements Driver {
       return { enrollable: false, message: `${id} is not connected`, reason: "not-connected" };
     }
     if (device.refusal !== undefined) return { enrollable: false, ...device.refusal };
-    const [canonical] = device.ids;
-    return {
-      apps: [...(device.apps ?? [])],
-      class: device.class ?? "phone",
-      driverDeviceId: canonical ?? id,
-      enrollable: true,
-      model: device.model ?? "Fake Phone",
-      osVersion: device.osVersion ?? "1.0",
-    };
+    return readPhysical(device, id);
   }
 
   async listCatalog(): Promise<DriverCatalogEntry> {
@@ -760,4 +752,16 @@ function compareVersions(left: string, right: string): number {
   }
 
   return left.localeCompare(right);
+}
+
+/** What the fake reports for an enrollable scripted device: its canonical ID is its first ID. */
+function readPhysical(device: FakePhysicalDevice, id: string): PhysicalInspection {
+  return {
+    apps: [...(device.apps ?? [])],
+    class: device.class ?? "phone",
+    driverDeviceId: device.ids[0] ?? id,
+    enrollable: true,
+    model: device.model ?? "Fake Phone",
+    osVersion: device.osVersion ?? "1.0",
+  };
 }
