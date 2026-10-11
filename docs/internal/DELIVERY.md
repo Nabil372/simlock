@@ -193,6 +193,11 @@ what another sees.
   `.agents/scripts/stale-refs.sh`, which lists every line in the repo that
   still names a path, declaration or quoted string the diff removed. It
   checks that comments, docs, test titles and messages are true of the code.
+- The comment reviewer, on Haiku, gets the comment rule and the output of
+  `.agents/scripts/comments.mjs`: every comment the diff adds or edits, and
+  every comment within 20 lines of code it adds. It says whether the rule
+  allows each one. A comment says why the code does something unexpected,
+  or it goes.
 
 The spec and code reviewers are blind to each other on purpose: a reviewer
 holding both the spec and the rules resolves a conflict between them
@@ -204,8 +209,8 @@ something false, or breaches a rule, an ADR or the spec — or a note, and
 names its class: the general rule it breaks. Only blocking findings are
 verified: the agent reproduces each against the code, has the implementer
 fix it and every other instance of its class, and lists what it rejects in
-the PR body under `## Review`, one line each, tagged `spec:`, `code:` or
-`claims:`, with the reason. Round 1 reviews the whole diff; later rounds
+the PR body under `## Review`, one line each, tagged `spec:`, `code:`,
+`claims:` or `comments:`, with the reason. Round 1 reviews the whole diff; later rounds
 review only the fix, so the rounds converge instead of sampling the whole
 diff again. A defect a later round finds outside the fix becomes a `bug:new`
 issue rather than a blocker. Rounds go on, up to five, while each confirms
@@ -213,7 +218,7 @@ fewer spec and code findings than the one before; a spec or code finding
 still open when they stop converging is a contested change: the agent hands
 off with it and leaves the PR in draft. A finding fixed by editing only a
 comment or a doc is a stale claim, whichever review raised it. Stale claims
-never park a PR: the claims review checks their fix once, and what it still
+never park a PR: the claims and comment reviews check their fix once, and what it still
 finds is fixed, in comments and docs only, without another review. Notes are not verified and never start a round; they
 reach you once, as one "Review notes" comment on the PR. An ADR-only PR
 gets the spec review alone.
@@ -352,11 +357,13 @@ To move it: copy the agents, skills, scripts, workflow, labels,
   `.claude/skills/review`, `.claude/skills/verify-hardware`
 - Agents: `.claude/agents/` — `implementer`, `reviewer`,
   `hardware-verifier`, `spec-checker`, `bug-triager` (the stage
-  instructions), and `spec-reviewer`, `code-reviewer`, `claims-reviewer`
+  instructions), and `spec-reviewer`, `code-reviewer`, `claims-reviewer`,
+  `comment-reviewer`
 - Scripts: `.agents/scripts/worktree.sh` (also Claude Code's worktree hook in
   `.claude/settings.json`), `.agents/scripts/ensure-pnpm.sh` (the session-start
   hook; installs the pinned pnpm into a cache when PATH lacks it),
   `.agents/scripts/review-inputs.sh`, `.agents/scripts/stale-refs.sh`,
+  `.agents/scripts/comments.mjs`,
   `.agents/scripts/merge-pr.sh`,
   `.agents/scripts/delivery-stats.mjs`,
   `scripts/slow-e2e.sh`, `scripts/mutate.mjs` (`pnpm mutate`)

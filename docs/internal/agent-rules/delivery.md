@@ -209,7 +209,9 @@ is open, done means closed as completed.
     the work's status. It leaves draft only after the reviews below. Each
     reviewer is a fresh sub-agent defined in `.claude/agents/`, whose
     frontmatter pins the model and effort (never a smaller model chosen for
-    speed), blind to the implementer and to the other reviewers.
+    speed, except the comment review: it applies one rule to a list, and
+    every finding it raises is verified), blind to the implementer and to
+    the other reviewers.
     `.agents/scripts/review-inputs.sh` builds what each one reads.
     - The *spec review* gets the issue body, its parent feature, the ADRs it
       names, the files under Rules in play, `always-in-scope.md`, a bug's
@@ -240,6 +242,10 @@ is open, done means closed as completed.
       comment, doc line, test title, help text and error message the diff
       touches, the sweep finds, or the docs say about what the diff changed,
       is true of the code.
+    - The *comment review* gets architecture rule 17 and the output of
+      `.agents/scripts/comments.mjs` (every comment the diff adds or edits,
+      and every comment within 20 lines of code it adds); never the issue.
+      For each comment it says whether the rule allows it.
     Each review lists what it checked and returns every finding, one per
     defect: a claim, its class (the general rule it breaks), the evidence as
     `file:line` or a command and its output, and *blocking* or *note*. A
@@ -252,8 +258,8 @@ is open, done means closed as completed.
     A blocking finding is a claim, not a fact: it is verified against the
     code before anyone acts on it. A confirmed one is fixed, together with
     every other instance of its class. A rejected one is listed in the PR
-    body under `## Review`, one line each, tagged `spec:`, `code:` or
-    `claims:` with the reason, so the maintainer sees what was overruled.
+    body under `## Review`, one line each, tagged `spec:`, `code:`,
+    `claims:` or `comments:` with the reason, so the maintainer sees what was overruled.
     Accepted findings are not narrated.
     Round 1 reviews the whole diff. A later round reviews only the fix: the
     reviews that raised confirmed findings run again, and check that each
@@ -261,7 +267,7 @@ is open, done means closed as completed.
     defect, and that no other instance of each fixed class is left. What a
     later round finds outside that is a note; a confirmed defect among those
     notes becomes a `bug:new` issue and does not block the PR. The claims
-    review runs every round. A commit pushed after a round that passed (a
+    and comment reviews run every round. A commit pushed after a round that passed (a
     merge of the base branch, a fix the gate needed) gets the code and
     claims reviews of that fix alone, outside the count below: a confirmed
     finding there gets one fix run and one more such review, and one still
@@ -276,8 +282,8 @@ is open, done means closed as completed.
     falling, or after round five, means the agent stops and hands off with
     the finding under Findings (rule 2), leaving the PR in draft. Claims
     findings never stop delivery and never count: when only claims findings
-    are left, their fix is checked by the claims review alone, once, and
-    what that check still confirms is fixed in one last run that edits
+    are left, their fix is checked by the claims and comment reviews alone,
+    once, and what that check still confirms is fixed in one last run that edits
     comments and docs only, with no review, listed in the PR body's
     `## Review` section as fixed unreviewed.
     Notes are not verified and never start a round: after the last round

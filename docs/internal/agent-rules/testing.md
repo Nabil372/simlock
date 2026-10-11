@@ -9,8 +9,8 @@ though the suite is green — being green is exactly the failure mode.
    that promises more than the body asserts is a defect, not a wording
    problem: it tells every later reader the case is covered when it is not,
    and that reader stops looking. If the body cannot prove the title, narrow
-   the title to what it does prove. The same goes for a comment above a test
-   explaining what it guards.
+   the title to what it does prove. The claim goes in the title, never in a
+   comment above the test (architecture rule 17).
 
 2. **Every test must be able to fail, for the right reason.** Before you
    trust a test, break the code it covers, run it, and watch it fail on a

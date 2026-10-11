@@ -152,19 +152,19 @@ they name; never build again or restart review at round 1.
    ```markdown
    ## Review
 
-   Spec review: <b> blocking, <m> fixed, <k> notes. Code review: <b> blocking, <m> fixed, <k> notes. Claims review: <b> blocking, <m> fixed, <k> notes.
+   Spec review: <b> blocking, <m> fixed, <k> notes. Code review: <b> blocking, <m> fixed, <k> notes. Claims review: <b> blocking, <m> fixed, <k> notes. Comment review: <b> blocking, <m> fixed, <k> notes.
    Mutate: <n> mutants, <a> alive.
 
    Rejected:
 
-   - spec|code|claims: <claim> — <reason>
+   - spec|code|claims|comments: <claim> — <reason>
    ```
 
    `<b>` counts the blocking findings that review raised over all rounds,
    `<m>` those confirmed and fixed, `<k>` its notes. Every blocking finding
    not fixed is a Rejected line; omit "Rejected:" when there is none. Keep
    the counts line in exactly this shape (for an ADR-only diff:
-   `Code review: skipped. Claims review: skipped.`) and the Rejected lines
+   `Code review: skipped. Claims review: skipped. Comment review: skipped.`) and the Rejected lines
    with their tags:
    `.agents/scripts/delivery-stats.mjs` parses both. Rule 12 budget: 200
    words plus the checklist, Assumptions and Review, ending with
@@ -178,7 +178,7 @@ they name; never build again or restart review at round 1.
 
    Not blocking, not verified. Each is one reviewer's claim.
 
-   - spec|code|claims: <path:line what could be better>
+   - spec|code|claims|comments: <path:line what could be better>
 
    _Written by an agent._
    ```
