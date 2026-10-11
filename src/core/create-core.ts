@@ -242,7 +242,13 @@ export function createCore(options: CoreOptions): Core {
     quarantine,
     registry,
   });
-  const enrollment = new PhysicalEnrollment({ claims, decisions, drivers, registry });
+  const enrollment = new PhysicalEnrollment({
+    claims,
+    decisions,
+    drivers,
+    notifyAvailability,
+    registry,
+  });
   const cleanup = new CleanupExecutor({
     eventBus: options.eventBus,
     lifecycle: deviceLifecycle,

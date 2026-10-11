@@ -405,7 +405,7 @@ export class Dispatcher {
     }
     const ownerId = input.owner ?? session.principal;
     try {
-      return await this.options.leases.request(request, {
+      const grant = await this.options.leases.request(request, {
         allowDownload: effectiveAllowDownload(downloadsPolicy, requestedAllowDownload),
         noWait: input.noWait ?? false,
         ownerId,
@@ -420,6 +420,12 @@ export class Dispatcher {
         ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
         ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
       });
+      // A physical device's class sits on its spec; a grant carries it beside `physical` (ADR 0022).
+      const { device } = grant;
+      return {
+        ...grant,
+        device: device.physical ? { ...device, class: device.spec.class } : device,
+      };
     } catch (error: unknown) {
       // The refusal carries the ID in `details` on every transport (`ErrorDetailsMap`).
       if (error instanceof LeaseIdTakenError) {
