@@ -33,6 +33,7 @@ async function startGateway() {
     driver: "none",
   });
   const minted = await gateway.cli(["token", "create", "--role", "worker"]);
+  expect(minted.code, minted.stderr).toBe(0);
   const { secret } = minted.json as { secret: string };
   const uplink = { token: secret, url: `ws://127.0.0.1:${port}` };
   return {

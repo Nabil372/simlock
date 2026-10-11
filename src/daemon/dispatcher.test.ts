@@ -270,6 +270,7 @@ async function buildDispatcher(
     registry,
   });
   const doctor = new Doctor({
+    decisions: wiring.decisions,
     claims: engine.claimReader,
     clock,
     config,

@@ -222,6 +222,7 @@ export function createLeasing(options: LeasingOptions): Leasing {
       : new LeaseHealthMonitor({
           clock: options.clock,
           config: options.config,
+          decisions,
           drivers: core.drivers,
           eventBus: options.eventBus,
           lifecycle: core.deviceLifecycle,
