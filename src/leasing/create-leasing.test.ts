@@ -198,14 +198,15 @@ async function createHarness(
   };
   const totalRamBytes = options.totalRamBytes ?? 32 * gibibyte;
   const drivers = options.drivers ?? [driver];
+  const wiring = testComponentWiring({
+    clock,
+    components: options.components,
+    drivers,
+    eventBus: bus,
+    registry,
+  });
   const engine = createTestEngine({
-    ...testComponentWiring({
-      clock,
-      components: options.components,
-      drivers,
-      eventBus: bus,
-      registry,
-    }),
+    ...wiring,
     clock,
     config: engineConfig,
     drivers,
@@ -220,7 +221,7 @@ async function createHarness(
     systemStats: new FakeSystemStats({ cpuCount: 8, totalRamBytes }),
   });
 
-  return { bus, clock, driver, engine, filesystem, registry };
+  return { bus, clock, decisions: wiring.decisions, driver, engine, filesystem, registry };
 }
 
 async function seedReady(
@@ -1873,13 +1874,36 @@ describe("createLeasing fresh lease identity (#75)", () => {
     expect(destroyedDriverDeviceIds(harness.driver)).toHaveLength(1);
   });
 
+  it("the health monitor clears a device's recovery mark only once the decision section is free", async () => {
+    const harness = await createHarness({ lease: { defaultTtlMs: 14_400_000 } });
+    const granted = await harness.engine.request(request, { ownerId: "a", requesterId: "a" });
+    await harness.registry.markRecoveryAttempt(granted.device.id, harness.clock.now());
+    let open!: () => void;
+    const held = harness.decisions.run(
+      () =>
+        new Promise<void>((resolve) => {
+          open = resolve;
+        }),
+    );
+
+    harness.engine.healthMonitor.start();
+    harness.clock.advance(30_000);
+    await flush();
+    expect(harness.registry.snapshot.devices[0]?.recoveringSince).toBeDefined();
+    open();
+    await held;
+    await flush();
+    harness.engine.healthMonitor.dispose();
+
+    expect(harness.registry.snapshot.devices[0]?.recoveringSince).toBeUndefined();
+  });
+
   it("deletes the device of a recovery-driven lease termination", async () => {
     const harness = await createHarness({
       identity: freshIos,
       lease: { defaultTtlMs: 14_400_000 },
     });
     const granted = await harness.engine.request(request, { ownerId: "a", requesterId: "a" });
-    // The device vanished from driver reality: recovery gives up and ends the lease as lost.
     harness.driver.setManagedReality({ devices: [], processes: [] });
 
     harness.engine.healthMonitor.start();

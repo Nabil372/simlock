@@ -8,6 +8,7 @@ import {
   type DriverCatalog,
   type ObservedDevice,
   type ObservedMark,
+  type SerializedDecision,
   type VirtualDevice,
 } from "../core/index.js";
 
@@ -24,7 +25,6 @@ export interface HealthMonitorLifecycle {
   recoverLeased(target: VirtualDevice, leaseId: string): Promise<VirtualDevice | undefined>;
 }
 
-/** Releases a lease whose device is gone for good. Internally originated only. */
 export interface DeviceLostReleaser {
   releaseDeviceLost(leaseId: string): Promise<void>;
 }
@@ -32,6 +32,8 @@ export interface DeviceLostReleaser {
 export interface LeaseHealthMonitorOptions {
   readonly clock: Clock;
   readonly config: Config;
+  /** Each registry write runs in it, so it neither undoes nor is undone by another writer's commit. */
+  readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: DriverCatalog;
   readonly eventBus: EventBus;
   readonly lifecycle: HealthMonitorLifecycle;
@@ -47,15 +49,6 @@ interface CrashCounters {
   stopped: number;
 }
 
-/**
- * Periodically observes `leased` devices, reboots one whose process crashed
- * outside simlock under its existing lease, and releases the lease as
- * `device-lost` when recovery is impossible or exhausted. Not event-triggered
- * -- purely a `Clock`-driven tick, modelled on `CleanupReaper`.
- *
- * Does not arm on construction: callers must call `start()` explicitly (see
- * the constructor's doc for why) and `dispose()` to tear down.
- */
 export class LeaseHealthMonitor {
   readonly #counters = new Map<string, CrashCounters>();
   readonly #inFlight = new Set<string>();
@@ -237,7 +230,7 @@ export class LeaseHealthMonitor {
     counters.missing = 0;
     counters.stopped = 0;
     if (device.recoveringSince !== undefined || device.recoveryAttempts !== undefined) {
-      await this.options.registry.clearRecovery(device.id);
+      await this.options.decisions.run(() => this.options.registry.clearRecovery(device.id));
     }
     // A stopped device cannot be read reliably (Android's erasable mark lives on the
     // userdata partition, reachable only over adb while the emulator runs), so provenance
@@ -255,7 +248,6 @@ export class LeaseHealthMonitor {
     return counters.stopped >= this.options.config.health.stableObservations;
   }
 
-  /** Starts a detached recovery attempt if the concurrency cap allows it this tick. */
   #dispatchRecovery(device: VirtualDevice, lease: LeaseRecord): void {
     if (this.#inFlight.size >= this.options.config.health.maxConcurrentRecoveries) {
       // Cap reached; this device's counters stay elevated and it is retried next tick.
@@ -272,7 +264,6 @@ export class LeaseHealthMonitor {
       .finally(() => this.#inFlight.delete(device.id));
   }
 
-  /** Makes exactly one recovery attempt for a crashed device; retries land on later ticks. */
   async #recover(device: VirtualDevice, lease: LeaseRecord): Promise<void> {
     const attemptsSoFar = device.recoveryAttempts ?? 0;
     if (attemptsSoFar >= this.options.config.health.maxRecoveryAttempts) {
@@ -280,9 +271,8 @@ export class LeaseHealthMonitor {
       return;
     }
 
-    const recorded = await this.options.registry.markRecoveryAttempt(
-      device.id,
-      this.options.clock.now(),
+    const recorded = await this.options.decisions.run(() =>
+      this.options.registry.markRecoveryAttempt(device.id, this.options.clock.now()),
     );
     const attempt = recorded.recoveryAttempts ?? attemptsSoFar + 1;
 
@@ -332,7 +322,7 @@ export class LeaseHealthMonitor {
       return;
     }
 
-    await this.options.registry.clearRecovery(device.id);
+    await this.options.decisions.run(() => this.options.registry.clearRecovery(device.id));
     this.#counters.delete(device.id);
     this.options.eventBus.emit(
       "device.recovered",

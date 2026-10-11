@@ -28,6 +28,7 @@ import {
 import type { CapacityReader, LeaseExpirer, WarmPoolReader } from "./core-ports.js";
 import { reservedRunning, type WarmTargetFigures } from "./warm-pool/index.js";
 import type { Registry } from "./registry.js";
+import type { SerializedDecision } from "./serialized-decision.js";
 
 export type DoctorFinding =
   | {
@@ -123,16 +124,6 @@ export type DoctorFinding =
       readonly remedy: string;
     };
 
-/**
- * `erased` -- the durable mark stands but the erasable one is gone: the device
- * was erased or wiped outside Simlock.
- * `mark-mismatch` -- both regions carry a token but they disagree, so
- * something re-marked one region independently.
- * `durable-mark-missing` -- the durable region carries no token at all: the
- * device definition was recreated, or foreign tooling rewrote it. On Android
- * that also catches an `avdmanager create` reusing a `simlock_` name, which
- * the prefix match in `listManaged` would otherwise adopt silently.
- */
 export type ProvenanceDrift = "erased" | "mark-mismatch" | "durable-mark-missing";
 
 type OrphanDeviceFinding = Extract<DoctorFinding, { readonly kind: "orphan-device" }>;
@@ -141,7 +132,6 @@ export interface DoctorReport {
   readonly findings: readonly DoctorFinding[];
 }
 
-/** The one quarantine-entry operation Doctor needs -- see `QuarantineCoordinator.enterFromStalledTransition`. */
 export interface DoctorQuarantine {
   enterFromStalledTransition(deviceId: string): Promise<void>;
 }
@@ -149,38 +139,23 @@ export interface DoctorQuarantine {
 export interface DoctorOptions {
   readonly clock: Clock;
   readonly config: Config;
+  /**
+   * The decision section every registry write of this daemon is made in. A write made outside it
+   * can land on top of a concurrent one that read the registry before it, and undo it.
+   */
+  readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: readonly Driver[];
   readonly eventBus: EventBus;
   readonly leaseExpirer?: LeaseExpirer;
   readonly quarantine?: DoctorQuarantine;
-  /**
-   * Read-only view of the per-device operation claims. A device this daemon holds a
-   * claim on is work in progress by definition, which is what keeps a healthy
-   * backgrounded reclaim from being read as a stall -- see `isStalledTransition`.
-   */
   readonly claims?: Pick<DeviceOperationClaims, "isClaimed">;
-  /**
-   * Drivers that refused to start, as reported once at daemon startup. They are findings
-   * on every run, not just the first: the daemon has been serving without that platform
-   * ever since, and `doctor` is where `docs/CLI.md` promises the reason turns up.
-   */
   readonly driverRejections?: readonly DriverRejection[];
   readonly logger?: Logger;
-  /**
-   * The warm pool's last figures and the running limits its targets must fit in. Both are needed
-   * for the `warm-pool-target-unreachable` findings; without them the doctor reports none.
-   */
   readonly warmPool?: {
     readonly figures: WarmPoolReader["figures"];
     readonly runningCapacity: () => CapacityReader["runningCapacity"];
   };
-  /** One per platform this host could run, whether or not its driver started. */
   readonly prerequisiteChecks?: readonly PrerequisiteCheck[];
-  /**
-   * The platforms whose driver is serving. Defaults to the platforms of `drivers`. A platform
-   * outside it gets the restart sentence on every prerequisite finding, because only a daemon
-   * restart retries driver discovery.
-   */
   readonly runningPlatforms?: () => readonly Platform[];
   readonly registry: Registry;
 }
@@ -448,12 +423,13 @@ export class Doctor {
       );
       findings.push(...deviceFindings);
       if (deviceFindings.some((finding) => finding.kind === "foreign-state-change")) {
-        await this.options.registry.markForeignStateDetected(device.id, this.options.clock.now());
+        await this.options.decisions.run(() =>
+          this.options.registry.markForeignStateDetected(device.id, this.options.clock.now()),
+        );
       }
       if (deviceFindings.some((finding) => finding.kind === "foreign-provenance-change")) {
-        await this.options.registry.markForeignProvenanceDetected(
-          device.id,
-          this.options.clock.now(),
+        await this.options.decisions.run(() =>
+          this.options.registry.markForeignProvenanceDetected(device.id, this.options.clock.now()),
         );
       }
     }
@@ -693,8 +669,6 @@ export class Doctor {
     }
   }
 
-  /** One finding's `--fix` action, split out of `#applySafeFixes` so the per-kind dispatch
-   * (already at the edge of this file's complexity budget) doesn't also have to carry the loop. */
   // fallow-ignore-next-line complexity -- one exhaustive arm per finding kind, each a single call or a documented no-op.
   async #applySafeFix(
     finding: DoctorFinding,
@@ -702,7 +676,7 @@ export class Doctor {
   ): Promise<void> {
     switch (finding.kind) {
       case "registry-device-missing":
-        await this.#fixMissingDevice(finding.deviceId);
+        await this.options.decisions.run(() => this.#fixMissingDevice(finding.deviceId));
         break;
       case "orphan-device":
       case "orphan-process":
@@ -714,7 +688,7 @@ export class Doctor {
         }
         break;
       case "foreign-state-change":
-        await this.#fixForeignStateChange(finding);
+        await this.options.decisions.run(() => this.#fixForeignStateChange(finding));
         break;
       case "foreign-provenance-change":
         // Report-only: re-marking destroys the evidence, and the device may be leased.
@@ -743,15 +717,10 @@ export class Doctor {
     if (snapshot.leases.some((lease) => lease.deviceId === deviceId)) {
       return;
     }
-    const device = snapshot.devices.find((candidate) => candidate.id === deviceId);
-    if (device !== undefined && device.state !== "deleted") {
-      await this.options.registry.markDeviceMissing(deviceId, "doctor");
-    }
+    await this.options.registry.markDeviceMissing(deviceId, "doctor");
   }
 
   /**
-   * Destroys a stranded pre-root device and then records what that leaves behind.
-   *
    * The destroy reaches outside the driver's root, which every other path in Simlock is
    * forbidden to do -- and is permitted here for one reason: the device is in the registry.
    * Registry-only destruction (safety rule 1) is a rule about *what may be destroyed*, and
@@ -783,7 +752,7 @@ export class Doctor {
       });
       return;
     }
-    await this.#fixMissingDevice(finding.deviceId);
+    await this.options.decisions.run(() => this.#fixMissingDevice(finding.deviceId));
   }
 
   async #fixForeignStateChange(

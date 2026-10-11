@@ -283,6 +283,56 @@ describe("createCore", () => {
     ]);
   });
 
+  it("doctor marks a foreign state change only once the decision section is free", async () => {
+    const { core, driver, registry } = await build();
+    const spec = { physical: false, model: "Phone", osVersion: "1", platform: "ios" } as const;
+    const provisioned = await driver.provision(spec);
+    const device = await registry.registerDevice({
+      driverData: provisioned.driverData,
+      driverDeviceId: provisioned.deviceId,
+      provisionDuration: 0,
+      spec,
+    });
+    await registry.transitionDevice(device.id, "ready", {
+      event: "device.ready",
+      payload: { bootDuration: 0, deviceId: device.id },
+    });
+    await registry.createLease({
+      deviceId: device.id,
+      ownerId: "agent",
+      requesterId: "agent",
+      ttlDeadline: 500_000,
+      ttlMs: 60_000,
+    });
+    driver.setManagedReality({
+      devices: [
+        {
+          address: provisioned.deviceId,
+          deviceId: provisioned.deviceId,
+          driverData: provisioned.driverData,
+          runState: "stopped",
+        },
+      ],
+      processes: [],
+    });
+    let open!: () => void;
+    const held = core.decisions.run(
+      () =>
+        new Promise<void>((resolve) => {
+          open = resolve;
+        }),
+    );
+
+    const reconciled = core.doctor.reconcile();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(registry.snapshot.devices[0]?.foreignStateDetectedAt).toBeUndefined();
+    open();
+    await held;
+    await reconciled;
+
+    expect(registry.snapshot.devices[0]?.foreignStateDetectedAt).toBe(1_000);
+  });
+
   it("doctor expires a lease past its deadline through the connected leaseExpirer port", async () => {
     const { core, driver, registry } = await build();
     const spec = { physical: false, model: "Phone", osVersion: "1", platform: "ios" } as const;

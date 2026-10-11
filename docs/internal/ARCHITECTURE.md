@@ -1528,10 +1528,12 @@ are:
   cancellation, and registry-scoped reset operations.
 
 The serialized decision gate protects only short read-decide-commit sections.
-Driver work remains outside it. One `state.json` write does sit inside it: a
+Driver work remains outside it. `state.json` writes do sit inside it: a
 new lease request is stored in the same section that checks it is unique, so
-two concurrent requests under one key cannot both pass. A file write costs
-nothing next to the device work a lease waits on. Component boundaries use direct calls for
+two concurrent requests under one key cannot both pass, and doctor's and the
+health monitor's registry writes are made there so they cannot land on top of
+a concurrent commit. A file write costs nothing next to the device work a
+lease waits on. Component boundaries use direct calls for
 transactions; capacity-changing components notify the FIFO acquisition
 coordinator directly. The event bus remains only for post-commit facts and
 observers.

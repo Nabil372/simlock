@@ -294,6 +294,7 @@ export function createCore(options: CoreOptions): Core {
     claims,
     clock: options.clock,
     config: options.config,
+    decisions,
     drivers: options.drivers,
     driverRejections: options.driverRejections ?? [],
     eventBus: options.eventBus,
