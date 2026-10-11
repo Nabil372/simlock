@@ -12,8 +12,8 @@ Rules: `docs/internal/agent-rules/delivery.md` rule 14. You gather the
 inputs, start the reviewers, verify their blocking findings, and report.
 You edit no code; the implementer fixes.
 
-The reviewers are the agents `spec-reviewer`, `code-reviewer` and
-`claims-reviewer`. Never pass a model: it overrides their frontmatter.
+The reviewers are the agents `spec-reviewer`, `code-reviewer`,
+`claims-reviewer` and `comment-reviewer`. Never pass a model: it overrides their frontmatter.
 
 Arguments: a PR number; for round 2 and later, also `round <n>`, the reviews
 to run (`Rerun:` of the last report), `previous <sha>` (the `Commit:` of the
@@ -48,6 +48,9 @@ The script prints the directory's path last. It holds, when each exists:
   declaration or quoted string the diff removed.
 - `fix.patch` (with a previous sha): the diff from the last reviewed commit
   to this one.
+- `comments.txt`: every comment the diff adds or edits, and every comment
+  within 20 lines of code it adds, each with the code line after it.
+  `comments-fix.txt` (with a previous sha): the same for `fix.patch`.
 
 Stderr names anything the script could not find. Rules and ADRs come from
 `main`, so a PR cannot rewrite what it is judged by.
@@ -63,7 +66,8 @@ Which reviews run:
   questions (step 2).
 - **No `issue.md`** (the PR closes no issue): no spec review.
 - **Otherwise:** all of them. Round 1 runs every review; a later round runs
-  the reviews its arguments name, and always the claims review.
+  the reviews its arguments name, and always the claims and comment
+  reviews. The comment review is skipped when its list is empty.
 
 ## 2. Worktrees
 
@@ -94,7 +98,8 @@ Each brief below is passed verbatim, paths filled in; leave out a sentence
 about a file that does not exist. Every brief ends with the **common tail**.
 From round 2, every brief starts with the **re-review head**.
 
-**Re-review head** (round 2 and later):
+**Re-review head** (round 2 and later, every review but the comment
+review):
 
 ```markdown
 This is review round <n>. Earlier rounds reviewed the whole diff. Review
@@ -250,6 +255,27 @@ path that no longer exists, a behaviour, order, owner, default or limit that
 changed. Blocking: a false claim. Note: a claim that is true but misleading.
 ```
 
+**Comment review**: `subagent_type: "comment-reviewer"`, in the claims
+worktree. It reads `$R/rules/architecture.md` and `$R/comments.txt`; from
+round 2, `$R/comments-fix.txt` in its place.
+
+```markdown
+You are checking comments against one rule. You have no other context and
+have not seen the issue the diff implements.
+
+Rule: rule 17 in <rules/architecture.md>. Comments: <comments.txt>: each
+block is a comment the diff adds or edits, or one within 20 lines of code it
+adds, followed by the code line after it (`>`). Repository: <worktree>,
+checked out at the reviewed commit: read it only to see what a comment sits
+on, or whether a declaration is exported from an entry point the rule
+names. Edit nothing and run nothing.
+
+For each block, one line: `path:line — keep: <the why it gives>` or
+`— finding <n>`. A block stays only when the rule allows all of it. A block
+or part of a block the rule does not allow is blocking, Class: "a comment
+says what, not why".
+```
+
 **Common tail** (every brief):
 
 ```markdown
@@ -276,8 +302,11 @@ file at a time with the commands in `toolchain.md`. Then:
 - **Confirmed**: a Fix line, written to make sense without the PR open:
   `<review>: path:line what is wrong. Class: <class>`. `<review>` is
   `spec`, `code` or `claims`. A finding whose fix changes only a comment or
-  a doc is `claims`, whichever review raised it.
-- **Rejected**: `<review>: <claim> — <why it is wrong>`. The weekly delivery
+  a doc is `claims`, whichever review raised it. A comment review finding is
+  confirmed when the rule does not allow the comment; its fix deletes it.
+  Its Rejected and Notes lines are tagged `comments`.
+- **Rejected**: `<review>: <claim> — <why it is wrong>`, with `<review>`
+  `spec`, `code`, `claims` or `comments`. The weekly delivery
   stats count rejections per review from that tag.
 - **True but not blocking** (breaks no behaviour, leaves no wrong state,
   breaches no rule, ADR or spec line): reject it with `not blocking: <why>`
@@ -329,11 +358,11 @@ End with exactly this block, nothing after it:
 
 ```
 PR: #M  Round: <n | claims-only>  Kind: code | adr-only  Commit: <sha reviewed>
-Spec review: n findings (b blocking) | skipped  Code review: n findings (b blocking) | skipped  Claims review: n findings (b blocking) | skipped
+Spec review: n findings (b blocking) | skipped  Code review: n findings (b blocking) | skipped  Claims review: n findings (b blocking) | skipped  Comment review: n findings (b blocking) | skipped
 Fix: <one per line, `spec|code|claims: path:line what is wrong. Class: <class>`, or "none">
 Out of scope: <one per line, `path:line what is wrong`, or "none">
-Notes: <one per line, `spec|code|claims: path:line what could be better`, or "none">
-Rejected: <one per line, `spec|code|claims: claim — reason`, or "none">
+Notes: <one per line, `spec|code|claims|comments: path:line what could be better`, or "none">
+Rejected: <one per line, `spec|code|claims|comments: claim — reason`, or "none">
 Spec needs: <the line the spec is missing, or "none">
 Rerun: <spec, code, claims: those to run next round> | claims-only | none
 ```

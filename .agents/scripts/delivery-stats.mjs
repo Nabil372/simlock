@@ -121,7 +121,6 @@ function mergedSince(repo, since) {
   }
 }
 
-/** What one PR's `## Review` section says, or null when it has no counts line. */
 function reviewOf(body) {
   const start = /^## Review[ \t]*$/m.exec(body);
   if (start === null) return null;
@@ -133,13 +132,14 @@ function reviewOf(body) {
   if (spec === null) return null;
   const code = counts(section, "Code");
   const claims = counts(section, "Claims");
+  const comments = counts(section, "Comment");
   const mutate = /Mutate: (\d+) mutants?, (\d+) alive/.exec(section);
 
   const rejected = [];
   const list = /^Rejected:[ \t]*$/m.exec(section);
   if (list !== null) {
     for (const line of section.slice(list.index).split("\n")) {
-      const item = /^- (?:(spec|code|claims): )?(.+)$/.exec(line.trim());
+      const item = /^- (?:(spec|code|claims|comments): )?(.+)$/.exec(line.trim());
       if (item !== null) rejected.push({ review: item[1] ?? "untagged", text: item[2] });
     }
   }
@@ -151,7 +151,9 @@ function reviewOf(body) {
     codeFixed: code?.fixed ?? 0,
     claimsFound: claims?.found ?? 0,
     claimsFixed: claims?.fixed ?? 0,
-    notes: spec.notes + (code?.notes ?? 0) + (claims?.notes ?? 0),
+    commentsFound: comments?.found ?? 0,
+    commentsFixed: comments?.fixed ?? 0,
+    notes: spec.notes + (code?.notes ?? 0) + (claims?.notes ?? 0) + (comments?.notes ?? 0),
     mutants: mutate === null ? 0 : Number(mutate[1]),
     alive: mutate === null ? 0 : Number(mutate[2]),
     secondRound: /Review: round 2/.test(body),
@@ -159,10 +161,7 @@ function reviewOf(body) {
   };
 }
 
-/**
- * One review's counts: "Spec review: 3 blocking, 1 fixed, 4 notes", or before the blocking/note
- * split "Spec review: 7 findings, 1 fixed". Null when the line is missing or says "skipped".
- */
+// PRs from before the blocking/note split say "Spec review: 7 findings, 1 fixed".
 function counts(section, review) {
   const match = new RegExp(
     `${review} review: (\\d+) (?:findings?|blocking), (\\d+) fixed(?:, (\\d+) notes?)?`,
@@ -171,7 +170,6 @@ function counts(section, review) {
   return { found: Number(match[1]), fixed: Number(match[2]), notes: Number(match[3] ?? 0) };
 }
 
-/** The first line of a handoff's Blocked on section. */
 function blockedOn(body) {
   const heading = /^#{2,4} Blocked on[ \t]*$/m.exec(body);
   if (heading === null) return "no Blocked on section";
@@ -200,8 +198,8 @@ function report({ now, prs, handoffs, needsHardware }, weekCount) {
     "Review columns are confirmed-and-fixed / blocking raised (every finding raised, on PRs",
     "from before the blocking/note split). Rejected = raised − fixed. Notes are never verified.",
     "",
-    "| Week from | Merged | Reviewed | Spec review | Code review | Claims review | Notes | No fix | Round 2 | Mutants alive | Handoffs |",
-    "| --- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |",
+    "| Week from | Merged | Reviewed | Spec review | Code review | Claims review | Comment review | Notes | No fix | Round 2 | Mutants alive | Handoffs |",
+    "| --- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |",
   ];
   for (const window of windows) {
     const merged = prs.filter((pr) => inWindow(pr.mergedAt, window));
@@ -211,8 +209,9 @@ function report({ now, prs, handoffs, needsHardware }, weekCount) {
       `| ${new Date(window.from).toISOString().slice(0, 10)} | ${merged.length} | ${reviews.length}` +
         ` | ${rate(sum("specFixed"), sum("specFound"))} | ${rate(sum("codeFixed"), sum("codeFound"))}` +
         ` | ${rate(sum("claimsFixed"), sum("claimsFound"))}` +
+        ` | ${rate(sum("commentsFixed"), sum("commentsFound"))}` +
         ` | ${sum("notes")}` +
-        ` | ${reviews.filter((r) => r.specFixed + r.codeFixed + r.claimsFixed === 0).length}` +
+        ` | ${reviews.filter((r) => r.specFixed + r.codeFixed + r.claimsFixed + r.commentsFixed === 0).length}` +
         ` | ${sum("secondRound")}` +
         ` | ${sum("alive")}/${sum("mutants")}` +
         ` | ${handoffs.filter((h) => inWindow(h.createdAt, window)).length} |`,
@@ -226,7 +225,7 @@ function report({ now, prs, handoffs, needsHardware }, weekCount) {
       (reviewOf(pr.body ?? "")?.rejected ?? []).map((r) => ({ ...r, pr: pr.number })),
     );
   lines.push("", `## Rejected findings this week (${rejected.length})`);
-  for (const review of ["spec", "code", "claims", "untagged"]) {
+  for (const review of ["spec", "code", "claims", "comments", "untagged"]) {
     const group = rejected.filter((r) => r.review === review);
     if (group.length === 0) continue;
     lines.push("", `### ${review} (${group.length})`, "");

@@ -95,6 +95,20 @@ const input = {
       ),
     },
     {
+      number: 22,
+      title: "this week, only the comment review led to a fix",
+      mergedAt: "2026-10-02T15:00:00Z",
+      body: review(
+        [
+          "Spec review: 0 blocking, 0 fixed, 0 notes. Code review: 0 blocking, 0 fixed, 0 notes. Claims review: 0 blocking, 0 fixed, 0 notes. Comment review: 4 blocking, 3 fixed, 1 note.",
+          "",
+          "Rejected:",
+          "",
+          "- comments: a why comment — it names an upstream bug",
+        ].join("\n"),
+      ),
+    },
+    {
       number: 16,
       title: "this week, a Review heading with no counts",
       mergedAt: "2026-10-02T11:00:00Z",
@@ -146,7 +160,6 @@ function row(output: string, day: string): string[] {
     .map((cell) => cell.trim());
 }
 
-/** The bullet lines under the heading that starts with `heading`, up to the next heading. */
 function section(output: string, heading: string): string[] {
   const lines = output.split("\n");
   const start = lines.findIndex((l) => l.startsWith(heading));
@@ -159,18 +172,15 @@ describe("delivery-stats.mjs", () => {
   it("counts each week's merged PRs, their review findings, fixes, notes, second rounds, alive mutants and handoffs", () => {
     const output = run(["--weeks", "2"]);
 
-    // Week from | Merged | Reviewed | Spec review | Code review | Claims review | Notes | No fix | Round 2 | Mutants alive | Handoffs
-    // #16's Review heading has no counts line, so it is merged but not reviewed; #15 had a code fix
-    // and #19 a claims fix, so neither is "No fix". #10, #11 and #15 count every finding they
-    // raised; #17, #18 and #19 their blocking ones, and notes.
     expect(row(output, "2026-09-27")).toEqual([
       "2026-09-27",
-      "8",
-      "6",
+      "9",
+      "7",
       "2/10 (20%)",
       "4/4 (100%)",
       "2/3 (67%)",
-      "7",
+      "3/4 (75%)",
+      "8",
       "2",
       "1",
       "1/12",
@@ -182,6 +192,7 @@ describe("delivery-stats.mjs", () => {
       "1",
       "1/1 (100%)",
       "1/3 (33%)",
+      "0/0",
       "0/0",
       "0",
       "0",
@@ -203,6 +214,9 @@ describe("delivery-stats.mjs", () => {
     ]);
     expect(section(output, "### code")).toEqual(["- #10 a code claim — its reason"]);
     expect(section(output, "### claims")).toEqual(["- #19 a stale claim — the doc is right"]);
+    expect(section(output, "### comments")).toEqual([
+      "- #22 a why comment — it names an upstream bug",
+    ]);
     expect(section(output, "### untagged")).toEqual(["- #10 an untagged claim — its reason"]);
   });
 

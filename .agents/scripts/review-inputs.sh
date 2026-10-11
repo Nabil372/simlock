@@ -11,6 +11,9 @@
 #   fix.patch              with a previous commit: the diff from it to the head
 #   stale-refs.txt         what .agents/scripts/stale-refs.sh finds for the PR: lines anywhere in
 #                          the repo that still name something the diff removed
+#   comments.txt           what .agents/scripts/comments.mjs lists for the diff: every comment it
+#                          adds or edits, and every one within 20 lines of code it adds
+#   comments-fix.txt       with a previous commit: the same for fix.patch
 #   issue.md               the issue the PR closes: the second segment of a <kind>/<n> branch,
 #                          else the first "Closes #n" in the PR body
 #   feature.md             the issue's parent: its GitHub parent, else its "Part of #n" line
@@ -62,6 +65,7 @@ echo "$head" >"$out/commit"
 if [ -n "$previous" ]; then
   if git cat-file -e "$previous^{commit}" 2>/dev/null; then
     git diff "$previous" "$head" >"$out/fix.patch"
+    node "$(dirname "$0")/comments.mjs" "$previous" "$head" >"$out/comments-fix.txt"
   else
     say "previous commit $previous is not in this clone; no fix.patch"
   fi
@@ -69,13 +73,13 @@ fi
 "$(dirname "$0")/stale-refs.sh" "$fork" "$head" >"$out/stale-refs.txt"
 # Always written, so a reviewer can tell "the sweep found nothing" from "the sweep did not run".
 [ -s "$out/stale-refs.txt" ] || echo "(the sweep found no line naming anything the diff removed)" >"$out/stale-refs.txt"
+node "$(dirname "$0")/comments.mjs" "$fork" "$head" >"$out/comments.txt"
 
 for f in $(git ls-tree --name-only "$base" docs/internal/agent-rules/); do
   git show "$base:$f" >"$out/rules/$(basename "$f")"
 done
 git show "$base:docs/internal/adr/README.md" >"$out/rules/adr-index.md"
 
-# The issue: the second segment of a <kind>/<n> branch, else the first issue the body closes.
 issue=
 case $head_ref in
   bug/* | feature/* | task/*)

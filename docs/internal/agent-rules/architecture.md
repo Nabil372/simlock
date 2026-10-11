@@ -92,6 +92,7 @@ grounds for rejecting a change even if it works.
     because it is trusted. Do not trust the comments you are reading either:
     verify a strong claim about an invariant against the code before relying
     on it, and treat one that is no longer true as a defect you found.
+    A false comment that rule 17 does not allow is deleted, not fixed.
 14. **A module's public surface is its `index.ts`.** A component that is a
     directory exports what others may use from `index.ts`, and nothing
     outside the directory imports a file inside it; the directory's own
@@ -131,3 +132,17 @@ grounds for rejecting a change even if it works.
     and nothing else; swapping it is a name in config, not an edit to the
     executor. `src/gateway/routing/`, `src/core/cleanup/` and
     `src/core/capacity/strategies/` are the precedents.
+17. **A comment says why, or it goes.** Code carries a comment only to say
+    why it does something a reader would not expect: a workaround for an
+    upstream bug or unexpected behaviour (link it), a platform quirk, or an
+    invariant the types cannot express (a lock to hold, an order to keep).
+    Never what the code does, a list of other places, fields or callers, a
+    pointer to another declaration, history or plans. A test's claim goes in
+    its title. Also allowed: a doc comment on a declaration `simlock/client`
+    or `simlock/admin` exports (`src/client/index.ts`, `src/admin/index.ts`),
+    a script's usage header, and tool directives (`@ts-expect-error`,
+    `oxlint-disable`, `fallow-ignore`, `Stryker disable`). This rule
+    overrides the comment density of the code around you. Every comment a
+    change adds or edits, and every comment within 20 lines of code it adds,
+    meets it; delete the rest. `node .agents/scripts/comments.mjs <base>`
+    lists them.

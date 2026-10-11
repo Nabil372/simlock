@@ -120,6 +120,10 @@ states the failing count: `3 failing -> 1 failing`.
   other spellings, other paths, other import or call forms, empty and
   boundary values. Each one it lets through gets a fixture or an `Open:`
   line.
+- **Commented.** Run `node .agents/scripts/comments.mjs origin/main`: it
+  lists every comment the diff adds or edits, and every comment within 20
+  lines of code it adds. Delete each one the comment rule in
+  `architecture.md` does not allow.
 - **Promised.** For every Scope and Done when line, name the hunk or test
   that delivers it. None: do it, or leave the line unticked and say why
   under Open. Never tick a box on intent.
@@ -173,7 +177,8 @@ rule it breaks.
    at once) and check each.
 2. **Fix every instance:**
    - behaviour: write the failing test first, then the fix;
-   - stale doc or comment: fix it. Told to edit comments and docs only:
+   - stale doc: fix it. Stale comment: delete it, or fix it if the comment
+     rule allows it. Told to edit comments and docs only:
      a finding that needs any other change goes under Open instead;
    - a line ending in `(record as Assumption: ...)`: also add that
      assumption to the PR body;

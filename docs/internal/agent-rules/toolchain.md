@@ -26,8 +26,11 @@ them (from `node_modules/.bin` or any other path): `pnpm check`, `pnpm test`,
 - **Commit hook:** formats the staged files and stages the result, then
   lint and typecheck. Errors show in its output.
 - **Push hook:** Fallow, the e2e typecheck, then mutation testing on the
-  lines the branch changed. It takes minutes. Its output lists every mutant
-  left alive; a survivor does not block the push.
+  lines the branch changed. It reuses the branch's earlier results for every
+  mutant whose code and covering tests did not change, and when nothing
+  under `src/` or `ui/src/` changed since the branch's last run it reprints
+  that run's result. Its output lists every mutant left alive; a survivor
+  does not block the push.
 - **CI:** `pnpm check` and Fallow on every push. The console lane runs on
   every push to `main`, and on a pull request when it changes a source, UI,
   console spec or build file: in every browser when it changes `ui/` or the

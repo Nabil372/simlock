@@ -9,8 +9,8 @@ though the suite is green — being green is exactly the failure mode.
    that promises more than the body asserts is a defect, not a wording
    problem: it tells every later reader the case is covered when it is not,
    and that reader stops looking. If the body cannot prove the title, narrow
-   the title to what it does prove. The same goes for a comment above a test
-   explaining what it guards.
+   the title to what it does prove. The claim goes in the title, never in a
+   comment above the test (architecture rule 17).
 
 2. **Every test must be able to fail, for the right reason.** Before you
    trust a test, break the code it covers, run it, and watch it fail on a
@@ -22,7 +22,10 @@ though the suite is green — being green is exactly the failure mode.
    equally against the correct and the broken implementation. An assertion
    on an exact count of things the test does not own (pending timers, calls,
    events) fails the day unrelated code adds one, and fails only under some
-   schedules: assert on what the title names.
+   schedules: assert on what the title names. A test that some input is refused
+   starts from an input that is accepted, asserts that, then changes one
+   thing: otherwise it stays green when the input is refused for another
+   reason.
 
 3. **Production code that can be deleted with a green suite is untested.**
    For a new code path, try deleting it and run the suite. If nothing goes
