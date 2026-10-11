@@ -529,7 +529,8 @@ the range that covers it (`--os ">=18 <19"` for `18`). If a device could
 match but is leased, being reclaimed or quarantined, the request waits for
 it, or fails with `NO_CAPACITY` (exit 11) under `--no-wait`. A device that is
 not plugged in, trusted and usable at that moment is not granted: the request
-waits, and the device stays `ready`. The grant is checked against the device
+waits. If it stays gone, the device becomes `absent` and is reclaimed once it
+is back. The grant is checked against the device
 when it is made, so nothing is granted that is unplugged.
 
 Physical and simulator requests wait in separate lines. A simulator request is

@@ -645,7 +645,7 @@ call `renewLease` with the lease id and you have picked the lease straight
 back up; do nothing and it expires at its deadline like any other. That is
 why `onLeaseLost` no longer fires on connection loss: it reports a lease the
 daemon actually ended (expiry, an operator release, an unrecoverable
-device), and a dropped socket is not one. A daemon that starts again ends
+device, a physical device unplugged for the grace period), and a dropped socket is not one. A daemon that starts again ends
 every lease whose device is not running then, as `device-lost`, so a
 `renewLease` after a restart can fail with `UNKNOWN_LEASE`.
 

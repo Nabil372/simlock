@@ -1273,6 +1273,9 @@ provisioning → ready → leased → reclaiming → ready/shutdown → deleted
                  ready/shutdown/deleted
 ```
 
+A physical device has no `provisioning` or `shutdown`, and adds `absent`
+(see the paragraph on `absent` under quarantine below).
+
 A device created under `lease.identity: fresh` serves one lease. Its lease end
 skips the purge: `reclaiming → shutdown` (driver shutdown), then
 `shutdown → deleted` (driver destroy). `mayBeGranted` in `domain.ts` keeps a
@@ -1497,7 +1500,8 @@ lapsed lease, the kick it gives acquisition once a device is back),
 leasing implements it, and the daemon hands it over through `core.connect`; a
 core service called before `connect` fails with an error naming the missing
 port. The health monitor is optional: no other leasing part imports it, and
-`createLeasing` wires it or leaves it out. The direct transactional call chains
+`createLeasing` wires it or leaves it out. The `PhysicalDeviceWatcher` is always
+wired, whatever `health.enabled` says. The direct transactional call chains
 are:
 
 - `LeaseRequestBook` stores every lease request in the registry before the
