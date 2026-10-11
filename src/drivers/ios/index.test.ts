@@ -1283,6 +1283,26 @@ describe("IosSimctlDriver", () => {
     ]);
   });
 
+  it("refuses every ID as not-connected, with a message that it cannot read physical devices yet, and starts no process", async () => {
+    const runner = new ScriptedProcessRunner([]);
+    const driver = await createDriver(runner);
+    const callsBefore = runner.calls.length;
+
+    const reads = await Promise.all([
+      driver.inspectPhysical("00008110-001A2B3C4D5E"),
+      driver.inspectPhysical("not-an-id"),
+    ]);
+
+    for (const read of reads) {
+      expect(read).toEqual({
+        enrollable: false,
+        message: "this driver cannot read physical devices yet",
+        reason: "not-connected",
+      });
+    }
+    expect(runner.calls).toHaveLength(callsBefore);
+  });
+
   it("populates processes from booted managed devices only", async () => {
     const runner = new ScriptedProcessRunner([
       { match: listDevicesInvocation, result: { code: 0, stderr: "", stdout: listDevicesFixture } },

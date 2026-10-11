@@ -50,7 +50,6 @@ const ROLE_MATRIX: ReadonlyArray<{
   },
   { name: "token.list", input: {}, role: "admin" },
   { name: "token.revoke", input: { id: "tok_1" }, role: "admin" },
-  // ADR 0005 §8/§23: gateway-only, admin throughout.
   { name: "worker.list", input: {}, role: "admin" },
   { name: "worker.drain", input: { workerId: "wrk_1" }, role: "admin" },
   { name: "worker.undrain", input: { workerId: "wrk_1" }, role: "admin" },
@@ -66,6 +65,8 @@ const ROLE_MATRIX: ReadonlyArray<{
   },
   // ADR 0010 §8: removal is destructive, so admin-only.
   { name: "component.remove", input: { platform: "ios", version: "26.4" }, role: "admin" },
+  { name: "device.add", input: { id: "00008110-001A2B3C4D5E", platform: "ios" }, role: "admin" },
+  { name: "device.remove", input: { id: "00008110-001A2B3C4D5E" }, role: "admin" },
 ];
 
 describe("operation role matrix", () => {
@@ -83,8 +84,6 @@ describe("operation role matrix", () => {
   });
 });
 
-/** Which calls change state: the daemon log records a `write` at its default level and a
- * `read` only at `debug`. Rows keyed like `ROLE_MATRIX`, input-dependent ones twice. */
 const EFFECT_MATRIX: ReadonlyArray<{
   readonly name: OperationName;
   readonly input: unknown;
@@ -133,6 +132,8 @@ const EFFECT_MATRIX: ReadonlyArray<{
     effect: "write",
   },
   { name: "component.remove", input: { platform: "ios", version: "26.4" }, effect: "write" },
+  { name: "device.add", input: { id: "00008110-001A2B3C4D5E", platform: "ios" }, effect: "write" },
+  { name: "device.remove", input: { id: "00008110-001A2B3C4D5E" }, effect: "write" },
 ];
 
 function resolvedEffect(name: OperationName, input: unknown): unknown {
@@ -1262,5 +1263,92 @@ describe("lease.request names a model, a class, or nothing (ADR 0015 §1)", () =
     expect(requestedClass({ class: "tv" })).toBe("tv");
     expect(requestedClass({})).toBe("phone");
     expect(requestedClass({ model: "iPhone 16" })).toBeUndefined();
+  });
+});
+
+describe("device.add and device.remove ids (ADR 0022 §2)", () => {
+  const long = "x".repeat(201);
+
+  it.each([
+    ["201 characters", long],
+    ["a space", "00008110 001A2B3C4D5E"],
+    ["a tab", "00008110\t001A2B3C4D5E"],
+    ["a control character", "00008110\u0007001A2B3C4D5E"],
+    ["a leading dash", "-00008110-001A2B3C4D5E"],
+    ["nothing", ""],
+  ])("refuses an id with %s", (_case, id) => {
+    expect(OPERATIONS["device.add"].input.safeParse({ id, platform: "ios" }).success).toBe(false);
+    expect(OPERATIONS["device.remove"].input.safeParse({ id }).success).toBe(false);
+  });
+
+  it("takes an id of exactly 200 characters, and refuses a field it does not declare", () => {
+    const id = "x".repeat(200);
+
+    expect(OPERATIONS["device.add"].input.safeParse({ id, platform: "ios" }).success).toBe(true);
+    expect(
+      OPERATIONS["device.add"].input.safeParse({ id: "A", platform: "ios", worker: "w1" }).success,
+    ).toBe(false);
+    expect(OPERATIONS["device.remove"].input.safeParse({ id: "A", yes: true }).success).toBe(false);
+  });
+
+  it.each([
+    ["a unit separator", "A\u001fB"],
+    ["a delete", "A\u007fB"],
+    ["a C1 control", "A\u0080B"],
+    ["the last C1 control", "A\u009fB"],
+    ["a no-break space", "A\u00a0B"],
+    ["a newline", "A\nB"],
+  ])("refuses an id with %s", (_case, id) => {
+    expect(OPERATIONS["device.remove"].input.safeParse({ id }).success).toBe(false);
+  });
+
+  it.each([
+    ["a letter beyond ASCII", "caf\u00e9"],
+    ["a dash inside", "A-B"],
+    ["a tilde and an inverted exclamation mark", "A~\u00a1B"],
+  ])("takes an id with %s", (_case, id) => {
+    expect(OPERATIONS["device.remove"].input.safeParse({ id }).success).toBe(true);
+  });
+
+  it("says why an id is refused", () => {
+    const messages = (id: string) =>
+      OPERATIONS["device.remove"].input
+        .safeParse({ id })
+        .error?.issues.map((issue) => issue.message);
+
+    expect(messages("A B")).toEqual(["must not contain whitespace or control characters"]);
+    expect(messages("-A")).toEqual(["must not start with -"]);
+  });
+
+  it("declares device.add and device.remove with their names, outputs and strict inputs", () => {
+    const output = {
+      appCount: 3,
+      class: "tablet",
+      driverDeviceId: "U",
+      id: "dev_1",
+      model: "iPad",
+      osVersion: "18",
+      platform: "ios",
+      reenrolled: true,
+    };
+
+    expect(OPERATIONS["device.add"].name).toBe("device.add");
+    expect(OPERATIONS["device.remove"].name).toBe("device.remove");
+    expect(OPERATIONS["device.add"].output.parse(output)).toEqual(output);
+    expect(OPERATIONS["device.add"].output.safeParse({ ...output, class: "watch" }).success).toBe(
+      false,
+    );
+    expect(OPERATIONS["device.add"].output.safeParse({ ...output, appCount: -1 }).success).toBe(
+      false,
+    );
+    expect(OPERATIONS["device.remove"].output.parse({ driverDeviceId: "U", id: "U" })).toEqual({
+      driverDeviceId: "U",
+      id: "U",
+    });
+    expect(OPERATIONS["device.add"].input.safeParse({ id: "A" }).success).toBe(false);
+    expect(OPERATIONS["device.add"].input.safeParse({ id: "A", platform: "windows" }).success).toBe(
+      false,
+    );
+    expect(OPERATIONS["device.remove"].input.safeParse({}).success).toBe(false);
   });
 });

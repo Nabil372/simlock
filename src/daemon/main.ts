@@ -436,6 +436,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     execEnv: process.env,
     queue: leasing,
     reaper,
+    enrollment: core.enrollment,
     nuke,
     registry,
     // `status.get` and `list.get` flag a stalled device by the rule `doctor` reports, so they

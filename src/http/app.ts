@@ -141,9 +141,6 @@ const execBodySchema = z
   })
   .strict();
 
-/** Shape only: what a valid platform, version and worker list are is `component.install`'s and
- * `worker.install-component`'s own contract schemas' answer, reached through the dispatcher like
- * every other transport's. `workers` present is what picks the gateway operation. */
 const componentInstallBodySchema = z
   .object({
     platform: z.string(),
@@ -152,7 +149,8 @@ const componentInstallBodySchema = z
   })
   .strict();
 
-/** A route's JSON body, validated against its schema; a body that fails is `400 BAD_REQUEST`. */
+const deviceAddBodySchema = z.object({ id: z.string(), platform: z.string() }).strict();
+
 function jsonBody<Schema extends z.ZodTypeAny>(schema: Schema) {
   return zValidator("json", schema, (result, c) => {
     if (!result.success) {
@@ -284,8 +282,6 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
     return c.json(result);
   });
 
-  // ADR 0010 §8: an admin removal, answered as one JSON body. Which platforms and versions are
-  // valid, and who may remove, are `component.remove`'s own answers through the dispatcher.
   app.delete("/v1/components/:platform/:version", agentAuth, async (c) => {
     const dryRun = c.req.query("dryRun");
     if (dryRun !== undefined && dryRun !== "true" && dryRun !== "false") {
@@ -303,10 +299,27 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
     return c.json(result);
   });
 
+  app.post("/v1/devices", agentAuth, jsonBody(deviceAddBodySchema), async (c) => {
+    const result = await deps.dispatch(
+      "device.add",
+      c.req.valid("json"),
+      buildHttpSession(c.get("identity")),
+    );
+    return c.json(result);
+  });
+
+  app.delete("/v1/devices/:id", agentAuth, async (c) => {
+    const result = await deps.dispatch(
+      "device.remove",
+      { id: c.req.param("id") },
+      buildHttpSession(c.get("identity")),
+    );
+    return c.json(result);
+  });
+
   app.post("/v1/lease-requests", agentAuth, jsonBody(leaseRequestBodySchema), async (c) => {
     const identity = c.get("identity");
     const body = c.req.valid("json");
-    // Bounds and shape are `lease.request`'s own (`idempotencyKey`), checked by the dispatcher.
     const idempotencyKey = c.req.header("Idempotency-Key");
     const outcome = await tracker.submit(identity, toLeaseRequestInput(body), idempotencyKey);
     if (outcome.kind === "rejected") {

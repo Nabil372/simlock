@@ -1,5 +1,12 @@
 import type { Clock } from "../ports/index.js";
-import type { DeviceClass, DeviceMode, DeviceSpec, Platform, VirtualSpec } from "./domain.js";
+import type {
+  DeviceClass,
+  DeviceMode,
+  DeviceSpec,
+  PhysicalClass,
+  Platform,
+  VirtualSpec,
+} from "./domain.js";
 import {
   type ComponentInstallProgress,
   type ComponentInstallResult,
@@ -13,12 +20,14 @@ import {
   type DriverDevice,
   type DriverEstimate,
   type DriverReality,
+  type DriverRefusalReason,
   type InstalledComponent,
   type LegacyDevice,
   type ObservedRunState,
   type PassthroughCommand,
   PassthroughRefusedError,
   type PassthroughContext,
+  type PhysicalInspection,
   removeListedComponent,
   RuntimeMissingError,
   UnknownModelError,
@@ -34,6 +43,7 @@ export type FakeDriverOperation =
   | "shutdown"
   | "destroy"
   | "listManaged"
+  | "inspectPhysical"
   | "listCatalog"
   | "listComponents"
   | "removeComponent"
@@ -44,6 +54,15 @@ export type FakeDriverOperation =
 
 export type DriverEstimateOperation = "provision" | "boot" | "reclaim";
 
+export interface FakePhysicalDevice {
+  readonly ids: readonly string[];
+  readonly model?: string;
+  readonly osVersion?: string;
+  readonly class?: PhysicalClass;
+  readonly apps?: readonly string[];
+  readonly refusal?: { readonly reason: DriverRefusalReason; readonly message: string };
+}
+
 export interface FakeDriverCall {
   readonly arguments: readonly unknown[];
   readonly operation: FakeDriverOperation;
@@ -52,17 +71,11 @@ export interface FakeDriverCall {
 export interface FakeDriverOptions {
   readonly availableOsVersions?: readonly string[];
   readonly clock: Clock;
-  /** What `componentFootprint` states. Defaults to nothing to reserve, at the device root. */
   readonly componentFootprint?: { readonly path: string; readonly bytes: number };
-  /** The percentages every `installComponent` reports through `onProgress`, in order. */
   readonly installProgress?: readonly number[];
-  /** What `listComponents` reports as each version's size; absent for a version left out. */
   readonly componentSizes?: Readonly<Record<string, number>>;
-  /** What `listComponents` reports as each version's foreign devices; 0 for one left out. */
   readonly foreignDevices?: Readonly<Record<string, number>>;
-  /** What every `removeComponent` reports as left on disk; nothing unless set. */
   readonly removalResidue?: string;
-  /** Stands in for a real driver's owned root; nothing here validates or creates it. */
   readonly deviceRoot?: string;
   readonly estimateMs?: Partial<Record<DriverEstimateOperation, number>>;
   /**
@@ -110,11 +123,6 @@ export interface FakeDriverOptions {
    * two fakes in one catalog do not both answer to the same tool.
    */
   readonly passthroughTool?: string;
-  /**
-   * Builds the scoped command for that tool. Throw `PassthroughRefusedError` from here to
-   * model a driver's own refusal rules; omit it and every argument list is refused, which
-   * is what a driver claiming a tool it cannot build a command for would mean.
-   */
   readonly passthrough?: (
     args: readonly string[],
     context?: PassthroughContext,
@@ -128,6 +136,7 @@ export interface FakeDriverOptions {
   readonly legacyDevices?: Readonly<Record<string, LegacyDevice>>;
   readonly reclaimResult?: "ready" | "shutdown";
   readonly reclaimStrategy?: "erase" | "snapshot" | "wipe";
+  readonly physicalDevices?: readonly FakePhysicalDevice[];
 }
 
 export class FakeDriverUnknownDeviceError extends Error {
@@ -142,7 +151,6 @@ export class FakeDriver implements Driver {
   readonly #defaultModels: FakeDriverOptions["defaultModels"];
   readonly deviceRoot: string;
   readonly #availableOsVersions: Set<string>;
-  /** One receipt per installed version; an install replaces it with a new one. */
   readonly #receipts: Map<string, ComponentReceipt>;
   #installCount = 0;
   readonly #install: Pick<
@@ -187,6 +195,8 @@ export class FakeDriver implements Driver {
   /** Bumped on every `makeReady` boot -- mirrors a real driver reassigning a port per boot. */
   readonly #bootCounts = new Map<string, number>();
   #managedReality: DriverReality | undefined;
+  #physicalDevices: readonly FakePhysicalDevice[] | undefined;
+  readonly #scriptedPhysicalDevices: FakeDriverOptions["physicalDevices"];
 
   constructor(options: FakeDriverOptions) {
     this.#availableOsVersions = new Set(options.availableOsVersions ?? ["latest"]);
@@ -212,6 +222,7 @@ export class FakeDriver implements Driver {
     this.deviceRoot = options.deviceRoot ?? `/fake/${options.platform}`;
     this.#reclaimResult = options.reclaimResult ?? "ready";
     this.#reclaimStrategy = options.reclaimStrategy ?? "wipe";
+    this.#scriptedPhysicalDevices = options.physicalDevices;
     this.#install = options;
     this.#receipts = preinstalledReceipts(this.#availableOsVersions);
   }
@@ -518,6 +529,21 @@ export class FakeDriver implements Driver {
     };
   }
 
+  setPhysicalDevices(devices: readonly FakePhysicalDevice[]): void {
+    this.#physicalDevices = devices;
+  }
+
+  async inspectPhysical(id: string): Promise<PhysicalInspection> {
+    await this.#beforeCall("inspectPhysical", id);
+    const scripted = this.#physicalDevices ?? this.#scriptedPhysicalDevices ?? [];
+    const device = scripted.find((candidate) => candidate.ids.includes(id));
+    if (device === undefined) {
+      return { enrollable: false, message: `${id} is not connected`, reason: "not-connected" };
+    }
+    if (device.refusal !== undefined) return { enrollable: false, ...device.refusal };
+    return readPhysical(device, id);
+  }
+
   async listCatalog(): Promise<DriverCatalogEntry> {
     await this.#beforeCall("listCatalog");
     const runtimes = [...this.#availableOsVersions].sort(compareVersions);
@@ -706,4 +732,15 @@ function compareVersions(left: string, right: string): number {
   }
 
   return left.localeCompare(right);
+}
+
+function readPhysical(device: FakePhysicalDevice, id: string): PhysicalInspection {
+  return {
+    apps: [...(device.apps ?? [])],
+    class: device.class ?? "phone",
+    driverDeviceId: device.ids[0] ?? id,
+    enrollable: true,
+    model: device.model ?? "Fake Phone",
+    osVersion: device.osVersion ?? "1.0",
+  };
 }

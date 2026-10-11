@@ -206,6 +206,26 @@ describe("statusDeviceSchema's device projection", () => {
     });
   });
 
+  it("keeps a physical device's driverDeviceId, its canonical ID, and still strips its driver data", () => {
+    const device = statusDeviceSchema.parse({
+      ...fullCoreShapedDevice(),
+      class: "phone",
+      driverDeviceId: "00008110-001A2B3C4D5E",
+      mode: undefined,
+      physical: true,
+      spec: { physical: true, platform: "ios", model: "iPhone 15 Pro", osVersion: "18.4" },
+      state: "ready",
+    });
+
+    expect(device).toMatchObject({
+      class: "phone",
+      driverDeviceId: "00008110-001A2B3C4D5E",
+      physical: true,
+    });
+    expect(device).not.toHaveProperty("driverData");
+    expect(device).not.toHaveProperty("address");
+  });
+
   it("rejects a device object that is missing the fields status.get must keep", () => {
     expect(() => statusDeviceSchema.parse({ id: "device-1" })).toThrow();
   });

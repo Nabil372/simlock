@@ -85,7 +85,6 @@ describe("the workers views", () => {
       idChosenByRequester: false,
       ttlMs: 185_000,
     };
-    // The worker answered 10 seconds ago, when the provisioning device was 4 seconds in.
     const view = worker({
       devices: [leased, provisioning, ready],
       lastSeenAt: NOW - 10_000,
@@ -99,7 +98,7 @@ describe("the workers views", () => {
     expect(shown).toContain("dev_ready ready —");
   });
 
-  it("a physical device is a row of the worker's Devices table with an empty Mode cell, and counts in the Workers view's device total", () => {
+  it("a physical device is a row of the worker's Devices table typed Physical with a dash for Mode and Image tag, and counts in the Workers view's device total", () => {
     const physical = {
       class: "phone" as const,
       id: "dev_p",
@@ -119,7 +118,9 @@ describe("the workers views", () => {
 
     expect(text(html)).toContain("dev_p ready");
     expect(html).toContain('<td data-label="Model">iPhone 15 Pro</td>');
-    expect(html).toMatch(/<td data-label="Mode"[^>]*><\/td>/);
+    expect(html).toContain('<td data-label="Type">Physical</td>');
+    expect(html).toContain('<td data-label="Mode">—</td>');
+    expect(html).toContain('<td data-label="Image tag" class="mono">—</td>');
     expect(workersStats([view]).find((stat) => stat.label === "Devices")?.caption).toBe(
       "running of 1",
     );
@@ -133,10 +134,8 @@ describe("the workers views", () => {
       new ApiError(501, "UNSUPPORTED_IN_WORKER_MODE", "worker.drain is not supported"),
     );
     expect(text(unsupported)).toBe("Not available on a single host.");
-    // Not shown as an error.
     expect(unsupported).not.toContain('role="alert"');
 
-    // Any other refusal is an error, with the daemon's message.
     const failed = render(new ApiError(500, "INTERNAL", "Internal error"));
     expect(failed).toContain('role="alert"');
     expect(text(failed)).toBe("Internal error");

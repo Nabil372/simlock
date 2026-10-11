@@ -57,7 +57,7 @@ class TestRegistry {
     if (event.event === "device.reclaimed") {
       this.eventBus.emit(event.event, event.payload, "test-registry");
     } else {
-      this.eventBus.emit(event.event, event.payload, "test-registry");
+      this.eventBus.emit(event.event, { ...event.payload, physical: false }, "test-registry");
     }
     return updated;
   }
@@ -425,7 +425,7 @@ describe("ReclaimCoordinator", () => {
       ).toEqual([
         {
           event: "device.deleted",
-          payload: { deviceId: harness.target.id, initiator: "lease-end" },
+          payload: { deviceId: harness.target.id, initiator: "lease-end", physical: false },
         },
       ]);
       expect(harness.quarantined).toEqual([]);

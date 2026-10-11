@@ -13,49 +13,11 @@ export interface ProtocolRange {
 
 const protocolRangeSchema = z.object({ min: z.number().int(), max: z.number().int() });
 
-/**
- * The range this contract's daemon speaks. Both ends are 23, and every move that got it there
- * was breaking with no shim kept behind them, which is exactly when ADR 0003 §6's honesty
- * rule says a range must *not* widen: ADR 0004 removed `lease.heartbeat` and `mode` from the
- * wire (taking it to 4), and ADR 0005 adds `device.exec` and its `output` push family, a
- * `mode` field `status.get` now always carries, and the gateway surface -- `worker.*`,
- * `workerId`, the `worker` token role -- on top (taking it to 5). ADR 0008 makes the catalog
- * carry a required `modelRuntimes` and `modelAliases` per platform (taking it to 6), which a
- * gateway reading a worker's catalog depends on. ADR 0007 makes a device's mode a required `mode`
- * on the grant, `status.get`, and `list.get` (taking it to 7), then lets a lease request choose
- * that mode with `mode`, replacing `full`, and reshapes `config.get`'s `ios` block (taking it to
- * 8). ADR 0010 adds `component.install` and its `component-progress` push (taking it to 9): a
- * gateway's `worker.install-component` (ADR 0010 §7) relays that operation to its
- * workers, so a worker without it must be `incompatible` rather than fail in the middle of a
- * relay. ADR 0014 gives every event envelope an `id` (taking it to 10): a worker's pushed events
- * without one would fail the gateway's schema, so a worker on 9 is `incompatible` instead. ADR 0009 §7 makes `atRamBudget` a required field of each platform's `status.get`
- * capacity (taking it to 11), which a gateway routing on it depends on. ADR 0015 §3 makes `modelClasses` a required field of each platform's catalog (taking it to 12): a gateway reading a worker's catalog would fail its schema without it, so a worker on 11 is `incompatible`. ADR 0015 §4 makes `classDefaults` a required field of each platform's catalog too (taking it to 13), for the same reason: a worker on 12 is `incompatible`. ADR 0009 §6 makes `servesDefaultMode` a required field of each device in `status.get` (taking it to 16), which a gateway telling a warm hit for a request with no mode depends on: a worker on 15 is `incompatible`. ADR 0017 §4 and §8 make `warmPool.reserveRunning` a required field of `config.get`'s output (taking it to 17): a client parsing an older daemon's `config.get` would fail its schema without it, so a daemon on 16 is `incompatible`. While a daemon is `starting`, its `status.get` answers `daemon` and `host` alone, so `devices`, `leases`, `capacity` and `queueDepth` become optional (taking it to 18): a peer on 17 cannot parse that answer, and a gateway reading it from a worker on 17 would fail its schema, so a worker on 17 is `incompatible`. `warmPool.targets` and `warmPool.maxConcurrentBoots` are required fields of `config.get`'s output too (taking it to 19), for the same reason: a daemon on 18 is `incompatible`. `lease.request` takes `leaseId` and every lease record carries `idChosenByRequester` (ADR 0020, taking it to 21): a gateway never forwards a `leaseId` to a worker that would reject it, and reads the flag from every worker's lease list, so a worker on 20 is `incompatible`. `lease.request` takes `fleetRequestId`, which a gateway sets on every dispatch to mark it a probe (ADR 0021, taking it to 22): a worker that does not know the field would refuse the request, so a worker on 21 is `incompatible`. Every device a worker reports carries `physical` (ADR 0022 §1, taking it to 23): a gateway reads it from every worker's devices, and a device without it fails the gateway's schema, so a worker on 22 is `incompatible`. It only ever widens once a second version is actually kept alive side by side with the
- * first, which nothing here does.
- *
- * A client from before any of those changes simply does not overlap this daemon, and `hello`
- * fails with `PROTOCOL_VERSION_UNSUPPORTED` naming both ranges; `daemon.stop` stays the frozen
- * exception so the upgrade path (stop, then start the new daemon) exists at all. `status.get`'s
- * `mode` is the clearest reason this had to move rather than stay at 4: an older client parsing
- * that response against a schema without the field is not a compatibility story anyone kept, so
- * advertising 4 would be a claim to a compatibility path that does not exist.
- *
- * The consequence ADR 0005 §31 names: a pre-0005 worker's uplink negotiates nothing, so its
- * gateway marks it `incompatible` -- with both ranges on the view -- and never dispatches to it.
- * A worker on 5 is marked `incompatible` the same way (ADR 0008 §10), and so is one on 7
- * (ADR 0007 §12), and so is one on 8 (ADR 0010 §9), one on 10 (ADR 0009 §7), one on 11 (ADR 0015 §3), one on 12 (ADR 0015 §4), one on 13 (ADR 0015 §1), one on 14 (ADR 0015 §2), one on 15 (ADR 0009 §6), and one on 16 (`warmPool.reserveRunning`), one on 17 (a starting `status.get`), one on 18 (`warmPool.targets`), and one on 19 (`status.get`'s `warmPool`), and one on 20 (`leaseId`), and one on 21 (`fleetRequestId`), and one on 22 (`physical`).
- */
-export const PROTOCOL_VERSION_RANGE: ProtocolRange = { min: 23, max: 23 };
+/** Widen only once a second version is kept alive side by side with the first; a bump that leaves no shim behind moves both ends. */
+export const PROTOCOL_VERSION_RANGE: ProtocolRange = { min: 24, max: 24 };
 
-/**
- * The one protocol version that ever existed before ranges did. Used only to build the
- * `{min:2,max:2}` "daemon range" a client reports when it detects a legacy daemon's old-style
- * exact-match mismatch (see `mapLegacyProtocolMismatch`) -- there is no live protocol-2 daemon
- * in this repository to negotiate with; this constant documents the historical fact the ADR's
- * compatibility note depends on.
- */
 const LEGACY_DAEMON_PROTOCOL_VERSION = 2;
 
-/** Highest version present in both ranges, or `undefined` if they do not overlap at all. */
 export function negotiateProtocolVersion(
   client: ProtocolRange,
   daemon: ProtocolRange,

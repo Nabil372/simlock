@@ -1,5 +1,6 @@
 import type { EventBus } from "../bus/index.js";
 import { type Clock, type Logger, NoopLogger, type TimerHandle } from "../ports/index.js";
+import type { DeviceOperationClaim, DeviceOperationClaims } from "./device-operation-claims.js";
 import { type DeviceRecord, mayBeGranted, type Platform, type VirtualDevice } from "./domain.js";
 import type { Driver, VirtualDriverDevice } from "./driver.js";
 import type { SerializedDecision } from "./serialized-decision.js";
@@ -25,14 +26,12 @@ export interface QuarantineRegistry {
 export interface QuarantinePurgeFailure {
   readonly deviceId: string;
   readonly leaseId: string;
-  /** A reclaim strategy, or `delete` for a spent fresh device's failed lease-end shutdown or delete. */
   readonly attemptedStrategy: "erase" | "snapshot" | "wipe" | "delete";
   readonly duration: number;
   readonly error: string;
 }
 
 export interface QuarantineRetryConfig {
-  /** Failed retries allowed after the triggering purge failure before giving up. */
   readonly maxRetries: number;
   readonly retryBackoffMs: number;
   readonly retryBackoffMultiplier: number;
@@ -40,6 +39,7 @@ export interface QuarantineRetryConfig {
 }
 
 export interface QuarantineCoordinatorOptions {
+  readonly claims: Pick<DeviceOperationClaims, "tryClaim">;
   readonly clock: Clock;
   readonly config: QuarantineRetryConfig;
   readonly decisions: Pick<SerializedDecision, "run">;
@@ -50,24 +50,6 @@ export interface QuarantineCoordinatorOptions {
   readonly logger?: Logger;
 }
 
-/**
- * Owns the quarantine lifecycle: entry (release-time purge failure via `enter()`,
- * stalled-transition timeout via `enterFromStalledTransition()`), retry, and give-up.
- * `quarantined` is the shared "present in the registry, not grantable" disposition (for a
- * virtual device it also counts against running capacity; a physical device never counts) (see domain.ts): AcquisitionPlanner and
- * the idle-order eviction helpers already select targets by exact state, so a
- * quarantined device is invisible to every one of them with no special-casing
- * required.
- *
- * A quarantined virtual device retries its purge on a Clock-driven backoff until it
- * either succeeds (the device rejoins the warm pool) or exhausts
- * `config.maxRetries`. A spent fresh device (see `mayBeGranted`) retries its
- * delete instead, never a purge, and success deletes it. Either way, exhausting
- * `config.maxRetries`, at which point it is destroyed -- never merely shut
- * down, since `shutdown` is a state AcquisitionPlanner treats as reusable
- * warm inventory (`boot-shutdown`), which would silently reintroduce the
- * exact dirty-device bug this coordinator exists to prevent.
- */
 export class QuarantineCoordinator {
   readonly #timers = new Map<string, TimerHandle>();
   #disposed = false;
@@ -199,10 +181,28 @@ export class QuarantineCoordinator {
     );
     if (device === undefined) return;
 
+    const claim = this.options.claims.tryClaim(deviceId, "reclaim");
+    if (claim === undefined) {
+      this.#arm(deviceId, this.options.clock.now() + this.options.config.retryBackoffMs);
+      return;
+    }
+    try {
+      await this.#retryClaimed(device, claim);
+    } finally {
+      claim.release();
+    }
+  }
+
+  /**
+   * Every exit releases the claim right after the last write, before the coordinator's own facts
+   * and the wake-up that follow it: the planner never grants a claimed device, so a wake-up under
+   * the claim would pass over the device it was sent for.
+   */
+  async #retryClaimed(device: VirtualDevice, claim: DeviceOperationClaim): Promise<void> {
     const attempts = (device.quarantineAttempts ?? 0) + 1;
     const driver = this.options.drivers.get(device.spec.platform);
     if (!mayBeGranted(device)) {
-      await this.#retryDelete(driver, device, attempts);
+      await this.#retryDelete(driver, device, attempts, claim);
       return;
     }
     let result: Awaited<ReturnType<Driver["reclaim"]>>;
@@ -210,16 +210,17 @@ export class QuarantineCoordinator {
       result = await driver.reclaim(toDriverDevice(device), { clean: "standard" });
     } catch (error: unknown) {
       this.#logRetryFailure("quarantine reclaim retry failed", device, "reclaim", attempts, error);
-      await this.#retryFailed(device, attempts);
+      await this.#retryFailed(device, attempts, claim);
       return;
     }
 
     await this.options.decisions.run(() =>
-      this.options.registry.recoverFromQuarantine(deviceId, result.state),
+      this.options.registry.recoverFromQuarantine(device.id, result.state),
     );
+    claim.release();
     this.options.eventBus.emit(
       "device.quarantine-recovered",
-      { attempts, deviceId, strategy: result.strategy },
+      { attempts, deviceId: device.id, strategy: result.strategy },
       "quarantine-coordinator",
     );
     this.options.notifyAvailability();
@@ -230,17 +231,23 @@ export class QuarantineCoordinator {
    * back in the pool for a second one. It retries the delete instead, and success is
    * `device.deleted`, not `device.quarantine-recovered`: nothing rejoined the pool.
    */
-  async #retryDelete(driver: Driver, device: VirtualDevice, attempts: number): Promise<void> {
+  async #retryDelete(
+    driver: Driver,
+    device: VirtualDevice,
+    attempts: number,
+    claim: DeviceOperationClaim,
+  ): Promise<void> {
     try {
       await driver.destroy(toDriverDevice(device));
     } catch (error: unknown) {
       this.#logRetryFailure("quarantine delete retry failed", device, "delete", attempts, error);
-      await this.#retryFailed(device, attempts);
+      await this.#retryFailed(device, attempts, claim);
       return;
     }
     await this.options.decisions.run(() =>
       this.options.registry.deleteQuarantined(device.id, "lease-end"),
     );
+    claim.release();
     this.options.notifyAvailability();
   }
 
@@ -254,9 +261,13 @@ export class QuarantineCoordinator {
     this.#logger.warn(message, { deviceId: device.id, step, attempts, error: stableError(error) });
   }
 
-  async #retryFailed(device: VirtualDevice, attempts: number): Promise<void> {
+  async #retryFailed(
+    device: VirtualDevice,
+    attempts: number,
+    claim: DeviceOperationClaim,
+  ): Promise<void> {
     if (attempts >= this.options.config.maxRetries) {
-      await this.#giveUp(device, attempts);
+      await this.#giveUp(device, attempts, claim);
       return;
     }
     const nextRetryAt = this.options.clock.now() + backoffDelay(this.options.config, attempts);
@@ -266,7 +277,11 @@ export class QuarantineCoordinator {
     this.#arm(device.id, nextRetryAt);
   }
 
-  async #giveUp(device: VirtualDevice, attempts: number): Promise<void> {
+  async #giveUp(
+    device: VirtualDevice,
+    attempts: number,
+    claim: DeviceOperationClaim,
+  ): Promise<void> {
     const driver = this.options.drivers.get(device.spec.platform);
     try {
       await driver.destroy(toDriverDevice(device));
@@ -280,6 +295,7 @@ export class QuarantineCoordinator {
       await this.options.decisions.run(() =>
         this.options.registry.strandQuarantine(device.id, attempts),
       );
+      claim.release();
       this.options.eventBus.emit(
         "device.quarantine-stranded",
         { attempts, deviceId: device.id, error: stableError(error) },
@@ -290,6 +306,7 @@ export class QuarantineCoordinator {
     await this.options.decisions.run(() =>
       this.options.registry.deleteQuarantined(device.id, "quarantine-coordinator"),
     );
+    claim.release();
     this.options.eventBus.emit(
       "device.quarantine-abandoned",
       { attempts, deviceId: device.id },

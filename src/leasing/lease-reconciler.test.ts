@@ -222,6 +222,7 @@ describe("LeaseReconciler", () => {
     expect(events.find((entry) => entry.event === "device.deleted")?.payload).toEqual({
       deviceId: lease.deviceId,
       initiator: "doctor",
+      physical: false,
     });
     expect(harness.reclaims).toEqual([]);
   });

@@ -144,7 +144,7 @@ describe("startup ends every lease whose device is not running", () => {
     expect(ended[0]?.payload).toMatchObject({ leaseId: held.leaseId, reason: "device-lost" });
     const deleted = (await env.events()).filter((entry) => entry.event === "device.deleted");
     expect(deleted.map((entry) => entry.payload)).toEqual([
-      { deviceId: held.deviceId, initiator: "doctor" },
+      { deviceId: held.deviceId, initiator: "doctor", physical: false },
     ]);
     expect(await reclaimCalls(env, held.driverDeviceId)).toEqual([]);
   });
@@ -266,7 +266,7 @@ describe("startup ends every lease whose device is not running", () => {
     expect(ended.map((entry) => entry.event)).toEqual(["lease.expired"]);
     const deleted = (await env.events()).filter((entry) => entry.event === "device.deleted");
     expect(deleted.map((entry) => entry.payload)).toEqual([
-      { deviceId: held.deviceId, initiator: "doctor" },
+      { deviceId: held.deviceId, initiator: "doctor", physical: false },
     ]);
     expect(await reclaimCalls(env, held.driverDeviceId)).toEqual([]);
   });

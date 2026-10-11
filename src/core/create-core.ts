@@ -25,6 +25,7 @@ import type { DeviceRequest, Driver, DriverRejection, PrerequisiteCheck } from "
 import { DriverCatalog, type ModelPreferences } from "./driver-catalog.js";
 import { ManagedDeviceLifecycle } from "./managed-device-lifecycle.js";
 import { type AcquisitionMaintenance, type LeaseMaintenance, NukeService } from "./nuke-service.js";
+import { PhysicalEnrollment } from "./physical-enrollment.js";
 import { QuarantineCoordinator } from "./quarantine-coordinator.js";
 import { ReclaimCoordinator } from "./reclaim-coordinator.js";
 import type { Registry } from "./registry.js";
@@ -108,25 +109,17 @@ class CorePortMissingError extends Error {
 /** Device management, built and ready except for the ports `connect` fills. */
 export interface Core {
   readonly capacity: CapacityCoordinator;
-  /** Read-only capacity view for status, and for the daemon's status reporting. */
   readonly capacityReader: CapacityReader;
-  /** The warm pool's figures, for status and doctor. */
   readonly warmPoolReader: WarmPoolReader;
-  /** The device catalog and the passthrough resolver, both answered by the driver catalog. */
   readonly catalog: CatalogReader & PassthroughResolver;
   readonly claims: DeviceOperationClaims;
-  /**
-   * Read-only claim view for `Doctor`, which must not read a device a service is actively
-   * operating on as a stalled transition. Exposed as a reader, not the claims themselves, so
-   * a consumer handed only this view cannot take or release a claim. (`claims` above is the
-   * full surface; leasing takes and releases through it.)
-   */
   readonly claimReader: Pick<DeviceOperationClaims, "isClaimed">;
   readonly cleanup: CleanupActionExecutor;
   readonly decisions: SerializedDecision;
   readonly deviceLifecycle: ManagedDeviceLifecycle;
   readonly doctor: Doctor;
   readonly drivers: DriverCatalog;
+  readonly enrollment: PhysicalEnrollment;
   readonly nuke: NukeService;
   readonly provisioner: DeviceProvisioner;
   readonly quarantine: QuarantineCoordinator;
@@ -134,17 +127,7 @@ export interface Core {
   readonly registry: Registry;
   /** Supplies the ports leasing implements. Call it once, before any request is admitted. */
   connect(ports: CorePorts): void;
-  /**
-   * Startup's one read of the machine: every driver's `listManaged` once, each platform bounded
-   * by a fixed limit. Never throws; a platform that could not be listed is left out of it.
-   */
   readStartup(): Promise<StartupRead>;
-  /**
-   * The device steps of startup: quarantine restore, interrupted reclaims, spent devices, none of
-   * them on a platform the read could not list; then it starts the capacity observer and the warm
-   * pool, so the facts convergence commits trigger no pass and the first one follows
-   * `daemon.started`, where a lowered `maxRunning` is converged.
-   */
   converge(read: StartupRead): Promise<void>;
   /**
    * Runs a warm pool pass now. Leasing calls it once a backgrounded reclaim has given up its
@@ -238,6 +221,7 @@ export function createCore(options: CoreOptions): Core {
     registry,
   });
   const quarantine = new QuarantineCoordinator({
+    claims,
     clock: options.clock,
     config: options.config.warmPool.quarantine,
     decisions,
@@ -258,6 +242,7 @@ export function createCore(options: CoreOptions): Core {
     quarantine,
     registry,
   });
+  const enrollment = new PhysicalEnrollment({ claims, decisions, drivers, registry });
   const cleanup = new CleanupExecutor({
     eventBus: options.eventBus,
     lifecycle: deviceLifecycle,
@@ -360,6 +345,7 @@ export function createCore(options: CoreOptions): Core {
     deviceLifecycle,
     doctor,
     drivers,
+    enrollment,
     nuke,
     provisioner,
     quarantine,
@@ -373,7 +359,6 @@ export function createCore(options: CoreOptions): Core {
     async converge(read) {
       await startup.converge(read);
       warmPool.start();
-      // Every run begins with a step in the figures: what they are now.
       capacityObserver.start();
     },
     async passWarmPool() {

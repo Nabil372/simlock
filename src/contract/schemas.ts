@@ -167,76 +167,25 @@ export const deviceRecordSchema = z
   .superRefine((device, context) => checkDeviceType(device, context, true));
 
 /**
- * The device shape `status.get` returns (ADR §3: `status.get` is `role: "agent"`, with no
- * ownership check -- it reports on every device in the registry, not just ones the caller
- * leases). Deliberately narrower than `deviceRecordSchema`, for the same reason
- * `grantedDeviceSchema` is narrower than it: an agent is not an operator inspecting the
- * registry, and `deviceRecordSchema`'s `driverData` is an opaque, driver-defined blob whose
- * contents this contract cannot bound -- handing it to every agent for every device
- * (including devices other principals hold) is exactly the leak this schema exists to close.
- *
- * What stays, and why: `status.get` is what `simlock status` renders for a human (ADR §11,
- * "Human-readable status ... formatting stays"), and that rendering legitimately surfaces
- * device health, not just identity --
- *
- * - `id`, `spec`: which device this is.
- * - `physical`, `mode`, `class`: which kind of device it is (`mode` for a virtual one, `class` for
- *   a physical one).
- * - `servesDefaultMode`: whether the device's pool is the worker's default mode (ADR 0009 §6).
- * - `state`: the human-status line's primary content (`Device <id>: <state>`).
- * - `foreignStateDetectedAt`, `foreignProvenanceDetectedAt`: surfaced as "foreign state/
- *   provenance change" markers -- an agent legitimately wants to know a device it might be
- *   about to request was tampered with outside simlock.
- * - `quarantineAttempts`, `quarantineNextRetryAt`: surfaced as purge-retry progress for a
- *   quarantined device, so a caller waiting on capacity can see why a slot isn't freeing up.
- * - `transitionAgeMs`: the mid-transition decoration, surfaced as "mid-transition <ms>".
- * - `stalled`: the stall decoration, surfaced as "stalled": a caller waiting on capacity can see
- *   that a slot is held by a transition that is not finishing.
- *
- * What stays off, and why: `driverDeviceId` (the driver address of a device the caller does
- * not hold is not actionable -- a non-owning agent cannot drive it, and a holder already gets
- * it on their grant), `driverData` (opaque driver-private blob, unbounded contents),
- * `createdAt`/`lastLeaseEndedAt` (internal bookkeeping timestamps the human formatter never
- * reads), `recoveringSince`/`recoveryAttempts` (crash-recovery bookkeeping -- `safety.md` rule
- * 2 scopes that privilege narrowly, and broadcasting its progress to every agent is not part of
- * that scope), `quarantinedAt` (superseded by `quarantineAttempts`/`quarantineNextRetryAt` for
- * what a caller needs), and `address` (only meaningful to whoever is driving the device, i.e.
- * the lease holder, who gets it on the grant). `mode` stays: which kind of device it is matters
- * to anyone reading the fleet.
+ * `driverDeviceId` is here only for a physical device: its canonical ID is how an operator names
+ * it to `device remove`, so every role may see it; a virtual device's driver address is not
+ * actionable for a caller that does not hold it, so it is dropped.
  */
 export const statusDeviceSchema = z
   .object({
     id: z.string(),
     spec: deviceSpecSchema,
     state: deviceStateSchema,
-    /** Always present: see `checkDeviceType`. */
     physical: z.boolean(),
-    /**
-     * The device mode (see `DeviceRecord.mode`) -- not the daemon's own `worker`/`gateway` mode.
-     * Present exactly when `physical` is `false`.
-     */
     mode: deviceModeSchema.optional(),
-    /** Present exactly when `physical` is `true`. */
     class: physicalClassSchema.optional(),
-    /**
-     * ADR 0009 §6: whether the device's pool mode (its spec's mode, full when it names none) is the
-     * worker's default mode for the device's platform -- the pool a request naming no mode draws
-     * from. The gateway reads it to tell a warm hit for such a request. Not `mode`: `mode` is what
-     * the device actually is, this is what a request with no mode would get.
-     */
+    driverDeviceId: z.string().optional(),
     servesDefaultMode: z.boolean(),
     foreignStateDetectedAt: z.number().optional(),
     foreignProvenanceDetectedAt: z.number().optional(),
     quarantineAttempts: z.number().optional(),
     quarantineNextRetryAt: z.number().optional(),
-    /** Decoration added by `status.get`; absent for a device not mid-transition. */
     transitionAgeMs: z.number().optional(),
-    /**
-     * Decoration added by `status.get`: `true` for a device stuck `provisioning` or `reclaiming`
-     * past its threshold, by the rule `doctor`'s `stalled-transition` finding uses; absent for
-     * every other device. A worker view copies it, so a gateway reports a worker's stall as the
-     * worker does.
-     */
     stalled: z.boolean().optional(),
     /**
      * ADR 0005 §20: which worker this device lives on. Additive and gateway-only -- a worker
@@ -246,27 +195,15 @@ export const statusDeviceSchema = z
      */
     workerId: z.string().optional(),
   })
-  .superRefine((device, context) => checkDeviceType(device, context, true));
+  .superRefine((device, context) => checkDeviceType(device, context, true))
+  // `list.get` records carry a virtual device's driver address, and a worker view parses them
+  // through this schema: it drops the address of a device whose canonical ID is not shown.
+  .transform((device): typeof device => {
+    if (device.physical || device.driverDeviceId === undefined) return device;
+    const { driverDeviceId: _address, ...rest } = device;
+    return rest;
+  });
 
-/**
- * The device a `lease.request`/`lease.renew` grant carries -- deliberately narrower than
- * `deviceRecordSchema` (ADR 0003 §1: "the daemon maps [core records] onto contract types in
- * exactly one place"). A grant is agent-facing, not an admin inspection of the registry, so it
- * carries only what a caller needs to drive the device it was just handed:
- *
- * - `id`: the lease-facing device identity (what `lease.list`/`lease.renew` correlate against).
- * - `driverDeviceId`: the driver address a caller actually drives (simctl UDID / adb serial).
- * - `spec`, `address`, `mode`: same meanings as on `DeviceRecord` (src/core/domain.ts).
- * - `physical`, `class`: which kind of device it is; `class` is optional on a grant.
- *
- * Everything else on `DeviceRecord` -- `driverData` (opaque driver-private blob), `state`,
- * `createdAt`, every `quarantine*`/`foreign*`/`recovering*` field, and the `status`/`list`
- * decoration's `transitionAgeMs` -- is internal reclamation/health bookkeeping a grant recipient
- * has no business seeing, and stays off this shape. `list.get` (admin-only) still returns the
- * full `deviceRecordSchema` -- an operator inspecting the registry legitimately wants the whole
- * record. `status.get` (agent-role, ADR §3) is narrower still -- see `statusDeviceSchema` below,
- * which is what it actually returns.
- */
 export const grantedDeviceSchema = z
   .object({
     id: z.string(),

@@ -73,6 +73,7 @@ command starts it again) to bring the platform up.
 | 10 | `EXEC_TIMEOUT` | a `simctl`/`adb` command run through `device.exec` outlived `exec.timeoutMs` and was killed |
 | 10 | `DOWNLOAD_TIMEOUT` | a runtime download, including the time spent waiting for another download on the same platform, outlived `downloads.timeoutMs` |
 | 11 | `NO_CAPACITY` | capacity reached and `--no-wait` was set, or, through a gateway, no worker that takes requests can serve the request |
+| 11 | `DEVICE_BUSY` | `device add` or `device remove` of a device that is leased, being reclaimed or held by another operation, such as another `device add`; try again once that ends |
 | 11 | `COMPONENT_BUSY` | `component remove` while a component install or removal runs or waits on that platform; try again once it ends |
 | 12 | `NO_DRIVER` | no driver registered for the requested platform |
 | 12 | `RUNTIME_MISSING` | runtime not installed and no `--allow-download`, or no installed image of the `--image-tag` asked for |
@@ -82,6 +83,8 @@ command starts it again) to bring the platform up.
 | 12 | `UNKNOWN_WORKER` | `worker drain`/`undrain` or `component install --worker` naming a worker the gateway does not know |
 | 12 | `DOWNLOADS_DISABLED` | `component install` on a machine whose `downloads.policy` is `"never"` |
 | 12 | `COMPONENT_NOT_OWNED` | `component remove` of a component Simlock did not install, or one that changed on disk since |
+| 12 | `DEVICE_NOT_ENROLLABLE` | `device add` of a device that cannot be enrolled; the message says why |
+| 12 | `UNKNOWN_DEVICE` | `device remove` of an ID that is not an enrolled device |
 | 12 | `COMPONENT_IN_USE` | `component remove` of a component a device uses, Simlock's or your own |
 | 13 | `REQUESTER_ALREADY_LEASED` | requester already holds a lease or has a pending request — one lease per agent in v1; release the named lease first |
 | 13 | `LEASE_ID_TAKEN` | `lease --lease-id` named an ID an active lease or a waiting request already holds |
@@ -112,9 +115,9 @@ implement them:
   means for `USAGE` and `BAD_REQUEST`. Neither is retryable as written: the
   fix is a different command, or the same command against a different daemon.
   `UNSUPPORTED_IN_GATEWAY_MODE` in particular is permanent, not provisional:
-  `nuke`, `cleanup`, `doctor`, `driver.passthrough`, `component list` and
-  `component remove` stay per-worker operations rather than waiting on some
-  later fleet-wide version. `component install` without a worker flag answers
+  `nuke`, `cleanup`, `doctor`, `driver.passthrough`, `component list`,
+  `component remove`, `device add` and `device remove` stay per-worker
+  operations rather than waiting on some later fleet-wide version. `component install` without a worker flag answers
   it too; with `--worker` or `--all-workers` it installs on the workers you
   name.
 - `UNSUPPORTED_IN_WORKER_MODE` is the same refusal from the other side, and
@@ -908,10 +911,13 @@ install <apk>` resolve their path on the **worker's** filesystem, so the
 artifact has to be there already (a shared volume, a CI checkout on that
 machine).
 
-**Three commands refuse outright**, with `UNSUPPORTED_IN_GATEWAY_MODE` (exit
-2): `simlock nuke`, `simlock cleanup`, and `simlock doctor`. Each acts on one
-machine's devices as a whole, and in v1 they stay per-worker, direct
-operations — run them against that worker's own daemon. A fleet-wide
+**Seven commands refuse outright**, with `UNSUPPORTED_IN_GATEWAY_MODE` (exit
+2): `simlock nuke`, `simlock cleanup`, `simlock doctor`, `simlock component
+list`, `simlock component remove`, `simlock device add` and `simlock device
+remove`. The first five act on one machine's devices or components as a
+whole, and the last two name a device plugged into one
+worker; in v1 all of them stay per-worker, direct operations — run them
+against that worker's own daemon. A fleet-wide
 destructive command from one endpoint is not something v1 offers.
 `driver.passthrough`, the operation behind the *local* form of `simlock
 simctl` / `simlock adb`, answers the same way for the same reason: a
@@ -1192,6 +1198,10 @@ under the pre-0.3.0 hand-written schemas (`leaseId`, `deviceId`,
 schema's source of truth.
 
 ## `simlock status`
+
+In `status --json`, an enrolled physical device's entry carries `driverDeviceId`,
+its canonical ID, to every session including an agent's: it is the ID
+`simlock device remove` takes. A simulator or emulator's entry has none.
 
 Below the capacity lines, `status` prints the warm pool: whether it is on, the
 running slots it holds back per platform, and a line for each kind of device the
@@ -1758,6 +1768,62 @@ Simlock counts only the devices it can see. A device you create while a
 removal runs, or a device of another Simlock instance on the same machine,
 is not counted.
 
+## `simlock device add --platform <ios|android> <id>` / `device remove <id>`
+
+Enrols a phone or tablet plugged into this machine, and forgets it again.
+Admin only: an agent session gets `FORBIDDEN`. Both run on the machine the
+device is plugged into, a single host or a worker. A gateway answers
+`UNSUPPORTED_IN_GATEWAY_MODE`: run the command on the worker the device is
+plugged into.
+
+```sh
+simlock device add --platform ios 00008110-001A2B3C4D5E
+# Enrolled iPhone 15 Pro (iOS 18.4) as 00008110-001A2B3C4D5E, 12 user apps recorded.
+simlock device remove 00008110-001A2B3C4D5E
+# Removed 00008110-001A2B3C4D5E. It is no longer enrolled; nothing on the device changed.
+```
+
+`device add` asks the platform's driver to read the device and writes a
+record only when the driver says the device can be enrolled. The record is
+kept under the device's one canonical ID, whatever ID you typed: for an
+iPhone it is the UDID, even when you typed its CoreDevice identifier.
+`--platform` is required, because the platform decides which driver reads the
+device. `--json` prints the operation's output instead of the line:
+
+```text
+{"id":"dev_8f2a","driverDeviceId":"00008110-001A2B3C4D5E","platform":"ios","model":"iPhone 15 Pro","osVersion":"18.4","class":"phone","appCount":12,"reenrolled":false}
+```
+
+Running `device add` again on an enrolled device, by any ID it answers to,
+enrols it again: the record and its `id` stay, and the model, OS version,
+class and app list are read anew (`reenrolled` is `true`, and the line says
+`again`). A device in quarantine comes back `ready`. A device you removed and
+add again gets a new record.
+
+`device add` fails, and writes nothing, with:
+
+- `DEVICE_NOT_ENROLLABLE` (exit 12), with a reason: `not-connected`,
+  `network-only`, `untrusted`, `developer-mode-off`, `os-too-old`,
+  `unsupported-kind`, `locked`, `unreadable`, `virtual-device` (a simulator or
+  emulator, including every one Simlock manages) or
+  `enrolled-on-other-platform`. The message says why.
+- `DEVICE_BUSY` (exit 11): the device is `leased`, is `reclaiming`, or
+  another operation holds it, such as another `device add` (`busy`).
+- `NO_DRIVER` (exit 12): this machine has no driver for the platform.
+
+`device remove` takes the canonical ID, which `simlock status --json` and
+`simlock list --devices` show as `driverDeviceId`. It asks for no
+confirmation and takes no `--yes`: it only makes Simlock forget the device,
+and sends nothing to it. An ID that is not enrolled is `UNKNOWN_DEVICE`
+(exit 12); a device that is leased, is reclaiming, or is held by another
+operation (`busy`) is `DEVICE_BUSY`.
+
+Enrolling emits `device.enrolled` and removing emits `device.deleted` with
+`initiator` `operator`; see [EVENTS.md](EVENTS.md). The real iOS and Android
+drivers do not read physical devices yet and refuse every ID as
+`not-connected`. A missing `--platform`, a second ID or an unknown option is a
+usage error (exit 2).
+
 ## `simlock cleanup [--dry-run] [--rule <name>]`
 
 Run the cleanup reconciliation immediately. `--dry-run` prints the actions
@@ -2096,7 +2162,7 @@ simlock daemon stop && simlock daemon start
 
 Several commands (`list`, `cleanup`, `nuke`, `events`, `config get`,
 `daemon stop`, `token create|list|revoke`,
-`worker list|drain|undrain|remove`, and cross-process `lease renew`
+`device add|remove`, `worker list|drain|undrain|remove`, and cross-process `lease renew`
 and `release`) need the daemon's `admin` role. The CLI resolves a credential
 to send at handshake, in order:
 

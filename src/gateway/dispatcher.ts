@@ -195,6 +195,15 @@ export class GatewayDispatcher {
         "component.remove",
         "component.remove removes a component from one machine; run it against a worker",
       ),
+      // A device is plugged into one machine, and a gateway asks no worker.
+      "device.add": unsupportedByDesign(
+        "device.add",
+        "device.add enrols a device plugged into one machine; run it on the worker the device is plugged into",
+      ),
+      "device.remove": unsupportedByDesign(
+        "device.remove",
+        "device.remove unenrols a device plugged into one machine; run it on the worker the device is plugged into",
+      ),
 
       "lease.request": this.#leaseRequest,
       "lease.renew": this.#leaseRenew,
@@ -214,9 +223,6 @@ export class GatewayDispatcher {
   ): Promise<z.infer<(typeof OPERATIONS)[Op]["output"]>> {
     return runDispatch(operation, rawInput, session, {
       handlers: this.#handlers,
-      // #118: `ownsLease`/`device.exec`'s own hook and `lease.cancel`'s resolve these against
-      // the fleet's own lease index and pending-request queue -- the same shape a worker's own
-      // `Dispatcher` supplies from its registry and queue, read through `coordinator` instead.
       authorizeLookups: {
         leaseRequesterId: (id) => this.options.coordinator.leaseRequesterId(id),
         ownerId: (id) => this.options.coordinator.ownerId(id),

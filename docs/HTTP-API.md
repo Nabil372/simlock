@@ -114,6 +114,9 @@ called out where it applies below:
 - **The lease's `slim` boolean is gone; it carries `mode` instead** —
   `"slim"` or `"full"`, the device mode of the granted device. Every device in
   `GET /v1/status` carries the same `mode`.
+- **A physical device carries `driverDeviceId`** in `GET /v1/status`, its canonical
+  ID, to every role: the ID `DELETE /v1/devices/{id}` takes. A simulator or
+  emulator has none there.
 - **A device carries `physical`**, `false` for a simulator or emulator and
   `true` for a real phone or tablet, in `GET /v1/status` and its `spec`. A
   physical device has a `class` (`phone` or `tablet`) and no `mode`, and so does
@@ -124,8 +127,9 @@ Routes, status codes, and every other field are unchanged.
 Gateway/worker fleet mode is purely additive on top of
 that: the same routes answer identically whether the daemon behind them is a
 worker or a **gateway** fronting a fleet of workers (except
-`POST /v1/components/install`, `GET /v1/components` and
-`DELETE /v1/components/{platform}/{version}`, which only a worker serves; a
+`POST /v1/components/install`, `GET /v1/components`,
+`DELETE /v1/components/{platform}/{version}`, `POST /v1/devices` and
+`DELETE /v1/devices/{id}`, which only a worker serves; a
 gateway answers `501 UNSUPPORTED_IN_GATEWAY_MODE`), and what it adds are new
 routes (`/v1/uplink`, `/v1/workers*`, `POST /v1/leases/{id}/exec`), new
 fields (`mode` on status, `workers[]`, `workerId`, `worker` on the lease),
@@ -1049,6 +1053,59 @@ platform. Each refusal removes nothing:
 { "error": { "code": "COMPONENT_IN_USE", "message": "...", "devices": 1, "foreignDevices": 2 } }
 ```
 
+### `POST /v1/devices`
+
+Role: `operator`. Enrols a phone or tablet plugged into the machine the
+daemon runs on, the same operation as `simlock device add`. The body is
+exactly `platform` and `id`; any other field is `400 BAD_REQUEST`.
+
+```json
+{ "platform": "ios", "id": "00008110-001A2B3C4D5E" }
+```
+
+→ `200`
+
+```json
+{ "id": "dev_8f2a", "driverDeviceId": "00008110-001A2B3C4D5E", "platform": "ios",
+  "model": "iPhone 15 Pro", "osVersion": "18.4", "class": "phone", "appCount": 12,
+  "reenrolled": false }
+```
+
+`id` is the registry id; `driverDeviceId` is the canonical ID, which
+`DELETE /v1/devices/{id}` takes. Enrolling an enrolled device again keeps its
+registry id and answers `reenrolled: true`.
+
+- `422 DEVICE_NOT_ENROLLABLE` — the driver refused, or the ID names a
+  simulator or emulator, or a device enrolled on the other platform. The body
+  carries `id` (as sent), `platform`, `reason` and, when known,
+  `canonicalId`.
+- `409 DEVICE_BUSY` — the device is leased, reclaiming or held by another
+  operation. The body carries `id` and `reason` (`leased`, `reclaiming` or
+  `busy`).
+- `422 NO_DRIVER` — no driver for the platform.
+- `403 FORBIDDEN` — an `agent` token.
+- `400 BAD_REQUEST` — an unknown field, a platform other than `ios` or
+  `android`, or an `id` over 200 characters, with whitespace or a control
+  character, or starting with `-`.
+- `501 UNSUPPORTED_IN_GATEWAY_MODE` — the daemon is a gateway; ask the worker
+  the device is plugged into.
+
+### `DELETE /v1/devices/{id}`
+
+Role: `operator`. Forgets an enrolled phone or tablet, the same operation as
+`simlock device remove`. `{id}` is the canonical ID (`driverDeviceId`),
+URL-encoded. Nothing is sent to the device.
+
+→ `200 { "id": "dev_8f2a", "driverDeviceId": "00008110-001A2B3C4D5E" }`
+
+`id` is the registry id, as `POST /v1/devices` answers it.
+
+- `404 UNKNOWN_DEVICE` — no enrolled device has that ID.
+- `409 DEVICE_BUSY` — the device is leased, reclaiming or held by another
+  operation.
+- `403 FORBIDDEN` — an `agent` token.
+- `501 UNSUPPORTED_IN_GATEWAY_MODE` — the daemon is a gateway.
+
 ### `DELETE /v1/leases/{id}`
 
 Role: `agent` (own lease); `operator` may release any lease.
@@ -1377,10 +1434,10 @@ Every failure is the same shape the daemon protocol uses:
 | 400 | `BAD_REQUEST` (malformed body, bad query param, validation) |
 | 401 | `UNAUTHENTICATED` (missing or unrecognized token) |
 | 403 | `FORBIDDEN` (role doesn't permit the route — including a `worker` token on any `/v1` route other than `/v1/uplink`, and an `agent`/`operator` token at `/v1/uplink`; a `/v1/lease-requests/*` route whose request another token sent; or `POST /v1/leases/{id}/renew`/`DELETE /v1/leases/{id}`/`POST /v1/leases/{id}/exec` naming another requester's still-live lease), `DOWNLOADS_DISABLED` (`POST /v1/components/install` under `downloads.policy: "never"`) |
-| 404 | `UNKNOWN_WORKER` (`POST`/`DELETE /v1/workers/{id}/drain` naming a worker the gateway does not know), `UNKNOWN_LEASE_REQUEST` (unknown request id), `UNKNOWN_LEASE` (unknown lease id, expired/released, **or `GET /v1/leases/{id}`/`GET /v1/leases/{id}/events` naming another requester's lease** — see [`GET /v1/leases/{id}`](#get-v1leasesid)) |
-| 409 | `REQUESTER_ALREADY_LEASED` (body names the existing lease id; fleet-wide on a gateway), `LEASE_ID_TAKEN` (a `leaseId` an active lease or a waiting request holds; body carries `leaseId`; on a gateway, one of the gateway's own leases or requests, or a worker that refused it), `IDEMPOTENCY_CONFLICT` (an `Idempotency-Key` repeated with a different device or `leaseId`), `REQUEST_NOT_CANCELLABLE` (body names the lease id if the request had already been granted), `WORKER_CONNECTED` (`DELETE /v1/workers/{id}` while its uplink is open), `COMPONENT_NOT_OWNED`, `COMPONENT_IN_USE` (body carries `devices` and `foreignDevices`), `COMPONENT_BUSY` (the three refusals of `DELETE /v1/components/{platform}/{version}`) |
-| 422 | `UNKNOWN_MODEL`, `RUNTIME_MISSING`, `NO_DRIVER`, `PASSTHROUGH_REFUSED` (a refused `exec` verb, a caller-supplied `--set`/`-P`, a bare `adb shell`), `UNKNOWN_PASSTHROUGH_TOOL` |
-| 501 | `UNSUPPORTED_IN_GATEWAY_MODE` (an operation that acts on one machine, asked of a gateway: `POST /v1/components/install`, `GET /v1/components`, `DELETE /v1/components/{platform}/{version}`), `UNSUPPORTED_IN_WORKER_MODE` (an operation on a gateway's workers, asked of a single host: `POST`/`DELETE /v1/workers/{id}/drain`, `DELETE /v1/workers/{id}`, `POST /v1/components/install` with `workers`) |
+| 404 | `UNKNOWN_WORKER` (`POST`/`DELETE /v1/workers/{id}/drain` naming a worker the gateway does not know), `UNKNOWN_LEASE_REQUEST` (unknown request id), `UNKNOWN_LEASE` (unknown lease id, expired/released, **or `GET /v1/leases/{id}`/`GET /v1/leases/{id}/events` naming another requester's lease** — see [`GET /v1/leases/{id}`](#get-v1leasesid)) , `UNKNOWN_DEVICE` (`DELETE /v1/devices/{id}` naming a device that is not enrolled) |
+| 409 | `REQUESTER_ALREADY_LEASED` (body names the existing lease id; fleet-wide on a gateway), `LEASE_ID_TAKEN` (a `leaseId` an active lease or a waiting request holds; body carries `leaseId`; on a gateway, one of the gateway's own leases or requests, or a worker that refused it), `IDEMPOTENCY_CONFLICT` (an `Idempotency-Key` repeated with a different device or `leaseId`), `REQUEST_NOT_CANCELLABLE` (body names the lease id if the request had already been granted), `WORKER_CONNECTED` (`DELETE /v1/workers/{id}` while its uplink is open), `COMPONENT_NOT_OWNED`, `COMPONENT_IN_USE` (body carries `devices` and `foreignDevices`), `COMPONENT_BUSY` (the three refusals of `DELETE /v1/components/{platform}/{version}`), `DEVICE_BUSY` (`POST /v1/devices`, `DELETE /v1/devices/{id}` of a leased, reclaiming or held device; body carries `id` and `reason`) |
+| 422 | `UNKNOWN_MODEL`, `RUNTIME_MISSING`, `NO_DRIVER`, `DEVICE_NOT_ENROLLABLE` (`POST /v1/devices`; body carries `id`, `platform`, `reason`, and `canonicalId` when known), `PASSTHROUGH_REFUSED` (a refused `exec` verb, a caller-supplied `--set`/`-P`, a bare `adb shell`), `UNKNOWN_PASSTHROUGH_TOOL` |
+| 501 | `UNSUPPORTED_IN_GATEWAY_MODE` (an operation that acts on one machine, asked of a gateway: `POST /v1/components/install`, `GET /v1/components`, `DELETE /v1/components/{platform}/{version}`, `POST /v1/devices`, `DELETE /v1/devices/{id}`), `UNSUPPORTED_IN_WORKER_MODE` (an operation on a gateway's workers, asked of a single host: `POST`/`DELETE /v1/workers/{id}/drain`, `DELETE /v1/workers/{id}`, `POST /v1/components/install` with `workers`) |
 | 503 | `NO_CAPACITY` (with `noWait: true`, or, on a gateway, when no worker that takes requests can serve the request; response carries `Retry-After`), `WORKER_UNREACHABLE` (a gateway could not reach the worker holding this lease or request) |
 | 504 | `EXEC_TIMEOUT` (a `device.exec` command outlived `exec.timeoutMs`), `DOWNLOAD_TIMEOUT` (a runtime download, waiting for another download included, outlived `downloads.timeoutMs`) |
 
@@ -1394,9 +1451,10 @@ behind this is not reachable right now" is the same answer in all four cases,
 and a client with one retry rule for `transport` should not need a second one
 because the unreachable thing happened to be a worker.
 
-`UNSUPPORTED_IN_GATEWAY_MODE` comes from three routes in this version,
-`POST /v1/components/install` without `workers`, `GET /v1/components` and
-`DELETE /v1/components/{platform}/{version}` asked of a gateway — `nuke`,
+`UNSUPPORTED_IN_GATEWAY_MODE` comes from five routes in this version,
+`POST /v1/components/install` without `workers`, `GET /v1/components`,
+`DELETE /v1/components/{platform}/{version}`, `POST /v1/devices` and
+`DELETE /v1/devices/{id}` asked of a gateway — `nuke`,
 `cleanup`, and
 `doctor` are absent from the HTTP surface (see
 [Not implemented](#not-implemented)), and the status is fixed so adding

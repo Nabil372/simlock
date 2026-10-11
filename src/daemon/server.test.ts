@@ -185,7 +185,7 @@ describe("DaemonServer", () => {
     [20, "cannot send lease.request's leaseId or read a lease's idChosenByRequester"],
     [21, "cannot send lease.request's fleetRequestId"],
   ])(
-    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 23, to a client on protocol %i, which %s",
+    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 24, to a client on protocol %i, which %s",
     async (version) => {
       const harness = await createHarness();
       const previous = await createClient(harness.socketPath);
@@ -195,19 +195,13 @@ describe("DaemonServer", () => {
       ).resolves.toMatchObject({
         error: {
           code: "PROTOCOL_VERSION_UNSUPPORTED",
-          details: { client: { min: version, max: version }, daemon: { min: 23, max: 23 } },
+          details: { client: { min: version, max: version }, daemon: { min: 24, max: 24 } },
         },
         ok: false,
       });
     },
   );
 
-  // Every protocol bump so far shipped without a back-compat shim, so rejecting an older
-  // client outright is a deliberate product decision, not just arithmetic on the current
-  // constant. Protocol 3 (ADR 0003) turned the rejection into a range check; 4 (ADR 0004)
-  // removed `lease.heartbeat` and `mode` behind that same no-shim rule; 5 (ADR 0005) adds
-  // `device.exec` and a `mode` field on `status.get` the same way. A v1 client has no overlap
-  // with `PROTOCOL_VERSION_RANGE` and is still rejected outright.
   it("rejects a protocol v1 client outright rather than serving it a wire it cannot speak", async () => {
     const harness = await createHarness();
     const legacy = await createClient(harness.socketPath);
@@ -638,7 +632,6 @@ describe("DaemonServer", () => {
       payload: { component: "27.0", outcome: "installed", platform: "ios", version: "27.0" },
     });
     expect(client.frames().filter((frame) => frame.push === "component-progress")).toEqual([
-      // The install's start, with no fraction: the schema accepts it as a push.
       {
         payload: { progress: { stage: "downloading" }, requestId: "install-frame" },
         push: "component-progress",
@@ -647,7 +640,6 @@ describe("DaemonServer", () => {
         payload: { progress: { fraction: 0.5, stage: "downloading" }, requestId: "install-frame" },
         push: "component-progress",
       },
-      // The install succeeded: its final report, before the reply.
       {
         payload: { progress: { fraction: 1, stage: "downloading" }, requestId: "install-frame" },
         push: "component-progress",
@@ -655,11 +647,33 @@ describe("DaemonServer", () => {
     ]);
   });
 
+  it("answers device.add and device.remove over the socket from the daemon's enrollment", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({
+      clock,
+      physicalDevices: [
+        { apps: ["a"], ids: ["UDID-1"], model: "iPhone 15 Pro", osVersion: "18.4" },
+      ],
+      platform: "ios",
+    });
+    const harness = await createHarness({ clock, driver, includeEnrollment: true });
+    const client = await createClient(harness.socketPath);
+    await hello(client);
+
+    const added = await client.request("device.add", { id: "UDID-1", platform: "ios" }, "add-1");
+    const removed = await client.request("device.remove", { id: "UDID-1" }, "remove-1");
+
+    expect(added).toMatchObject({
+      ok: true,
+      payload: { appCount: 1, driverDeviceId: "UDID-1", platform: "ios", reenrolled: false },
+    });
+    expect(removed).toMatchObject({
+      ok: true,
+      payload: { driverDeviceId: "UDID-1", id: "dev_1" },
+    });
+  });
+
   it("routes two commands on one connection by frame id, and pushes to no other connection", async () => {
-    // ADR 0005 §19a keys `output` on the request's frame id for the same reason `progress` is
-    // keyed on it: one connection may have several calls in flight. And a push is a *reply* to
-    // one call, not a broadcast -- a second connection, even one owned by the same principal,
-    // has no business seeing another's command output.
     const clock = new FakeClock(1_000);
     const driver = passthroughDriver(clock);
     const harness = await createHarness({
@@ -2895,24 +2909,13 @@ async function createHarness(
     readonly beginStop?: () => void;
     readonly stateFilesystem?: MemoryFilesystem;
     readonly stopAuxiliary?: () => Promise<void>;
-    /** ADR 0003 §5's per-start admin secret (`AdminSecretManager`). Undefined by default, same
-     * as `DaemonServer`'s own default -- most of this suite doesn't exercise the credential
-     * handshake at all. A test that needs to observe `persist()`/`remove()` calls (or their
-     * absence -- see the "loses the start race" test) injects a spy here. */
     readonly adminSecret?: AdminSecretManager;
-    /** ADR 0003 §5's seam (see `session.ts`): defaults every session in this harness to
-     * "admin" -- this suite predates roles and exercises every operation freely, the same
-     * access a pre-ADR-0003 connection always had. Tests that specifically exercise role
-     * enforcement (ADR §3) override this to get an "agent" (or mixed) session instead. */
     readonly resolveRole?: SessionRoleResolver;
-    /** Overrides the `downloads` config block for tests that exercise the download policy. */
     readonly downloads?: Partial<Config["downloads"]>;
-    /** Wires `device.exec`'s runner (ADR 0005 §19a); absent by default like the option itself. */
     readonly processRunner?: ProcessRunner;
-    /** Replaces the real socket host, for a test that has to control a frame's write. */
     readonly host?: ConnectionHost;
-    /** Overrides the protocol range this daemon advertises, to stand in for an older worker. */
     readonly protocolVersion?: ProtocolRange;
+    readonly includeEnrollment?: boolean;
   } = {},
 ) {
   const directory =
@@ -2978,6 +2981,7 @@ async function createHarness(
     warmPool: engine,
     deviceModes: engine,
     catalog: engine,
+    ...(options.includeEnrollment === true ? { enrollment: engine.core.enrollment } : {}),
     instanceId: "instance-test",
     clock,
     components: wiring.components,

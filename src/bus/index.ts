@@ -192,7 +192,21 @@ export interface EventMap {
     readonly deviceRoot: string;
   };
   "device.shutdown": { readonly deviceId: string; readonly initiator: string };
-  "device.deleted": { readonly deviceId: string; readonly initiator: string };
+  "device.deleted": {
+    readonly deviceId: string;
+    readonly initiator: string;
+    readonly physical: boolean;
+  };
+  "device.enrolled": {
+    readonly deviceId: string;
+    readonly platform: string;
+    readonly driverDeviceId: string;
+    readonly model: string;
+    readonly osVersion: string;
+    readonly class: "phone" | "tablet";
+    readonly appCount: number;
+    readonly reenrolled: boolean;
+  };
   "device.slimmed": {
     readonly deviceId: string;
     readonly address: string;
@@ -205,9 +219,7 @@ export interface EventMap {
   };
   "component.install-started": {
     readonly platform: string;
-    /** The component string the install was asked for: a version, or a driver's word for newest. */
     readonly componentId: string;
-    /** The requester whose call started this install, when one is known. */
     readonly requesterId?: string;
   };
   "component.installed": {

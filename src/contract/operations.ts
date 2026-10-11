@@ -614,24 +614,7 @@ export const leaseReleaseAll = defineOperation({
   output: z.object({ leaseIds: z.array(z.string()) }),
 });
 
-// ---- list.get -----------------------------------------------------------------------------
-
-/**
- * The union has four arms because two kinds of daemon answer it (ADR 0005 §32):
- *
- * - a **worker** returns its own registry records -- the full `deviceRecordSchema`, which an
- *   operator inspecting one machine legitimately wants;
- * - a **gateway** returns the fleet, and cannot return that shape: it has never held a
- *   `driverDeviceId` or a driver's private `driverData`, and fabricating either would be a
- *   lie about a device it does not own. It answers the narrower `statusDeviceSchema` (plus
- *   `workerId`) instead -- the same devices `status.get` reports.
- *
- * Arm order is load-bearing: a full record matches the first arm, so a worker's answer is
- * unchanged. `rules` is per-machine cleanup configuration, so a gateway answers it with an
- * empty list rather than inventing a fleet-wide rule set. `requests` lists the requests waiting
- * for a device: a worker's own, or on a gateway the fleet queue's and then each worker's, each
- * of those with its `workerId`.
- */
+/** Arm order is load-bearing: a full record matches the first arm, so a worker's answer is unchanged. */
 // fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
 export const listGet = defineOperation({
   name: "list.get",
@@ -962,16 +945,6 @@ export const workerInstallComponent = defineOperation({
   output: z.object({ results: z.array(workerInstallResultSchema) }),
 });
 
-// ---- component.remove (ADR 0010 §8) ---------------------------------------------------------
-
-/**
- * Removes one component Simlock installed: refused with `COMPONENT_NOT_OWNED` when Simlock has
- * no record of installing exactly what is installed now, `COMPONENT_IN_USE` while any device
- * uses it, Simlock's or not, and `COMPONENT_BUSY` while an install or removal runs or waits on
- * that platform. `dryRun` runs every one of those checks and removes nothing, answering
- * `would-remove`. Admin-only. `sizeBytes` is the component's size as listed, when known;
- * `residue` says what stayed on disk after a removal and how to reclaim it.
- */
 // fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
 export const componentRemove = defineOperation({
   name: "component.remove",
@@ -991,7 +964,49 @@ export const componentRemove = defineOperation({
   }),
 });
 
-// ---- the full registry ----------------------------------------------------------------------
+const ENROLLED_DEVICE_ID_MAX_LENGTH = 200;
+
+const enrollmentDeviceIdSchema = z
+  .string()
+  .min(1)
+  .max(ENROLLED_DEVICE_ID_MAX_LENGTH)
+  .refine(
+    (id) => [...id].every((character) => !/\s/u.test(character) && !isControlCharacter(character)),
+    "must not contain whitespace or control characters",
+  )
+  .refine((id) => !id.startsWith("-"), "must not start with -");
+
+function isControlCharacter(character: string): boolean {
+  const code = character.codePointAt(0) ?? 0;
+  return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+}
+
+// fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
+export const deviceAdd = defineOperation({
+  name: "device.add",
+  role: "admin",
+  effect: "write",
+  input: z.object({ platform: platformSchema, id: enrollmentDeviceIdSchema }).strict(),
+  output: z.object({
+    id: z.string(),
+    driverDeviceId: z.string(),
+    platform: platformSchema,
+    model: z.string(),
+    osVersion: z.string(),
+    class: z.enum(["phone", "tablet"]),
+    appCount: z.number().int().nonnegative(),
+    reenrolled: z.boolean(),
+  }),
+});
+
+// fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
+export const deviceRemove = defineOperation({
+  name: "device.remove",
+  role: "admin",
+  effect: "write",
+  input: z.object({ id: enrollmentDeviceIdSchema }).strict(),
+  output: z.object({ id: z.string(), driverDeviceId: z.string() }),
+});
 
 export const OPERATIONS = {
   "catalog.get": catalogGet,
@@ -1024,6 +1039,8 @@ export const OPERATIONS = {
   "component.list": componentList,
   "worker.install-component": workerInstallComponent,
   "component.remove": componentRemove,
+  "device.add": deviceAdd,
+  "device.remove": deviceRemove,
 } as const;
 
 export type OperationName = keyof typeof OPERATIONS;

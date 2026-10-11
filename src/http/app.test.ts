@@ -327,6 +327,80 @@ describe("GET /v1/components", () => {
   });
 });
 
+describe("POST /v1/devices and DELETE /v1/devices/{id}", () => {
+  const enrolled = {
+    appCount: 2,
+    class: "phone",
+    driverDeviceId: "00008110-001A2B3C4D5E",
+    id: "dev_1",
+    model: "iPhone 15 Pro",
+    osVersion: "18.4",
+    platform: "ios",
+    reenrolled: false,
+  };
+
+  it("dispatches device.add with the body's platform and id, and answers its result as JSON", async () => {
+    const { app, dispatcher } = buildHarness();
+    const seen: unknown[] = [];
+    dispatcher.handlers["device.add"] = (input) => {
+      seen.push(input);
+      return enrolled;
+    };
+
+    const response = await app.request("/v1/devices", {
+      body: JSON.stringify({ id: "00008110-001A2B3C4D5E", platform: "ios" }),
+      headers: { ...operatorAuth, "content-type": "application/json" },
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await response.json()).toEqual(enrolled);
+    expect(seen).toEqual([{ id: "00008110-001A2B3C4D5E", platform: "ios" }]);
+  });
+
+  it.each([
+    ["a field it does not declare", { id: "A", platform: "ios", worker: "w1" }],
+    ["no platform", { id: "A" }],
+    ["an id that is not a string", { id: 7, platform: "ios" }],
+  ])("400s a body with %s, before the device is read", async (_case, body) => {
+    const { app, dispatcher } = buildHarness();
+    dispatcher.handlers["device.add"] = () => {
+      throw new Error("should not be called");
+    };
+
+    const response = await app.request("/v1/devices", {
+      body: JSON.stringify(body),
+      headers: { ...operatorAuth, "content-type": "application/json" },
+      method: "POST",
+    });
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe("BAD_REQUEST");
+  });
+
+  it("dispatches device.remove with the path's id, and answers its result as JSON", async () => {
+    const { app, dispatcher } = buildHarness();
+    const seen: unknown[] = [];
+    dispatcher.handlers["device.remove"] = (input) => {
+      seen.push(input);
+      return { driverDeviceId: "00008110-001A2B3C4D5E", id: "00008110-001A2B3C4D5E" };
+    };
+
+    const response = await app.request("/v1/devices/00008110-001A2B3C4D5E", {
+      headers: operatorAuth,
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      driverDeviceId: "00008110-001A2B3C4D5E",
+      id: "00008110-001A2B3C4D5E",
+    });
+    expect(seen).toEqual([{ id: "00008110-001A2B3C4D5E" }]);
+  });
+});
+
 describe("DELETE /v1/components/{platform}/{version}", () => {
   it("dispatches component.remove with the path's platform and version, and answers its result as JSON", async () => {
     const { app, dispatcher } = buildHarness();

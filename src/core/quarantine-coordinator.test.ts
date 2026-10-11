@@ -8,6 +8,7 @@ import {
   MemoryFilesystem,
   MemoryLogSink,
 } from "../ports/index.js";
+import { DeviceOperationClaims } from "./device-operation-claims.js";
 import { DriverCatalog } from "./driver-catalog.js";
 import type { VirtualDevice, VirtualSpec } from "./domain.js";
 import { FakeDriver } from "./fake-driver.js";
@@ -144,7 +145,9 @@ async function createHarness(
   const target = { ...device("dev_1", driverDevice.deviceId), ...options.target };
   const registry = new FakeRegistry([target]);
   const notifyAvailability = vi.fn();
+  const claims = new DeviceOperationClaims();
   const coordinator = new QuarantineCoordinator({
+    claims,
     clock,
     config: options.config ?? retryConfig,
     decisions: new SerializedDecision(),
@@ -154,7 +157,7 @@ async function createHarness(
     notifyAvailability,
     registry,
   });
-  return { bus, clock, coordinator, driver, notifyAvailability, registry, target };
+  return { bus, claims, clock, coordinator, driver, notifyAvailability, registry, target };
 }
 
 function eventsOf(bus: EventBus): readonly EventEnvelope[] {
@@ -549,6 +552,7 @@ describe("QuarantineCoordinator", () => {
     const notifyAvailability = vi.fn();
     const bus = new EventBus(clock);
     const coordinator = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: retryConfig,
       decisions: new SerializedDecision(),
@@ -578,6 +582,7 @@ describe("QuarantineCoordinator", () => {
       },
     ]);
     const coordinator = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: retryConfig,
       decisions: new SerializedDecision(),
@@ -603,6 +608,7 @@ describe("QuarantineCoordinator", () => {
       { ...device("dev_ready", driverDevice.deviceId), state: "ready", quarantineNextRetryAt: 500 },
     ]);
     const coordinator = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: retryConfig,
       decisions: new SerializedDecision(),
@@ -669,6 +675,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
     const decisions = new SerializedDecision();
     const decisionRuns = vi.spyOn(decisions, "run");
     const coordinator = new QuarantineCoordinator({
+      claims: new DeviceOperationClaims(),
       clock,
       config: retryConfig,
       decisions,
@@ -730,5 +737,148 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
     expect(harness.decisionRuns).toHaveBeenCalledTimes(runsBefore);
     expect(harness.driverCalls).not.toHaveBeenCalled();
     expect(harness.registry.snapshot.devices[0]?.state).toBe("quarantined");
+  });
+});
+
+describe("QuarantineCoordinator retry claim (ADR 0022 §2)", () => {
+  async function stalled(options: Parameters<typeof createHarness>[0] = {}) {
+    const clock = options.clock ?? new FakeClock(1_000);
+    const harness = await createHarness({ ...options, clock });
+    await harness.coordinator.enterFromStalledTransition(harness.target.id);
+    return harness;
+  }
+
+  it("makes no driver call and keeps its attempt count when its claim is held, then runs one retryBackoffMs later", async () => {
+    const harness = await stalled();
+    const held = harness.claims.tryClaim(harness.target.id, "enrollment");
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.driver.calls.filter((call) => call.operation === "reclaim")).toEqual([]);
+    expect(harness.registry.snapshot.virtualDevices[0]).toMatchObject({
+      quarantineAttempts: 0,
+      state: "quarantined",
+    });
+    held?.release();
+    harness.clock.advance(retryConfig.retryBackoffMs - 1);
+    await flush();
+    expect(harness.driver.calls.filter((call) => call.operation === "reclaim")).toEqual([]);
+    harness.clock.advance(1);
+    await flush();
+
+    expect(harness.driver.calls.filter((call) => call.operation === "reclaim")).toHaveLength(1);
+    expect(eventsOf(harness.bus).at(-1)).toMatchObject({
+      event: "device.quarantine-recovered",
+      payload: { attempts: 1 },
+    });
+  });
+
+  it.each([
+    ["succeeds", false],
+    ["throws", true],
+  ] as const)(
+    "holds the reclaim claim while the driver's reclaim runs, and frees it after the call %s",
+    async (_case, throws) => {
+      const clock = new FakeClock(1_000);
+      const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
+      if (throws) driver.failOn("reclaim", 1, new Error("still stuck"));
+      const harness = await stalled({ clock, driver });
+      const original = driver.reclaim.bind(driver);
+      const duringCall: unknown[] = [];
+      vi.spyOn(driver, "reclaim").mockImplementation(async (device, options) => {
+        duringCall.push(harness.claims.operationFor(harness.target.id));
+        return original(device, options);
+      });
+
+      harness.clock.advance(retryConfig.retryBackoffMs);
+      await flush();
+
+      expect(duringCall).toEqual(["reclaim"]);
+      expect(harness.claims.isClaimed(harness.target.id)).toBe(false);
+      expect(harness.registry.snapshot.virtualDevices[0]?.state).toBe(
+        throws ? "quarantined" : "ready",
+      );
+    },
+  );
+
+  it("has freed the claim before it emits and before it wakes availability when a retry recovers the device", async () => {
+    const harness = await stalled({});
+    const claimedAt: boolean[] = [];
+    const sees = () => claimedAt.push(harness.claims.isClaimed(harness.target.id));
+    harness.bus.subscribe("device.quarantine-recovered", sees);
+    harness.notifyAvailability.mockImplementation(sees);
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.notifyAvailability).toHaveBeenCalledTimes(1);
+    expect(claimedAt).toEqual([false, false]);
+  });
+
+  it("has freed the claim before it wakes availability when a retry deletes a spent fresh device", async () => {
+    const harness = await stalled({ target: { lastLeaseEndedAt: 900, leaseIdentity: "fresh" } });
+    const claimedAt: boolean[] = [];
+    harness.notifyAvailability.mockImplementation(() =>
+      claimedAt.push(harness.claims.isClaimed(harness.target.id)),
+    );
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.registry.snapshot.virtualDevices.map((device) => device.state)).toEqual([
+      "deleted",
+    ]);
+    expect(claimedAt).toEqual([false]);
+  });
+
+  it("has freed the claim before it emits device.quarantine-abandoned and before it wakes availability when a retry gives up", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({ clock, platform: "ios" });
+    driver.failOn("reclaim", 1, new Error("still stuck"));
+    driver.failOn("reclaim", 2, new Error("still stuck"));
+    const harness = await stalled({ clock, driver });
+    const claimedAt: boolean[] = [];
+    const sees = () => claimedAt.push(harness.claims.isClaimed(harness.target.id));
+    harness.bus.subscribe("device.quarantine-abandoned", sees);
+    harness.notifyAvailability.mockImplementation(sees);
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+    harness.clock.advance(2_000);
+    await flush();
+
+    expect(eventsOf(harness.bus).at(-1)?.event).toBe("device.quarantine-abandoned");
+    expect(claimedAt).toEqual([false, false]);
+  });
+
+  it("has freed the claim before it emits device.quarantine-stranded when a retry gives up and cannot destroy the device", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({ clock, platform: "ios" });
+    driver.failOn("reclaim", 1, new Error("still stuck"));
+    driver.failOn("reclaim", 2, new Error("still stuck"));
+    driver.failOn("destroy", 1, new Error("cannot destroy"));
+    const harness = await stalled({ clock, driver });
+    const claimedAt: boolean[] = [];
+    harness.bus.subscribe("device.quarantine-stranded", () =>
+      claimedAt.push(harness.claims.isClaimed(harness.target.id)),
+    );
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+    harness.clock.advance(2_000);
+    await flush();
+
+    expect(claimedAt).toEqual([false]);
+  });
+
+  it("frees the claim when a registry write throws during the retry", async () => {
+    const harness = await stalled();
+    vi.spyOn(harness.registry, "recoverFromQuarantine").mockRejectedValue(new Error("disk full"));
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.claims.isClaimed(harness.target.id)).toBe(false);
   });
 });

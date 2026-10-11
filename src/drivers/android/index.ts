@@ -23,6 +23,7 @@ import {
   DriverCrashError,
   type DriverEstimate,
   type DriverReality,
+  type PhysicalInspection,
   type DriverToolVersion,
   type InstalledComponent,
   LicenseNotAcceptedError,
@@ -1012,6 +1013,14 @@ export class AndroidDriver implements Driver {
         this.#portAllocator.release(state.port);
       }
     });
+  }
+
+  async inspectPhysical(_id: string): Promise<PhysicalInspection> {
+    return {
+      enrollable: false,
+      message: "this driver cannot read physical devices yet",
+      reason: "not-connected",
+    };
   }
 
   async listManaged(): Promise<DriverReality> {

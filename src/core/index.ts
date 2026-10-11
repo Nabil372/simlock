@@ -67,6 +67,7 @@ export {
   type ObservedDevice,
   type ObservedRunState,
   type PassthroughCommand,
+  type PhysicalInspection,
   type PrerequisiteCheck,
   PassthroughRefusedError,
   removeListedComponent,
@@ -121,6 +122,12 @@ export {
 } from "./driver.js";
 export { type Core, type CorePorts, createCore } from "./create-core.js";
 export { DeviceOperationClaims, type DeviceOperationClaim } from "./device-operation-claims.js";
+export {
+  DeviceBusyError,
+  DeviceNotEnrollableError,
+  PhysicalEnrollment,
+  UnknownEnrolledDeviceError,
+} from "./physical-enrollment.js";
 export { DeviceProvisioner } from "./device-provisioner.js";
 export {
   exactRequirement,

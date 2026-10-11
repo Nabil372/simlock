@@ -38,6 +38,7 @@ interface Status {
     readonly id: string;
     readonly state: string;
     readonly mode: string;
+    readonly physical: boolean;
     readonly spec: {
       readonly platform: string;
       readonly model: string;
@@ -325,17 +326,17 @@ test.describe("the workers views", () => {
         const cells = deviceRow(page, device.id).getByRole("cell");
         await expect(cells.nth(1)).toHaveText(device.state);
         await expect(cells.nth(3)).toHaveText(device.spec.platform === "ios" ? "iOS" : "Android");
-        await expect(cells.nth(4)).toHaveText(device.spec.model);
-        await expect(cells.nth(5)).toHaveText(device.spec.osVersion);
-        await expect(cells.nth(6)).toHaveText(device.mode);
-        await expect(cells.nth(7)).toHaveText(device.spec.imageTag ?? "—");
+        await expect(cells.nth(4)).toHaveText(device.physical ? "Physical" : "Virtual");
+        await expect(cells.nth(5)).toHaveText(device.spec.model);
+        await expect(cells.nth(6)).toHaveText(device.spec.osVersion);
+        await expect(cells.nth(7)).toHaveText(device.mode);
+        await expect(cells.nth(8)).toHaveText(device.spec.imageTag ?? "—");
         const held = view?.leases.find((candidate) => candidate.deviceId === device.id);
         if (held === undefined) {
           // A ready device: the worker view carries no time for that state.
           await expect(cells.nth(2), device.id).toHaveText("—");
           continue;
         }
-        // A leased device: in that state since its lease was granted, counting on with no reload.
         await expect(cells.nth(2), device.id).toHaveText(/^\d+ s$/);
         const shown = Number.parseInt((await cells.nth(2).textContent()) ?? "", 10);
         // Within 3 seconds: the Date header counts whole seconds, the page shows whole seconds,

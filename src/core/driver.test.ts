@@ -6,7 +6,9 @@ import {
   DiskSpaceGuard,
   type Driver,
   type DriverDevice,
+  type DriverRefusalReason,
   InsufficientDiskSpaceError,
+  type PhysicalInspection,
   sameReceipt,
   UnknownModelError,
 } from "./driver.js";
@@ -209,5 +211,41 @@ describe("the virtual-only driver and lifecycle calls (ADR 0022 §4, §5)", () =
     expect(spec.physical).toBe(false);
     expect(physicalCallsDoNotCompile).toBeTypeOf("function");
     expect(virtualCallsCompile).toBeTypeOf("function");
+  });
+});
+
+describe("PhysicalInspection (ADR 0022 §5)", () => {
+  function otherPlatformDoesNotCompile(): void {
+    const otherPlatform: PhysicalInspection = {
+      enrollable: false,
+      message: "enrolled as iOS",
+      // @ts-expect-error only the core can know a device is enrolled on the other platform
+      reason: "enrolled-on-other-platform",
+    };
+    void otherPlatform;
+  }
+
+  it("lets a driver refuse with every reason but enrolled-on-other-platform", () => {
+    const reasons: Record<DriverRefusalReason, true> = {
+      "developer-mode-off": true,
+      locked: true,
+      "network-only": true,
+      "not-connected": true,
+      "os-too-old": true,
+      unreadable: true,
+      "unsupported-kind": true,
+      untrusted: true,
+      "virtual-device": true,
+    };
+
+    const refusals = (Object.keys(reasons) as DriverRefusalReason[]).map(
+      (reason): PhysicalInspection => ({ enrollable: false, message: `refused ${reason}`, reason }),
+    );
+
+    expect(refusals).toHaveLength(9);
+    expect(refusals.map((refusal) => !refusal.enrollable && refusal.reason)).not.toContain(
+      "enrolled-on-other-platform",
+    );
+    expect(otherPlatformDoesNotCompile).toBeTypeOf("function");
   });
 });

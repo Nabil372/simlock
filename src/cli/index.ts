@@ -75,6 +75,9 @@ Commands:
                               List installed runtimes and system images
   component remove <ios|android> <version> [--dry-run] [--yes]
                               Remove a runtime or system image Simlock installed
+  device add --platform <ios|android> <id> [--json]
+                              Enrol a physical device plugged into this host
+  device remove <id> [--json] Forget an enrolled physical device; the device is untouched
   simctl <args...>            Run xcrun simctl against Simlock's iOS device set
   adb <args...>               Run adb against Simlock's adb server
   mcp                         Start the stdio MCP server
@@ -84,21 +87,8 @@ Pass --token <secret> anywhere on the command line to connect as admin
 explicitly; see https://github.com/callstackincubator/simlock for the default
 resolution order.`;
 
-/**
- * A `lease` that stayed alive ends with the lease already gone: the daemon ended it without
- * the holder asking (TTL expiry, an operator `release`, or a leased device that could not be
- * recovered). Distinct from 0, which means the holder ended its own lease, and from 1 on a
- * dead connection, which means nothing ended the lease at all -- it is still granted and still
- * counting down (ADR 0004 §3).
- */
 const LEASE_LOST_EXIT_CODE = 14;
 
-/**
- * `component install --worker`/`--all-workers` on a gateway: at least one worker did not end
- * `installed` or `already-installed` -- it refused, failed, was skipped, or its result is
- * unknown. Like 14, an outcome of the command rather than a daemon error code: the call itself
- * succeeded, and the per-worker report on stdout says which worker ended how.
- */
 const WORKER_INSTALL_INCOMPLETE_EXIT_CODE = 15;
 
 /**
@@ -628,18 +618,10 @@ export async function runCli(
         return await runWorker(rest.slice(1), environment, token);
       case "component":
         return await runComponent(rest.slice(1), environment, token);
+      case "device":
+        return await runDevice(rest.slice(1), environment, token);
       case "simctl":
       case "adb":
-        // Named here rather than discovered from the drivers on purpose: these are
-        // user-facing command names published in `docs/CLI.md`, and the CLI never builds a
-        // simctl or adb argument -- it forwards the name and spawns whatever the daemon
-        // hands back, so which flags scope the tool and which verbs it refuses still live
-        // entirely in the driver (architecture rule 2 is about knowledge, not about names).
-        // Every argument after the tool name is the tool's, verbatim -- including `--help`,
-        // which belongs to `simctl`/`adb` and not to Simlock. `simlock --help` lists these.
-        // Narrowed here rather than passed as a bare string: both operations take an open
-        // `tool` (which wrappers exist is the drivers' answer, not the contract's), but this
-        // CLI publishes exactly two wrapper commands, and this switch already knows which.
         return await runPassthrough(
           rest[0] === "adb" ? "adb" : "simctl",
           rest.slice(1),
@@ -1945,21 +1927,113 @@ async function runWorkerAction(
   return 0;
 }
 
+const DEVICE_USAGE =
+  "Usage: simlock device add --platform <ios|android> <id> [--json]\n" +
+  "       simlock device remove <id> [--json]\n";
+
+// `device remove` asks for no confirmation: it changes nothing on the device (safety rule 5).
+async function runDevice(
+  argv: readonly string[],
+  environment: CliEnvironment,
+  token: string | undefined,
+): Promise<number> {
+  const command = argv[0];
+  if (command === undefined || isHelp(command)) {
+    environment.stdout.write(DEVICE_USAGE);
+    return 0;
+  }
+  if (command !== "add" && command !== "remove") {
+    throw new UsageError(withHelpHint(`Unknown device command: ${command}`));
+  }
+  const parsed = parseDeviceArgs(command, argv.slice(1));
+  if (parsed === "help") {
+    environment.stdout.write(DEVICE_USAGE);
+    return 0;
+  }
+  const client = await connectDaemonClient(environment, token);
+  try {
+    const { line, result } =
+      parsed.platform === undefined
+        ? await removeDevice(client, parsed.id)
+        : await addDevice(client, parsed.id, parsed.platform);
+    environment.stdout.write(`${parsed.json ? JSON.stringify(result) : line}\n`);
+    return 0;
+  } finally {
+    await client.close();
+  }
+}
+
+function parseDeviceArgs(
+  command: "add" | "remove",
+  argv: readonly string[],
+):
+  | {
+      readonly id: string;
+      readonly json: boolean;
+      readonly platform: "ios" | "android" | undefined;
+    }
+  | "help" {
+  const values = commandArgs(argv, {
+    help: { type: "boolean", short: "h" },
+    json: { type: "boolean" },
+    ...(command === "add" ? { platform: { type: "string" as const } } : {}),
+  });
+  if (values.help) return "help";
+  const [id, ...extra] = values.positionals;
+  if (id === undefined || extra.length > 0) {
+    throw new UsageError(withHelpHint(`device ${command} takes exactly one <id>`));
+  }
+  const json = values.json === true;
+  if (command === "remove") return { id, json, platform: undefined };
+  if (values.platform !== "ios" && values.platform !== "android") {
+    throw new UsageError(
+      withHelpHint(
+        "device add needs --platform ios or --platform android, to say which driver reads the device",
+      ),
+    );
+  }
+  return { id, json, platform: values.platform };
+}
+
+async function addDevice(
+  client: SimlockAdminClient,
+  id: string,
+  platform: "ios" | "android",
+): Promise<{ readonly line: string; readonly result: unknown }> {
+  const result = await client.addDevice({ id, platform });
+  return { line: describeEnrolled(result), result };
+}
+
+async function removeDevice(
+  client: SimlockAdminClient,
+  id: string,
+): Promise<{ readonly line: string; readonly result: unknown }> {
+  const result = await client.removeDevice({ id });
+  return { line: describeRemoved(result), result };
+}
+
+function describeRemoved(result: { readonly driverDeviceId: string }): string {
+  return `Removed ${result.driverDeviceId}. It is no longer enrolled; nothing on the device changed.`;
+}
+
+function describeEnrolled(result: {
+  readonly appCount: number;
+  readonly driverDeviceId: string;
+  readonly model: string;
+  readonly osVersion: string;
+  readonly platform: "ios" | "android";
+  readonly reenrolled: boolean;
+}): string {
+  const os = `${result.platform === "ios" ? "iOS" : "Android"} ${result.osVersion}`;
+  const apps = `${String(result.appCount)} user app${result.appCount === 1 ? "" : "s"}`;
+  return `Enrolled ${result.model} (${os}) as ${result.driverDeviceId}${result.reenrolled ? " again" : ""}, ${apps} recorded.`;
+}
+
 const COMPONENT_USAGE =
   "Usage: simlock component install <ios|android> <version> [--worker <id>... | --all-workers]\n" +
   "       simlock component list [--platform <ios|android>]\n" +
   "       simlock component remove <ios|android> <version> [--dry-run] [--yes]\n";
 
-/**
- * ADR 0010 §6: installs one component through the daemon's `component.install`. Argument
- * parsing and rendering only (architecture rule 8): whether the install may run, joins another
- * or is already done is the daemon's answer. The result is one JSON line on stdout; progress
- * is JSON lines on stderr, the same split every other command makes.
- *
- * With `--worker` or `--all-workers` it calls a gateway's `worker.install-component` instead
- * (ADR 0010 §7): each progress line names its worker, the result lists one entry per worker, and
- * the command exits 15 unless every worker ended `installed` or `already-installed`.
- */
 async function runComponent(
   argv: readonly string[],
   environment: CliEnvironment,
