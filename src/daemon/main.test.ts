@@ -664,7 +664,6 @@ describe("startDaemon wires core and leasing together", () => {
       }) as StartDaemonOptions;
     const failing = new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" });
     failing.failOn("reclaim", 1, new DriverCrashError("purge exploded"));
-    // The previous process: a device left quarantined, and one request still open.
     const first = await startDaemon(options(failing));
     const grant = (await first.dispatch("lease.request", ios, agent)) as Grant;
     await first.dispatch("lease.release", { leaseId: grant.lease.id }, agent);
@@ -681,7 +680,6 @@ describe("startDaemon wires core and leasing together", () => {
       request: ios,
       requesterId: "agent-1",
     });
-    // Leasing's startup settles the open request by writing the registry; hold that write.
     holdWrites = true;
 
     const starting = startDaemon(
@@ -695,8 +693,6 @@ describe("startDaemon wires core and leasing together", () => {
     runningDaemons.push(await starting);
     const timersAfterStartup = clock.pendingTimerCount;
 
-    // One timer is startup's own (nothing to do with devices). The quarantined device's retry
-    // timer is armed by core's convergence, which must not have begun.
     expect(timersWhileLeasingStartupPending).toBe(1);
     expect(timersAfterStartup).toBeGreaterThan(timersWhileLeasingStartupPending);
   });
@@ -741,7 +737,6 @@ describe("startDaemon wires core and leasing together", () => {
     const grant = (await first.dispatch("lease.request", ios, agent)) as Grant;
     await first.stop("test");
     // The restarted process's driver knows no device, so the leased one is gone from its platform.
-    // Ending that lease writes the registry; hold that write.
     holdWrites = true;
 
     let started = false;
