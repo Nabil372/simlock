@@ -595,7 +595,7 @@ describe("platformCatalogSchema classDefaults", () => {
   });
 });
 
-describe("the status device entry's absent state (ADR 0022 §8)", () => {
+describe("the status device entry's absent state (ADR 0022 §7)", () => {
   const absent = {
     class: "phone",
     driverDeviceId: "00008110-001A2B3C4D5E",

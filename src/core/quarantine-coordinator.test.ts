@@ -1146,7 +1146,7 @@ describe("QuarantineCoordinator and enrollment of a quarantined physical device 
   });
 });
 
-describe("QuarantineCoordinator retry of a physical device that is not present (ADR 0022 §8)", () => {
+describe("QuarantineCoordinator retry of a physical device that is not present (ADR 0022 §2)", () => {
   const FIRST = "00008110-001A2B3C4D5E";
   const PROBE_INTERVAL_MS = 7_000;
   const DEVICES: readonly FakePhysicalDevice[] = [

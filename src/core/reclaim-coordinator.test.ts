@@ -685,7 +685,7 @@ describe("ReclaimCoordinator for a physical device the platform no longer lists 
     const device = () =>
       registry.snapshot.devices.find((candidate) => candidate.id === "dev_physical");
     const events = () => bus.replay().map((event) => event.event);
-    return { bus, coordinator, device, driver, events, mockedQuarantine, registry };
+    return { bus, claims, coordinator, device, driver, events, mockedQuarantine, registry };
   }
 
   function releasedPhysical(device: DeviceRecord | undefined): ReleasedLease {
@@ -706,7 +706,11 @@ describe("ReclaimCoordinator for a physical device the platform no longer lists 
   }
 
   type ReturnedReclaims = {
-    reclaimReturned(deviceId: string, osVersion?: string): Promise<unknown>;
+    reclaimReturned(
+      deviceId: string,
+      osVersion?: string,
+      proceed?: () => boolean,
+    ): Promise<unknown>;
   };
 
   it("a returned device's reclaim that fails while present enters quarantine with device.quarantined and no device.purge-failed", async () => {
@@ -818,6 +822,19 @@ describe("ReclaimCoordinator for a physical device the platform no longer lists 
       deviceId: "dev_physical",
       error: "Error: link down",
     });
+  });
+
+  it("a returned device's reclaim whose caller no longer proceeds when the decision runs writes nothing, starts no wipe and leaves no claim", async () => {
+    const harness = await physicalHarness("absent");
+    harness.driver.setPhysicalPresence(PHYSICAL_ID, true, { osVersion: "18.5" });
+    const returned = harness.coordinator as unknown as ReturnedReclaims;
+
+    const started = await returned.reclaimReturned(PHYSICAL_ID, "18.5", () => false);
+
+    expect(started).toBeUndefined();
+    expect(harness.device()?.state).toBe("absent");
+    expect(harness.driver.calls.filter((call) => call.operation === "reclaim")).toHaveLength(0);
+    expect(harness.claims.isClaimed("dev_physical")).toBe(false);
   });
 
   it("records the OS version a returned device reports on its record before the wipe", async () => {
