@@ -16,7 +16,8 @@ import { connectSimlockAdmin } from "simlock/admin"; // agent + admin role
 `connectSimlockAdmin` returns a superset of `connectSimlock`'s client — every
 agent-role method plus the admin-role ones (`list`, `runCleanup`, `runNuke`,
 `getConfig`, `stopDaemon`, `replayEvents`/`subscribeEvents` (each event carries an `id`),
-`createToken`/`listTokens`/`revokeToken`, `installComponent`, `removeComponent`). The split exists so
+`createToken`/`listTokens`/`revokeToken`, `installComponent`, `removeComponent`,
+`addDevice`, `removeDevice`). The split exists so
 `simlock/client` doesn't even show admin methods in a caller's editor; the
 daemon's own role check is what actually stops an agent-role session from
 calling one — this is a discoverability choice, not the
@@ -489,6 +490,41 @@ try {
   }
 }
 ```
+
+## Enrolling a physical device: `addDevice` and `removeDevice`
+
+`addDevice({ platform, id })` on the admin client enrols a phone or tablet
+plugged into the machine the daemon runs on, the call behind
+`simlock device add`. `removeDevice({ id })` forgets it, the call behind
+`simlock device remove`. Neither asks for confirmation, and `removeDevice`
+sends nothing to the device.
+
+```ts
+const device = await admin.addDevice({ platform: "ios", id: "00008110-001A2B3C4D5E" });
+// { id: "dev_8f2a", driverDeviceId: "00008110-001A2B3C4D5E", platform: "ios",
+//   model: "iPhone 15 Pro", osVersion: "18.4", class: "phone", appCount: 12,
+//   reenrolled: false }
+await admin.removeDevice({ id: device.driverDeviceId });
+// { id: "00008110-001A2B3C4D5E", driverDeviceId: "00008110-001A2B3C4D5E" }
+```
+
+- `id` in `addDevice`'s result is the registry id; `driverDeviceId` is the
+  canonical ID that `removeDevice` takes, and that `getStatus()` shows on a
+  physical device's entry. An `id` you pass may be any ID the device answers
+  to. Enrolling an enrolled device again keeps its registry id and reads
+  `reenrolled: true`.
+- `addDevice` rejects, writing nothing, with `DEVICE_NOT_ENROLLABLE`
+  (`details` carries `id`, `platform`, `reason` and, when known,
+  `canonicalId`; `reason` is `not-connected`, `network-only`, `untrusted`,
+  `developer-mode-off`, `os-too-old`, `unsupported-kind`, `locked`,
+  `unreadable`, `virtual-device` or `enrolled-on-other-platform`), with
+  `DEVICE_BUSY` (`details.reason` is `leased`, `reclaiming` or `busy`) and
+  with `NO_DRIVER`.
+- `removeDevice` rejects with `UNKNOWN_DEVICE` for an ID that is not
+  enrolled, and with `DEVICE_BUSY`.
+- Both reject with `FORBIDDEN` for an agent session and with
+  `UNSUPPORTED_IN_GATEWAY_MODE` from a gateway: connect to the worker the
+  device is plugged into.
 
 ## What machine answered: `getStatus().host`
 
