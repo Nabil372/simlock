@@ -81,9 +81,9 @@ describe("a gateway with one worker that holds an enrolled iPhone", () => {
       "--detach",
     ]);
     expect(granted.code, granted.stderr).toBe(0);
-    const grant = granted.json as { lease: { id: string }; device: Row };
+    const grant = granted.json as { lease: { id: string; worker: { id: string } }; device: Row };
     expect(grant.device).toMatchObject({ id: READY.id, physical: true });
-    expect(grant.device.workerId).toEqual(expect.any(String));
+    expect(grant.lease.worker.id).toEqual(expect.any(String));
 
     await worker.driverScript.set({ ios: iosScript([...ENROLLED, AGENT_APP]) });
     const released = await gateway.cli(["release", grant.lease.id]);
