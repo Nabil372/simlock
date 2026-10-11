@@ -154,7 +154,8 @@ agent per phase, so no context grows past one phase: one commits the spec's
 tests red and opens a draft PR, so CI runs from the first push; the next
 turns them green in commits that each lower the failing count, starting
 from a map of which files each test needs; the last audits the diff with
-fresh eyes, and has the comment reviewer below sweep its comments. Agents pass each other `key: value` lines, not prose. It
+fresh eyes, and has the comment reviewer below sweep its comments. Agents
+pass each other `key: value` lines, not prose. It
 runs only the tests its change can reach — `pnpm test:changed` and the e2e
 files it touched. Every other check runs on its own: format, lint and
 typecheck on commit; Fallow, the e2e typecheck and `pnpm mutate` (mutants
@@ -338,7 +339,8 @@ a fixed layout:
 - `docs/internal/adr/` with a `README.md` index, and
   `docs/internal/templates/` with `feature.md` and `task.md`.
 - `.agents/scripts/`: `worktree.sh`, `review-inputs.sh`, `stale-refs.sh`,
-  `comments.mjs`, `ci-failures.mjs`, `merge-pr.sh`, `delivery-stats.mjs` and `budget-guard.mjs`. `worktree.sh` and
+  `comments.mjs`, `ci-failures.mjs`, `merge-pr.sh`, `delivery-stats.mjs`
+  and `budget-guard.mjs`. `worktree.sh` and
   `ensure-pnpm.sh` are this project's (they install its dependencies); the
   others are not.
 - `.github/workflows/issue-state.yml` and the labels in `.github/labels.json`.

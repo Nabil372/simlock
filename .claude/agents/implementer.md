@@ -146,13 +146,14 @@ built.
   other spellings, other paths, other import or call forms, empty and
   boundary values. Each one it lets through gets a fixture or an `open`
   line.
-- **Commented.** Write the output of `node .agents/scripts/comments.mjs
-origin/main` (in fix mode, `<the head you started from>` in place of
-  `origin/main`) to your scratchpad: every comment the diff adds or edits,
-  and every comment within 20 lines of code it adds. Hand it to a
-  `comment-reviewer` agent with `rules: docs/internal/agent-rules`,
-  `comments: <that file>` and `worktree: <your worktree>`. Delete each part
-  it flags; never reword one into a new comment.
+- **Commented.** Write the output of this to your scratchpad (in fix
+  mode, with the head you started from in place of `origin/main`):
+  `node .agents/scripts/comments.mjs origin/main`. It lists every comment
+  the diff adds or edits, and every comment within 20 lines of code it
+  adds. Hand it to a `comment-reviewer` agent with `rules:
+docs/internal/agent-rules`, `comments: <that file>` and `worktree: <your
+worktree>`. Delete each part it flags; never reword one into a new
+  comment.
 - **Promised.** For every Scope and Done when line, name the hunk or test
   that delivers it. None: do it, or leave the line unticked and say why
   under `open`. Never tick a box on intent.
