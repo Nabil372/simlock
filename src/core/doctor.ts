@@ -142,7 +142,6 @@ export interface DoctorReport {
   readonly findings: readonly DoctorFinding[];
 }
 
-/** The one quarantine-entry operation Doctor needs -- see `QuarantineCoordinator.enterFromStalledTransition`. */
 export interface DoctorQuarantine {
   enterFromStalledTransition(deviceId: string): Promise<void>;
 }
@@ -159,23 +158,9 @@ export interface DoctorOptions {
   readonly eventBus: EventBus;
   readonly leaseExpirer?: LeaseExpirer;
   readonly quarantine?: DoctorQuarantine;
-  /**
-   * Read-only view of the per-device operation claims. A device this daemon holds a
-   * claim on is work in progress by definition, which is what keeps a healthy
-   * backgrounded reclaim from being read as a stall -- see `isStalledTransition`.
-   */
   readonly claims?: Pick<DeviceOperationClaims, "isClaimed">;
-  /**
-   * Drivers that refused to start, as reported once at daemon startup. They are findings
-   * on every run, not just the first: the daemon has been serving without that platform
-   * ever since, and `doctor` is where `docs/CLI.md` promises the reason turns up.
-   */
   readonly driverRejections?: readonly DriverRejection[];
   readonly logger?: Logger;
-  /**
-   * The warm pool's last figures and the running limits its targets must fit in. Both are needed
-   * for the `warm-pool-target-unreachable` findings; without them the doctor reports none.
-   */
   readonly warmPool?: {
     readonly figures: WarmPoolReader["figures"];
     readonly runningCapacity: () => CapacityReader["runningCapacity"];
@@ -700,8 +685,6 @@ export class Doctor {
     }
   }
 
-  /** One finding's `--fix` action, split out of `#applySafeFixes` so the per-kind dispatch
-   * (already at the edge of this file's complexity budget) doesn't also have to carry the loop. */
   // fallow-ignore-next-line complexity -- one exhaustive arm per finding kind, each a single call or a documented no-op.
   async #applySafeFix(
     finding: DoctorFinding,

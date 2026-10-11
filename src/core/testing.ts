@@ -58,10 +58,6 @@ export function testComponentWiring<
   };
 }
 
-/**
- * Holds each state write once `holding` is on, until the test releases it, so a test can put a
- * second commit inside the window between a commit's read and its write landing.
- */
 export class HeldWritesFilesystem extends MemoryFilesystem {
   holding = false;
   readonly #held: (() => void)[] = [];
@@ -71,7 +67,6 @@ export class HeldWritesFilesystem extends MemoryFilesystem {
     await super.writeFileAtomic(path, contents);
   }
 
-  /** Resolves once `count` writes are held. */
   async held(count: number): Promise<void> {
     for (let turn = 0; this.#held.length < count; turn++) {
       if (turn === 100) throw new Error(`Only ${String(this.#held.length)} writes were held`);
@@ -79,7 +74,6 @@ export class HeldWritesFilesystem extends MemoryFilesystem {
     }
   }
 
-  /** Releases held writes one at a time, oldest first, each after every pending step has run. */
   async releaseUntil(done: Promise<unknown>): Promise<void> {
     let settled = false;
     const settle = () => {

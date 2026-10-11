@@ -635,8 +635,6 @@ describe("LeaseHealthMonitor", () => {
     harness.monitor.dispose();
   });
 
-  // Each case: the setup that leads the monitor to one registry write, and the recovery attempts
-  // that write leaves on the leased device. Holding starts just before that write.
   it.each([
     {
       name: "recording a recovery attempt",
@@ -707,7 +705,6 @@ describe("LeaseHealthMonitor", () => {
 
       await reachWrite(harness, device.driverDeviceId);
       await harness.filesystem.held(1);
-      // What an idle shutdown commits: a transition in a decision section.
       const shuttingDown = harness.decisions.run(() =>
         harness.registry.transitionDevice(idle.id, "shutdown", {
           event: "device.shutdown",

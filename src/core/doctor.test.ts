@@ -137,7 +137,6 @@ describe("Doctor", () => {
     expect(report.findings.map((finding) => finding.kind)).toContain("foreign-state-change");
     expect(registry.snapshot.devices[0]?.state).toBe("leased");
     expect(registry.snapshot.devices[0]?.foreignStateDetectedAt).toBe(10_000);
-    // A state change is no provenance change: only the first is flagged.
     expect(registry.snapshot.devices[0]?.foreignProvenanceDetectedAt).toBeUndefined();
   });
 
@@ -457,9 +456,6 @@ describe("Doctor", () => {
     expect(driver.calls.filter((call) => call.operation === "shutdown")).toHaveLength(0);
   });
 
-  // Each case: what the driver shows for device `drifted`, a reconcile run first without holding
-  // (to leave the flag a later run would skip writing), the run whose first write is held, and
-  // what that run leaves on `drifted`.
   it.each([
     {
       name: "--fix marking a missing device deleted",
@@ -526,7 +522,6 @@ describe("Doctor", () => {
       filesystem.holding = true;
       const reconciling = doctor.reconcile({ fix });
       await filesystem.held(1);
-      // What the warm pool does when it boots a device back: a transition in a decision section.
       const booting = decisions.run(() =>
         registry.transitionDevice(warm.id, "ready", {
           event: "device.ready",
@@ -1072,11 +1067,9 @@ describe("Doctor", () => {
     });
 
     it("does not report a stall for a device this daemon holds an operation claim on", async () => {
-      // A backgrounded orphaned-lease reclaim (#43) keeps its device in `reclaiming`
-      // for a full erase -- ~34s measured, against a threshold that floors at 60s for
-      // both real drivers, with several erases running at once contending for the same
-      // disk. The claim, not the clock, is what says work is in progress; without this
-      // exclusion a healthy reclaim is reported as a stall and `--fix` quarantines it.
+      // A backgrounded reclaim keeps its device in `reclaiming` for a full erase, which can
+      // outlast the threshold. The claim, not the clock, says work is in progress; without it a
+      // healthy reclaim is reported as a stall and `--fix` quarantines it.
       const clock = new FakeClock(10_000);
       const eventBus = new EventBus(clock);
       const registry = await Registry.load({
@@ -1143,9 +1136,6 @@ describe("Doctor", () => {
         idGenerator: sequence(),
         statePath: "/state.json",
       });
-      // A cold Android-shaped provision-plus-boot estimate can legitimately run well
-      // past its raw estimate -- this stays under the multiplied threshold (9_000),
-      // not the raw 3_000, and must not be flagged.
       const driver = new FakeDriver({
         clock,
         estimateMs: { boot: 2_000, provision: 1_000 },
@@ -1195,8 +1185,7 @@ describe("Doctor", () => {
       await registry.beginRelease(lease.id);
       // The emulator process is gone entirely -- not `stopped`, not `transitioning`,
       // absent from reality altogether -- exactly what `kill -9` on the process leaves
-      // behind. The stall check never consults driver reality either way (see
-      // `stalledTransitionFinding`): the registry's own clock is what bounds it.
+      // behind. The stall check never consults driver reality: the registry's own clock bounds it.
       driver.setManagedReality({ devices: [], processes: [] });
       // threshold = reclaim 2_000 * thresholdMultiplier 3 = 6_000
       clock.advance(6_001);
@@ -1994,7 +1983,6 @@ describe("Doctor", () => {
       }).reconcile();
 
       expect(report.findings.filter((finding) => finding.kind === "driver-advisory")).toEqual([]);
-      // The rest of reconcile still ran: the missing device is still reported.
       expect(report.findings.map((finding) => finding.kind)).toContain("registry-device-missing");
     });
 
@@ -2029,8 +2017,6 @@ describe("Doctor", () => {
           platform: "ios",
         },
       ]);
-      // Nothing in `--fix` touched the driver beyond the reconcile-time reads: no
-      // provision/makeReady/reclaim/shutdown/destroy call was made for the advisory.
       expect(driver.calls.map((call) => call.operation)).toEqual(["listManaged"]);
     });
 
@@ -2224,7 +2210,6 @@ describe("Doctor", () => {
 
       expect(prerequisiteFindings(fixed)).toEqual(prerequisiteFindings(plain));
       expect(prerequisiteFindings(fixed)).toHaveLength(1);
-      // The driver saw only the two reconcile-time reads: no install, no provision, nothing.
       expect(android.calls.map((call) => call.operation)).toEqual(["listManaged", "listManaged"]);
       expect(check.runs).toBe(2);
     });
@@ -2506,6 +2491,53 @@ describe("Doctor with a platform it cannot observe", () => {
     expect(registry.snapshot.devices[0]?.state).toBe("deleted");
   });
 
+  it("records a destroyed legacy device missing in the decision section, keeping a transition committed while that write is in flight", async () => {
+    const clock = new FakeClock(10_000);
+    const eventBus = new EventBus(clock);
+    const filesystem = new HeldWritesFilesystem();
+    const registry = await Registry.load({
+      clock,
+      eventBus,
+      filesystem,
+      idGenerator: sequence(),
+      statePath: "/state.json",
+    });
+    const stranded = await readyDevice(registry, "stranded", "ios");
+    const warm = await shutdownDevice(registry, "warm", "ios");
+    const driver = new FakeDriver({
+      clock,
+      legacyDevices: {
+        stranded: { device: driverDevice("stranded"), path: "/Library/Devices/stranded" },
+      },
+      platform: "ios",
+    });
+    driver.setManagedReality({ devices: [observed("warm", "stopped")], processes: [] });
+    const decisions = new SerializedDecision();
+    const doctor = new Doctor({
+      clock,
+      config: config(),
+      decisions,
+      drivers: [driver],
+      eventBus,
+      registry,
+    });
+
+    filesystem.holding = true;
+    const reconciling = doctor.reconcile({ fix: true });
+    await filesystem.held(1);
+    const booting = decisions.run(() =>
+      registry.transitionDevice(warm.id, "ready", {
+        event: "device.ready",
+        payload: { bootDuration: 0, deviceId: warm.id },
+      }),
+    );
+    await filesystem.releaseUntil(Promise.all([reconciling, booting]));
+
+    const record = (id: string) => registry.snapshot.devices.find((d) => d.id === id);
+    expect(record(stranded.id)?.state).toBe("deleted");
+    expect(record(warm.id)?.state).toBe("ready");
+  });
+
   it("never destroys a legacy device that a lease still references", async () => {
     const { clock, driver, eventBus, registry } = await legacyDeviceSetup();
     const device = registry.snapshot.devices[0]!;
@@ -2552,7 +2584,6 @@ describe("Doctor with a platform it cannot observe", () => {
   });
 });
 
-/** A registry device the root no longer holds, which the driver still finds outside it. */
 async function legacyDeviceSetup() {
   const clock = new FakeClock(10_000);
   const eventBus = new EventBus(clock);
