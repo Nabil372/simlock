@@ -6,7 +6,8 @@
 // under src/ or ui/src/ since the branch's last run reprints that run's result.
 //
 // A survivor is a line you can change, or delete, with a green suite: testing rules 2 and 3.
-// Exit 0 when every mutant died, 1 when any survived or had no covering test.
+// Exit 0 when every mutant died, 1 when any survived or had no covering test, 2 when Stryker
+// failed without a report.
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -93,11 +94,14 @@ const run = spawnSync(
     "--incrementalFile",
     `${branch}.json`,
   ],
-  { stdio: ["ignore", "inherit", "inherit"] },
+  { stdio: ["ignore", "inherit", "pipe"], encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
 );
+process.stderr.write(run.stderr ?? "");
 if (!existsSync(REPORT)) {
-  console.error(`Stryker exited ${run.status} without a report.`);
-  process.exit(run.status || 1);
+  // Last, so a caller that keeps only the tail of the output still sees why.
+  const tail = (run.stderr ?? "").trimEnd().split("\n").slice(-15).join("\n");
+  console.error(`\nStryker exited ${run.status} without a report: no mutant was tested.\n${tail}`);
+  process.exit(2);
 }
 
 const report = JSON.parse(readFileSync(REPORT, "utf8"));
@@ -118,5 +122,6 @@ print(total, ranges.length, alive);
 function print(total, rangeCount, alive) {
   console.log(`\n${total} mutants on ${rangeCount} changed ranges; ${alive.length} alive.`);
   for (const line of alive) console.log(line);
+  if (alive.length > 0) console.log("Kill each one, or explain it in the PR body.");
   process.exit(alive.length === 0 ? 0 : 1);
 }

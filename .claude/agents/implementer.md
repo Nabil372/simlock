@@ -109,13 +109,16 @@ states the failing count: `3 failing -> 1 failing`.
   changed unit tests, and the e2e files you added or edited. Never run a
   check listed under "Checks agents never run", nor a tool behind it, from
   any path. A type or lint error shows in the commit hook's output.
-- Push once per step, not after every commit, in the background, and read
-  its output when it ends. The last push before your report runs in the
-  foreground, with the longest timeout your shell tool allows: never end
-  your turn while a push runs. Never pass
-  `--no-verify` or `-n`.
+- Each push runs the push hook, mutation testing included, for minutes.
+  Push when you need its output (the mutants left alive), and once before
+  your report; commits save progress, pushes do not need to. A push you
+  need nothing from yet runs in the background. The last push before your
+  report runs in the foreground, with the longest timeout your shell tool
+  allows: never end your turn while a push runs. Read its whole output,
+  not a tail. Never pass `--no-verify` or `-n`.
 - Never wait on CI: no polling `gh pr checks`, no `gh run watch`, no
-  `sleep` loops. Read `gh pr checks <M>` at most once, before the report.
+  `sleep` loops. Run `node .agents/scripts/ci-failures.mjs <M>` at most
+  once, before the report: `none` is `ci: pass`, a failed test `ci: fail`.
 - Never use `git stash`: all worktrees share one stash list. Commit instead.
   Temporary files go in your scratchpad, not `/tmp`.
 - Build what `always-in-scope.md` lists as you go. Anything else you notice
@@ -143,10 +146,13 @@ built.
   other spellings, other paths, other import or call forms, empty and
   boundary values. Each one it lets through gets a fixture or an `open`
   line.
-- **Commented.** Run `node .agents/scripts/comments.mjs origin/main`: it
-  lists every comment the diff adds or edits, and every comment within 20
-  lines of code it adds. Delete each one the comment rule in
-  `architecture.md` does not allow.
+- **Commented.** Write the output of `node .agents/scripts/comments.mjs
+origin/main` (in fix mode, `<the head you started from>` in place of
+  `origin/main`) to your scratchpad: every comment the diff adds or edits,
+  and every comment within 20 lines of code it adds. Hand it to a
+  `comment-reviewer` agent with `rules: docs/internal/agent-rules`,
+  `comments: <that file>` and `worktree: <your worktree>`. Delete each part
+  it flags; never reword one into a new comment.
 - **Promised.** For every Scope and Done when line, name the hunk or test
   that delivers it. None: do it, or leave the line unticked and say why
   under `open`. Never tick a box on intent.
@@ -202,8 +208,10 @@ the rule it breaks.
 2. **Fix every instance:**
    - behaviour: write the failing test first, then the fix;
    - stale doc: fix it. Stale comment: delete it, or fix it if the comment
-     rule allows it. Told to edit comments and docs only:
-     a finding that needs any other change goes under `open` instead;
+     rule allows it. Each fact in the new text (who does it, which cases,
+     which values) names the `path:line` that shows it before you commit;
+     a fact you cannot point to stays out. Told to edit comments and docs
+     only: a finding that needs any other change goes under `open` instead;
    - a line ending in `(record as Assumption: ...)`: also add that
      assumption to the PR body;
    - a slow-lane Evidence line is a failing test: fix the code, not the

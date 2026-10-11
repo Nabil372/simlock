@@ -114,10 +114,13 @@ they name; never build again or restart review at round 1.
    `failing` and turned at least one test green since the last, another
    `green` with its `map`; then `mode: audit`. `spec needs` under `open`
    in any report: park (step 6).
-2. **Review**: `reviewer` with the PR number. Before every review round,
-   read `gh pr checks <M>` and `gh pr view <M> --json mergeable` once. A
-   failed check no open `flaky-test` issue names, or a conflict, goes into
-   one `implementer` fix run first.
+2. **Review**: `reviewer` with the PR number. Before every review round
+   and every fix run, run `node .agents/scripts/ci-failures.mjs <M>` and
+   `gh pr view <M> --json mergeable` once. The script reads the newest
+   finished CI run, which is often older than the head: newer pushes cancel
+   theirs. Each failed test no open `flaky-test` issue names joins the fix
+   run's `fixes` as `ci: <its line> run <id>`; a conflict joins as `merge
+the base branch`. With no fix run due, they get one before the round.
 3. **Decide** on the review report:
    - Fix lines: one `implementer` run with `mode: fix` and the Fix lines
      pasted under `fixes`, then the next round: `reviewer` with `round <n+1>`, the

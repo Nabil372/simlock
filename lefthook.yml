@@ -32,4 +32,4 @@ pre-push:
     # an equivalent mutant cannot be killed, so each survivor is killed or explained in the PR body.
     mutate:
       priority: 3
-      run: pnpm run mutate || echo "Mutants survived (listed above). Kill each one, or explain it in the PR body."
+      run: pnpm run mutate || true

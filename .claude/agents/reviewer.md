@@ -97,7 +97,8 @@ and wait. Never report a review as missing.
 
 Each brief below is passed verbatim, paths filled in; leave out a sentence
 about a file that does not exist. Every brief ends with the **common tail**.
-From round 2, every brief starts with the **re-review head**.
+From round 2, every brief starts with the **re-review head**. The comment
+review brings its own brief.
 
 **Re-review head** (round 2 and later, every review but the comment
 review):
@@ -252,34 +253,19 @@ file: `path: 12 34-40 true, 56 F3`:
    and the doc comment of every declaration the diff changes.
 
 Find them all now: a false claim this round misses costs a later round.
+Whether a comment should exist at all (rule 17 in architecture.md) is the
+comment review's: judge only whether it is true.
 
 A claim is false when the code at this commit contradicts it: a name or
 path that no longer exists, a behaviour, order, owner, default or limit that
 changed. Blocking: a false claim. Note: a claim that is true but misleading.
 ```
 
-**Comment review**: `subagent_type: "comment-reviewer"`, in the claims
-worktree. It reads `$R/rules/architecture.md` and `$R/comments.txt`; from
-round 2, `$R/comments-fix.txt` in its place.
+**Comment review**: `subagent_type: "comment-reviewer"`, with `rules:
+$R/rules`, `comments: $R/comments.txt` (from round 2, `$R/comments-fix.txt`)
+and `worktree:` the claims worktree. Nothing else.
 
-```markdown
-You are checking comments against one rule. You have no other context and
-have not seen the issue the diff implements.
-
-Rule: rule 17 in <rules/architecture.md>. Comments: <comments.txt>: each
-block is a comment the diff adds or edits, or one within 20 lines of code it
-adds, followed by the code line after it (`>`). Repository: <worktree>,
-checked out at the reviewed commit: read it only to see what a comment sits
-on, or whether a declaration is exported from an entry point the rule
-names. Edit nothing and run nothing.
-
-For each block, one line: `path:line keep <the why, at most 8 words>` or
-`path:line F<n>`. A block stays only when the rule allows all of it. A block
-or part of a block the rule does not allow is blocking, class `architecture
-17`.
-```
-
-**Common tail** (every brief):
+**Common tail** (every brief but the comment review's):
 
 ```markdown
 Output only your list, then your findings: no preamble, no headings, no

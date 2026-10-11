@@ -154,12 +154,15 @@ agent per phase, so no context grows past one phase: one commits the spec's
 tests red and opens a draft PR, so CI runs from the first push; the next
 turns them green in commits that each lower the failing count, starting
 from a map of which files each test needs; the last audits the diff with
-fresh eyes. Agents pass each other `key: value` lines, not prose. It
+fresh eyes, and has the comment reviewer below sweep its comments. Agents pass each other `key: value` lines, not prose. It
 runs only the tests its change can reach — `pnpm test:changed` and the e2e
 files it touched. Every other check runs on its own: format, lint and
 typecheck on commit; Fallow, the e2e typecheck and `pnpm mutate` (mutants
 on the changed lines only, so every changed line is shown to matter before
-anyone reviews it) on push; the full suite in CI.
+anyone reviews it) on push; the full suite in CI. Each push cancels the CI
+run before it, so before every review round and fix run the orchestrator
+reads the newest finished run with `.agents/scripts/ci-failures.mjs`, and
+its failed tests go into the next fix run.
 
 A spec never answers every question. What any change includes without
 asking — docs it makes false, both `EVENTS.md` files, a test for every new
@@ -335,7 +338,7 @@ a fixed layout:
 - `docs/internal/adr/` with a `README.md` index, and
   `docs/internal/templates/` with `feature.md` and `task.md`.
 - `.agents/scripts/`: `worktree.sh`, `review-inputs.sh`, `stale-refs.sh`,
-  `merge-pr.sh`, `delivery-stats.mjs` and `budget-guard.mjs`. `worktree.sh` and
+  `comments.mjs`, `ci-failures.mjs`, `merge-pr.sh`, `delivery-stats.mjs` and `budget-guard.mjs`. `worktree.sh` and
   `ensure-pnpm.sh` are this project's (they install its dependencies); the
   others are not.
 - `.github/workflows/issue-state.yml` and the labels in `.github/labels.json`.
@@ -367,7 +370,7 @@ To move it: copy the agents, skills, scripts, workflow, labels,
   `.claude/settings.json`), `.agents/scripts/ensure-pnpm.sh` (the session-start
   hook; installs the pinned pnpm into a cache when PATH lacks it),
   `.agents/scripts/review-inputs.sh`, `.agents/scripts/stale-refs.sh`,
-  `.agents/scripts/comments.mjs`,
+  `.agents/scripts/comments.mjs`, `.agents/scripts/ci-failures.mjs`,
   `.agents/scripts/merge-pr.sh`,
   `.agents/scripts/delivery-stats.mjs`,
   `scripts/slow-e2e.sh`, `scripts/mutate.mjs` (`pnpm mutate`)
