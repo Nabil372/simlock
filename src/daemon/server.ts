@@ -1606,7 +1606,13 @@ function errorStack(error: unknown): string | undefined {
   return error instanceof Error ? error.stack : undefined;
 }
 
+/**
+ * A frame for a peer that has gone is dropped, never rejected. `closed` turns true only on the
+ * socket's `close` event, which comes a turn after the peer's FIN; a write in between fails with
+ * EPIPE. Most pushes are fired without a catch, so that rejection would be unhandled and would
+ * take the daemon down, failing every lease request still waiting.
+ */
 function writeFrame(socket: IpcConnection, frame: unknown): Promise<void> {
   if (socket.closed) return Promise.resolve();
-  return socket.write(serializeFrame(frame));
+  return socket.write(serializeFrame(frame)).catch(() => undefined);
 }
