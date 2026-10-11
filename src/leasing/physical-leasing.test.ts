@@ -451,6 +451,34 @@ describe("createLeasing with physical devices", () => {
     expect(await outcome(newer)).toMatchObject({ device: { id: second.id } });
   });
 
+  it("drives every queued physical waiter on one wake, so a newer waiter is granted its ready device while an older one still waits for another model", async () => {
+    const harness = await createHarness();
+    const wanted = await enrollIphone(harness, "UDID-A");
+    const other = await harness.registry.enrollPhysical({
+      apps: [],
+      class: "phone",
+      driverDeviceId: "UDID-B",
+      model: "iPhone 13",
+      osVersion: "18.4",
+      platform: "ios",
+    });
+    harness.driver.setPhysicalPresence("UDID-B", true);
+    await harness.registry.transitionDevice(other.id, "leased");
+    await startReclaiming(harness, wanted);
+    const older = harness.engine.request(
+      { ...physicalRequest, model: "iPhone 13" },
+      asking("older"),
+    );
+    const newer = harness.engine.request(physicalRequest, asking("newer"));
+    await flush();
+    await finishReclaim(harness, wanted);
+
+    harness.engine.leasing.corePorts.notifyAvailability();
+
+    expect(await outcome(newer)).toMatchObject({ device: { id: wanted.id } });
+    expect(await outcome(older)).toBe("pending");
+  });
+
   it("grants the next queued physical request the device that a cancelled waiter held a grant claim on during its presence read", async () => {
     const harness = await createHarness();
     const device = await enrollIphone(harness, "UDID-A");

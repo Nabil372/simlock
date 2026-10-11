@@ -74,11 +74,6 @@ export interface RegistryOptions {
 export interface RegistrySnapshot {
   /** Every device: the records of `devices`, then those of `physicalDevices`. */
   readonly devices: readonly DeviceRecord[];
-  /**
-   * The virtual read: every record that is not physical, in snapshot order. The paths that boot,
-   * shut down, destroy or count devices read this instead of writing the filter themselves
-   * (ADR 0022 §4).
-   */
   readonly virtualDevices: readonly VirtualDevice[];
   readonly leases: readonly LeaseRecord[];
   readonly components: readonly ComponentRecord[];
