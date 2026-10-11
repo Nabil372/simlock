@@ -527,19 +527,18 @@ describe("PhysicalDeviceWatcher counting", () => {
     const device = await enrollIphone(harness, "UDID-A");
     startWatcher(harness);
     const grant = await harness.engine.request(physicalRequest, asking("agent"));
+    harness.driver.holdPresenceReads("UDID-A");
+    harness.clock.advance(PROBE_MS);
+    await flush();
+    expect(readsOf(harness.driver)).toHaveLength(2);
     const reclaim = holdNextReclaim(harness);
     await harness.engine.release(grant.lease.id, "explicit");
     await flush();
     expect(stateOf(harness, device)).toBe("reclaiming");
-    harness.driver.holdPresenceReads("UDID-A");
-    gone(harness, "UDID-A");
-
-    harness.clock.advance(PROBE_MS);
-    await flush();
-    expect(readsOf(harness.driver)).toContainEqual(["UDID-A"]);
     reclaim.resolve();
     await flush();
     expect(stateOf(harness, device)).toBe("ready");
+    gone(harness, "UDID-A");
     harness.driver.releasePresenceReads();
     await flush();
     expect(stateOf(harness, device)).toBe("ready");
@@ -597,15 +596,19 @@ describe("PhysicalDeviceWatcher counting", () => {
 
   it("a read that rejects is logged once as a failed read by the watcher's module, and no device action is attempted", async () => {
     const { logger, sink } = capturingLogger();
-    const harness = await createHarness({ logger });
-    await enrollIphone(harness, "UDID-A");
+    const harness = await createHarness({ health: { stableObservations: 1 }, logger });
+    const device = await enrollIphone(harness, "UDID-A");
+    gone(harness, "UDID-A");
     harness.driver.failOn("listPresentPhysical", 1, new Error("devicectl: timed out"));
+    const writes = recordStateWrites(harness);
     startWatcher(harness);
 
     await tick(harness);
 
     const warnings = sink.records.filter((record) => record.level === "warn");
     expect(readsOf(harness.driver)).toHaveLength(1);
+    expect(stateOf(harness, device)).toBe("ready");
+    expect(writes).toHaveLength(0);
     expect(warnings).toMatchObject([
       {
         fields: { error: expect.anything(), platform: "ios" },
@@ -1286,5 +1289,42 @@ describe("PhysicalDeviceWatcher and nuke maintenance", () => {
     await flush();
 
     expect(absentReasonOf(harness, device)).toBe("locked");
+  });
+
+  it("a return reclaim waiting on nuke maintenance when the watcher is disposed never starts: the device stays absent", async () => {
+    const { device, harness } = await absentHarness("not-present");
+    back(harness, "UDID-A");
+    startWatcher(harness);
+    const maintenance = harness.engine.leasing.corePorts.leaseMaintenance.leases;
+    await maintenance.beginMaintenance();
+    await tick(harness);
+    expect(readsOf(harness.driver)).toHaveLength(1);
+
+    watcherOf(harness)?.dispose();
+    await maintenance.endMaintenance();
+    await flush();
+
+    expect(stateOf(harness, device)).toBe("absent");
+    expect(reclaimCalls(harness.driver)).toHaveLength(0);
+  });
+
+  it("a device-lost ending waiting on nuke maintenance when the watcher is disposed leaves the lease in place", async () => {
+    const harness = await createHarness();
+    const device = await enrollIphone(harness, "UDID-A");
+    startWatcher(harness);
+    await harness.engine.request(physicalRequest, asking("agent"));
+    gone(harness, "UDID-A");
+    await tick(harness);
+    const maintenance = harness.engine.leasing.corePorts.leaseMaintenance.leases;
+    await maintenance.beginMaintenance();
+    await tick(harness);
+    expect(readsOf(harness.driver).length).toBeGreaterThan(1);
+
+    watcherOf(harness)?.dispose();
+    await maintenance.endMaintenance();
+    await flush();
+
+    expect(stateOf(harness, device)).toBe("leased");
+    expect(harness.registry.snapshot.leases).toHaveLength(1);
   });
 });

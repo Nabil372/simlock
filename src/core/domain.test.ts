@@ -294,7 +294,7 @@ describe("a physical device's state machine (ADR 0022 §2)", () => {
     });
   });
 
-  it.each(["ready", "leased", "reclaiming", "quarantined", "deleted"] as const)(
+  it.each(["ready", "leased", "reclaiming", "quarantined", "absent", "deleted"] as const)(
     "allows nothing out of %s beyond its table: every other physical state, shutdown and provisioning throw",
     (from) => {
       const allowed: Record<PhysicalState, readonly string[]> = {
@@ -310,6 +310,7 @@ describe("a physical device's state machine (ADR 0022 §2)", () => {
         "leased",
         "reclaiming",
         "quarantined",
+        "absent",
         "deleted",
         "shutdown",
         "provisioning",

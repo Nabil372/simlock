@@ -237,7 +237,7 @@ describe("QuarantineCoordinator", () => {
     expect(physicalDeviceReady).not.toHaveBeenCalled();
   });
 
-  it("commits stalled-transition quarantine entry, emits only quarantined, and does not wake availability", async () => {
+  it("commits stalled-transition quarantine entry, emits only quarantined (no device.purge-failed), and does not wake availability", async () => {
     const harness = await createHarness();
 
     await harness.coordinator.enterFromStalledTransition(harness.target.id);
@@ -247,7 +247,6 @@ describe("QuarantineCoordinator", () => {
       quarantineNextRetryAt: 2_000,
       state: "quarantined",
     });
-    // Unlike enter(), there was no purge -- no device.purge-failed fires.
     expect(eventsOf(harness.bus).map((event) => event.event)).toEqual(["device.quarantined"]);
     expect(eventsOf(harness.bus)[0]).toMatchObject({
       payload: { deviceId: harness.target.id, maxRetries: 2, nextRetryAt: 2_000 },

@@ -97,12 +97,7 @@ export class QuarantineCoordinator {
     this.#arm(failure.deviceId, nextRetryAt);
   }
 
-  /**
-   * Quarantines a device a doctor finding found stalled. The device is re-read inside the
-   * decision, and written only if it is still in `findingState` and no other operation holds it:
-   * the claim is taken here and released on every exit, so a reclaim the watcher has just
-   * started is never quarantined under it.
-   */
+  /** The claim is taken here and released on every exit, so a reclaim the watcher has just started is never quarantined under it. */
   async enterFromStalledTransition(deviceId: string, findingState?: DeviceState): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
     const entered = await this.options.decisions.run(async () => {

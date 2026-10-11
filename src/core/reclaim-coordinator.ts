@@ -175,6 +175,7 @@ export class ReclaimCoordinator {
   async reclaimReturned(
     deviceId: string,
     osVersion?: string,
+    proceed: () => boolean = () => true,
   ): Promise<{ readonly settled: Promise<void> } | undefined> {
     const known = this.#physicalDevice(deviceId);
     if (known === undefined) return undefined;
@@ -182,7 +183,9 @@ export class ReclaimCoordinator {
     if (claim === undefined) return undefined;
     let device: PhysicalDevice | undefined;
     try {
-      device = await this.options.decisions.run(() => this.#beginReturned(known.id, osVersion));
+      device = await this.options.decisions.run(() =>
+        this.#beginReturned(known.id, osVersion, proceed),
+      );
     } finally {
       if (device === undefined) claim.release();
     }
@@ -200,9 +203,10 @@ export class ReclaimCoordinator {
   async #beginReturned(
     deviceId: string,
     osVersion: string | undefined,
+    proceed: () => boolean,
   ): Promise<PhysicalDevice | undefined> {
     const current = this.#physicalDevice(deviceId);
-    if (current === undefined) return undefined;
+    if (current === undefined || !proceed()) return undefined;
     if (osVersion === undefined) {
       const leased = this.options.registry.snapshot.leases.some(
         (lease) => lease.deviceId === current.id,
@@ -219,11 +223,6 @@ export class ReclaimCoordinator {
     return returned as PhysicalDevice;
   }
 
-  /**
-   * Starts the wipe under a claim already held and leaves it running. The claim is released,
-   * and a failure logged rather than thrown, once the wipe settles: no caller awaits it. A
-   * driver failure never gets that far, since `#purge` hands it to quarantine.
-   */
   #wipeInBackground(
     device: DeviceRecord,
     claim: DeviceOperationClaim,
@@ -246,10 +245,6 @@ export class ReclaimCoordinator {
     return wipe;
   }
 
-  /**
-   * A delete that fails throws and leaves the device `shutdown`, where `mayBeGranted` still keeps it
-   * out of every grant.
-   */
   async deleteSpent(deviceId: string): Promise<boolean> {
     const device = await this.options.decisions.run(async () => {
       const current = this.#unleasedDevice(deviceId, "shutdown");

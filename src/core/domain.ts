@@ -197,10 +197,6 @@ function satisfiesOs(constraint: OsRequirement, osVersion: string): boolean {
     : satisfies(osVersion, constraint);
 }
 
-/**
- * `reusable` devices are purged and returned to the pool after each lease; a `fresh` one serves
- * one lease and is then deleted.
- */
 export type LeaseIdentity = "reusable" | "fresh";
 
 type SharedState = "ready" | "leased" | "reclaiming" | "quarantined";
@@ -222,13 +218,6 @@ interface DeviceRecordFields {
   readonly foreignProvenanceDetectedAt?: number;
   readonly recoveringSince?: number;
   readonly recoveryAttempts?: number;
-  /**
-   * Set while a device sits `reclaiming` with its wipe not yet started, because the daemon start
-   * that ended its lease could not read its platform (ADR 0019 §2). It names that lease. A later
-   * start that can read the platform runs the full reclaim, purge included, for a device that
-   * carries it, instead of the shutdown-only recovery of a reclaim a crash interrupted. Any
-   * transition drops it.
-   */
   readonly deferredReclaimLeaseId?: string;
   /** Set on entry to `quarantined`; the wall-clock moment the first purge failed. */
   readonly quarantinedAt?: number;
@@ -252,11 +241,6 @@ export interface VirtualDevice extends DeviceRecordFields {
   readonly physical: false;
   readonly spec: VirtualSpec;
   readonly state: VirtualState;
-  /**
-   * The mode the device actually has (see `DriverDevice.mode`), current as of its last `ready`
-   * transition. `registerDevice` writes `"full"` for a device that has not booted yet, and a
-   * record written before this field existed loads as `"full"`.
-   */
   readonly mode: DeviceMode;
   /** A record written before this field existed loads as `reusable`. */
   readonly leaseIdentity?: LeaseIdentity;

@@ -376,11 +376,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated);
   }
 
-  /**
-   * The one place the registry calls `transition`: every move into `ready` stamps `readyAt`, and
-   * every move into `shutdown` stamps `shutdownAt`, with the moment of it, whichever path made it.
-   * `markDeviceMissing` records a device already gone and sets `deleted` itself.
-   */
   #transitioned(
     device: DeviceRecord,
     to: DeviceState,
@@ -1113,10 +1108,6 @@ const deviceRecordKeys = [
   "reclaimingSince",
   "absentReason",
 ] as const;
-/**
- * `featureProfile` is stripped on load rather than kept as an unknown field, and no mode is
- * derived from it (ADR 0007 §11).
- */
 const retiredDeviceRecordKeys = ["featureProfile"] as const;
 const leaseRecordKeys = [
   "id",

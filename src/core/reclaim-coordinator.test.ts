@@ -824,10 +824,17 @@ describe("ReclaimCoordinator for a physical device the platform no longer lists 
     const harness = await physicalHarness("absent");
     harness.driver.setPhysicalPresence(PHYSICAL_ID, true, { osVersion: "18.5" });
     const returned = harness.coordinator as unknown as ReturnedReclaims;
+    const original = harness.driver.reclaim.bind(harness.driver);
+    const versionsAtWipe: unknown[] = [];
+    vi.spyOn(harness.driver, "reclaim").mockImplementationOnce(async (device, options) => {
+      versionsAtWipe.push(harness.device()?.spec.osVersion);
+      return original(device, options);
+    });
 
     await returned.reclaimReturned(PHYSICAL_ID, "18.5");
     await harness.coordinator.settle();
 
+    expect(versionsAtWipe).toEqual(["18.5"]);
     expect(harness.device()).toMatchObject({
       spec: { osVersion: "18.5" },
       state: "ready",

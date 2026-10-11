@@ -108,10 +108,6 @@ export type DoctorFinding =
       readonly remedy: string;
     }
   | {
-      /**
-       * A warm pool target that cannot be met as configured. Configuration information, not drift:
-       * `--fix` never acts on it and `doctor.reconciled` does not carry it.
-       */
       readonly kind: "warm-pool-target-unreachable";
       readonly platform?: Platform;
       readonly target: string;

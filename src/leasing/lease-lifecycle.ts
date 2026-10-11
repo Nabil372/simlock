@@ -51,10 +51,6 @@ export interface LeaseLifecycleOptions {
   readonly eventBus: EventBus;
   readonly expiryScheduler: LeaseExpiryScheduler;
   readonly registry: LeaseLifecycleRegistry;
-  /**
-   * ADR 0004 §4: applies only to a grant whose request named no `ttlMs`; a renew re-applies the
-   * lease's own stored width.
-   */
   readonly ttl: { readonly defaultMs: number };
 }
 

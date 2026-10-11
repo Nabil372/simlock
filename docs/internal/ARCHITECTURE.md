@@ -1323,10 +1323,10 @@ to quarantine than re-drive: the device may be mid-erase.
 `QuarantineCoordinator` retries the triggering operation of a device on a `Clock`-driven
 backoff (`warmPool.quarantine` config: retry count, backoff, multiplier, cap), a physical
 device's reclaim included. A physical device that is not present at a retry gets no
-reclaim: the retry is put off by `health.probeIntervalMs` and does not count (ADR 0022 §8).
+reclaim: the retry is put off by `health.probeIntervalMs` and does not count (ADR 0022 §2).
 
 A physical device that is enrolled and not there is `absent`, not `quarantined`
-(ADR 0022 §2, §8): the `PhysicalDeviceWatcher` moves a `ready` device there after
+(ADR 0022 §2, §7, §8): the `PhysicalDeviceWatcher` moves a `ready` device there after
 `health.stableObservations` not-present reads, ends the lease of a `leased` one
 `device-lost` in the same write, and reclaims it when it is read present again;
 a physical reclaim that fails while the device is not present leaves it `absent`

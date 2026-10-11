@@ -638,10 +638,6 @@ export class DaemonServer {
    * checked by the peer; the trust runs from this worker's own config, which is exactly the
    * kind of statement §5 says admin authority may come from. An operator who does not want a
    * gateway administering this machine removes two config keys.
-   *
-   * Everything else about the session is unchanged: `hello` still negotiates the protocol
-   * range (§31, ADR 0003 §6), the dispatcher still runs every role and ownership check, and a
-   * mismatched range still refuses every operation but `daemon.stop`.
    */
   acceptUplink(connection: IpcConnection): void {
     this.#accept(connection, "admin", true);

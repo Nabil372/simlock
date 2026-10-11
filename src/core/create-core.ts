@@ -67,15 +67,7 @@ interface CoreOptions {
   readonly systemStats: SystemStats;
 }
 
-/**
- * What core needs from leasing and cannot import (ADR 0018 §2). Leasing implements each one and
- * the composition root hands them over through `Core#connect`.
- */
 export interface CorePorts {
-  /**
-   * The fences an operator reset puts around acquisition and around release, and the release of
-   * every lease it runs between them (`NukeService`).
-   */
   readonly leaseMaintenance: {
     readonly acquisition: AcquisitionMaintenance;
     readonly leases: LeaseMaintenance;
@@ -128,10 +120,6 @@ export interface Core {
   passWarmPool(): Promise<void>;
   /** The devices the idle shutdown timer leaves alone: those a warm target keeps. */
   targetedDevices(): Promise<ReadonlySet<string>>;
-  /**
-   * Awaits the deferred startup wipes, then the warm pool's running pass, so a graceful shutdown
-   * hands back a settled pool.
-   */
   settle(): Promise<void>;
   drain(): Promise<void>;
   /**

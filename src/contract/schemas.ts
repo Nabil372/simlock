@@ -22,10 +22,6 @@ import { z } from "zod";
 export const platformSchema = z.enum(["ios", "android"]);
 export type Platform = z.infer<typeof platformSchema>;
 
-/**
- * ADR 0015 §3: the kind of device a model is. The contract and the core name the classes; which
- * product family or tag of a platform's tools is which class lives in that platform's driver.
- */
 export const deviceClassSchema = z.enum([
   "phone",
   "tablet",
@@ -50,21 +46,12 @@ const deviceStateSchema = z.enum([
 
 const absentReasonSchema = z.enum(["locked", "untrusted", "not-present"]);
 
-/** The mode a device actually has (ADR 0007 §9) -- the same two words on every surface. */
 const deviceModeSchema = z.enum(["slim", "full"]);
 
 const leaseIdentitySchema = z.enum(["reusable", "fresh"]);
 
-/** The classes an enrolled physical device can have (ADR 0022 §1). */
 const physicalClassSchema = z.enum(["phone", "tablet"]);
 
-/**
- * What a device entry says about its type (ADR 0022 §1): `physical` is always there; a virtual
- * device has a `mode` and no `class`, a physical one a `class` and no `mode`. The schema is the
- * one place the wire holds that rule, for the status entry, the list entry and the grant alike.
- * A grant does not require the class (`requireClass` is `false` for it), though it may carry
- * one: the record a grant is built from keeps the class on its spec.
- */
 function checkDeviceType(
   device: { readonly physical: boolean; readonly mode?: unknown; readonly class?: unknown },
   context: z.RefinementCtx,
@@ -129,11 +116,6 @@ const deviceSpecSchema = z.object({
   imageTag: imageTagSchema.optional(),
 });
 
-/** Mirrors `DeviceRecord` (src/core/domain.ts) field for field, except: it leaves out
- * `deferredReclaimLeaseId` (internal bookkeeping a response never carries), `readyAt` and
- * `shutdownAt`, and `PhysicalDevice.enrolledApps`; `class` sits at the top level here, where core
- * keeps it on the spec. It adds the `status`/`list` decoration's derived `transitionAgeMs` and
- * `stalled` (see `Dispatcher#decorateDevice`) and `servesDefaultMode`. */
 export const deviceRecordSchema = z
   .object({
     id: z.string(),
@@ -152,20 +134,13 @@ export const deviceRecordSchema = z
     quarantineNextRetryAt: z.number().optional(),
     address: z.string().optional(),
     absentReason: absentReasonSchema.optional(),
-    /** Always present: see `checkDeviceType`. */
     physical: z.boolean(),
     /** Present exactly when `physical` is `false`. */
     mode: deviceModeSchema.optional(),
-    /** Present exactly when `physical` is `true`: this schema requires it (see `checkDeviceType`). */
     class: physicalClassSchema.optional(),
     leaseIdentity: leaseIdentitySchema.optional(),
-    /** Decoration added by `status.get`/`list.get`; absent for a device not mid-transition. */
     transitionAgeMs: z.number().optional(),
-    /** Decoration added by `status.get`/`list.get`: `true` for a device whose transition is a
-     * stall by the rule `doctor` reports; absent otherwise. */
     stalled: z.boolean().optional(),
-    /** Decoration added by `status.get`/`list.get` (ADR 0009 §6): whether the device's pool mode is
-     * the worker's default mode for its platform. Absent on a record the registry holds. */
     servesDefaultMode: z.boolean().optional(),
   })
   .superRefine((device, context) => checkDeviceType(device, context, true));
@@ -192,12 +167,6 @@ export const statusDeviceSchema = z
     absentReason: absentReasonSchema.optional(),
     transitionAgeMs: z.number().optional(),
     stalled: z.boolean().optional(),
-    /**
-     * ADR 0005 §20: which worker this device lives on. Additive and gateway-only -- a worker
-     * answers `status.get` about its own devices and has no second machine to name, so it never
-     * sets this; a gateway sets it on every device in the aggregate, because "device dev_7" is
-     * ambiguous across a fleet in a way it never is on one host.
-     */
     workerId: z.string().optional(),
   })
   .superRefine((device, context) => checkDeviceType(device, context, true))

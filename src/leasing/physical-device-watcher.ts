@@ -15,8 +15,16 @@ import {
 
 export interface PhysicalWatcherReleaser {
   admit<Result>(work: () => Promise<Result>): Promise<Result>;
-  endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<boolean>;
-  reclaimReturned(deviceId: string, osVersion?: string): Promise<boolean>;
+  endForAbsentDevice(
+    leaseId: string,
+    absentReason: AbsentReason,
+    proceed: () => boolean,
+  ): Promise<boolean>;
+  reclaimReturned(
+    deviceId: string,
+    osVersion: string | undefined,
+    proceed: () => boolean,
+  ): Promise<boolean>;
 }
 
 export interface PhysicalDeviceWatcherOptions {
@@ -93,6 +101,8 @@ export class PhysicalDeviceWatcher {
         .finally(() => this.#arm());
     });
   }
+
+  readonly #live = (): boolean => !this.#disposed;
 
   #generation(deviceId: string): number {
     return this.#generations.get(deviceId) ?? 0;
@@ -188,9 +198,10 @@ export class PhysicalDeviceWatcher {
       await this.options.releaser.reclaimReturned(
         device.id,
         read.osVersion ?? device.spec.osVersion,
+        this.#live,
       );
     } else if (this.#interrupted.has(device.id)) {
-      await this.options.releaser.reclaimReturned(device.id);
+      await this.options.releaser.reclaimReturned(device.id, undefined, this.#live);
     }
   }
 
@@ -208,7 +219,7 @@ export class PhysicalDeviceWatcher {
 
   async #endLease(leaseId: string | undefined, absentReason: AbsentReason): Promise<void> {
     if (leaseId === undefined) return;
-    await this.options.releaser.endForAbsentDevice(leaseId, absentReason);
+    await this.options.releaser.endForAbsentDevice(leaseId, absentReason, this.#live);
   }
 
   /** Written only if the device is still `ready` and nothing else holds it. */

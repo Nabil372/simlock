@@ -103,7 +103,7 @@ modules with.
 | `LeaseExpiryScheduler` | `src/leasing/lease-expiry-scheduler.ts` | TTL timers, delivered to the release coordinator. | Decide what expiry means. |
 | `LeaseReleaseCoordinator` | `src/leasing/lease-release-coordinator.ts` | Release, release-all, expiry, device-lost and the startup ending (reclaim, wait with no reclaim started, or missing in one write) as lease commands: the serialized commit, the backgrounded reclaim with its claim, the drain for nuke and daemon stop, maintenance admission. | Purge or decide warmth: it hands the released device to `ReclaimCoordinator`. |
 | `LeaseHealthMonitor` | `src/leasing/lease-health-monitor.ts` | Observing leased devices on a tick, rebooting a crashed one under its lease, giving the lease up as `device-lost` when recovery is exhausted. | Touch an unleased device. |
-| `PhysicalDeviceWatcher` | `src/leasing/physical-device-watcher.ts` | The presence tick (every `health.probeIntervalMs`, whatever `health.enabled` says), the grace-period count of not-present reads, `absent` and its reason, the device-lost ending of a lease on a device that is gone, and the return reclaim of a device that is back (ADR 0022 §8). | Retry quarantine, grant, or run a driver verb but the presence listing on a leased device. |
+| `PhysicalDeviceWatcher` | `src/leasing/physical-device-watcher.ts` | The presence tick (every `health.probeIntervalMs`, whatever `health.enabled` says), the grace-period count of not-present reads, `absent` and its reason, the device-lost ending of a lease on a device that is gone, and the return reclaim of a device that is back (ADR 0022 §7). | Retry quarantine, grant, or run a driver verb but the presence listing on a leased device. |
 
 ## Drivers
 

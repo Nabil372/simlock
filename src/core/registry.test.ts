@@ -3224,7 +3224,7 @@ describe("Registry: absent physical devices (ADR 0022 §2, §8)", () => {
     ]);
   });
 
-  it("an absent physical device that device add makes ready emits device.ready, and a ready one that goes absent is not stamped reclaimingSince", async () => {
+  it("a ready physical device that goes absent is not stamped reclaimingSince, and device add re-enrolling it emits device.enrolled with reenrolled true, not device.ready", async () => {
     const { bus, loaded, transitionAny } = await stateFile({
       physicalDevices: [{ ...physicalRecord, state: "ready" }],
     });
@@ -3242,18 +3242,20 @@ describe("Registry: absent physical devices (ADR 0022 §2, §8)", () => {
       { absentReason: "locked" },
     );
     const absent = registry.snapshot.devices.find((entry) => entry.id === "dev_physical");
-    await transitionAny(registry)(
-      "dev_physical",
-      "ready",
-      {
-        event: "device.ready",
-        payload: { bootDuration: 0, deviceId: "dev_physical" },
-      },
-      {},
-    );
+    const enrolled: unknown[] = [];
+    bus.subscribe("device.enrolled", (envelope) => enrolled.push(envelope.payload));
+    await registry.reenrollPhysical("dev_physical", {
+      apps: [],
+      class: "phone",
+      driverDeviceId: physicalRecord.driverDeviceId,
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      platform: "ios",
+    });
 
     expect(absent).not.toHaveProperty("reclaimingSince");
-    expect(seen).toEqual(["device.absence-detected", "device.ready"]);
+    expect(seen).toEqual(["device.absence-detected", "device.enrolled"]);
+    expect(enrolled).toMatchObject([{ deviceId: "dev_physical", reenrolled: true }]);
   });
 
   it("endLeaseAndMarkDeviceAbsent ends only the named lease, keeps every other device and lease, and emits from the registry", async () => {
@@ -3325,7 +3327,7 @@ describe("Registry: absent physical devices (ADR 0022 §2, §8)", () => {
     ).toMatchObject({ absentReason: "locked" });
   });
 
-  it("a loaded physical record that is neither reclaiming nor absent carries neither reclaimingSince nor absentReason", async () => {
+  it("a loaded ready physical record written without the marks carries neither reclaimingSince nor absentReason", async () => {
     const { loaded } = await stateFile({
       physicalDevices: [{ ...physicalRecord, state: "ready" }],
     });

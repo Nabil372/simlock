@@ -36,7 +36,6 @@ import { type LeaseRequestOptions, WaitQueue } from "./wait-queue.js";
 
 export interface LeasingOptions {
   readonly clock: Clock;
-  /** Only the lease path installs through it (safety rule 4). */
   readonly components: Pick<ComponentInstaller, "claimProvision" | "install">;
   readonly config: Config;
   readonly core: Core;
@@ -47,26 +46,14 @@ export interface LeasingOptions {
    * device's own registry state.
    */
   readonly logger?: Logger | undefined;
-  /**
-   * Turns the error a lease request failed with into the code and message stored for it. The
-   * daemon passes its contract error classifier; leasing never reads the code. Omitted, every
-   * failure is stored as `INTERNAL` with its own message.
-   */
   readonly describeFailure?: ((error: unknown) => LeaseRequestFailure) | undefined;
   /**
    * The worker's default device mode per platform, built from config by the composition root
    * (ADR 0007 §2). Omitted, or silent on a platform, means `"full"`.
    */
   readonly defaultModes?: Readonly<Partial<Record<Platform, DeviceMode>>> | undefined;
-  /**
-   * ADR 0015 §4: the model names to try for each class, per platform, operator's list first.
-   * Absent means none, so the catalog names no class default.
-   */
   readonly modelPreferences?: ModelPreferences | undefined;
-  /**
-   * Built but not started: the daemon arms it after startup convergence, so no health probe shells
-   * out while convergence is doing so itself. See `DaemonServer#start`.
-   */
+  /** Not started on build: a health probe would shell out while startup convergence does. */
   readonly healthMonitor?: boolean | undefined;
 }
 
@@ -96,7 +83,6 @@ export interface Leasing extends LeaseCommands, QueueControl, DeviceModeReader {
    * `daemon stop`.
    */
   dispose(): void;
-  /** Every request waiting for a device on this host, for `list.get` and `status.get`. */
   waitingRequests(): readonly WaitingRequest[];
 }
 

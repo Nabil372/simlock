@@ -42,6 +42,7 @@ import { describeLeaseRequestFailure } from "./error-code.js";
 import { AdminAuthenticationFailedError, type SessionRoleResolver } from "./session.js";
 import { DaemonServer } from "./server.js";
 import { AdminSecretManager } from "./admin-secret.js";
+import { type PhysicalDeviceWatcher } from "../leasing/index.js";
 import { createTestEngine } from "../leasing/testing.js";
 
 const gibibyte = 1024 ** 3;
@@ -2044,6 +2045,27 @@ describe("DaemonServer decorations", () => {
       expect(order).toEqual(["settle-start", "settle-end", "dispose"]);
     });
 
+    it("starts the physical-device watcher with the daemon and disposes it on stop before draining settle", async () => {
+      const order: string[] = [];
+      const harness = await createHarness({
+        physicalDeviceWatcher: {
+          dispose: () => {
+            order.push("watcher-dispose");
+          },
+          start: () => {
+            order.push("watcher-start");
+          },
+        },
+        settle: async () => {
+          order.push("settle");
+        },
+      });
+
+      await harness.daemon.stop("test-watcher");
+
+      expect(order).toEqual(["watcher-start", "watcher-dispose", "settle"]);
+    });
+
     it("waits for an asynchronous disposal before reporting the daemon stopped", async () => {
       let disposed = false;
       let finishDispose!: () => void;
@@ -2934,6 +2956,7 @@ async function createHarness(
      * concurrent iOS leases granted (rather than one queued behind the other) sets this. */
     readonly iosMaxDevices?: number;
     readonly settle?: () => Promise<void>;
+    readonly physicalDeviceWatcher?: Pick<PhysicalDeviceWatcher, "dispose" | "start">;
     readonly beginStop?: () => void;
     readonly stateFilesystem?: MemoryFilesystem;
     readonly stopAuxiliary?: () => Promise<void>;
@@ -3041,6 +3064,9 @@ async function createHarness(
     ...(options.processRunner === undefined ? {} : { processRunner: options.processRunner }),
     ...(options.protocolVersion === undefined ? {} : { protocolVersion: options.protocolVersion }),
     queue: engine,
+    ...(options.physicalDeviceWatcher === undefined
+      ? {}
+      : { physicalDeviceWatcher: options.physicalDeviceWatcher as PhysicalDeviceWatcher }),
     reaper,
     registry,
     resolveRole: options.resolveRole ?? { resolve: () => "admin" },

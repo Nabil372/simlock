@@ -9,11 +9,6 @@ import { type EventBusLogger, EventBus, type EventMap, type EventName } from "./
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/**
- * Every `EventName`, as a value the catalog test can compare: typed `Record<EventName, true>`, so
- * `pnpm typecheck` rejects this list the moment it misses a name `EventMap` gained or keeps one it
- * lost -- the list cannot drift from the type, and the test below holds the docs to the list.
- */
 const EVENT_NAMES: Record<EventName, true> = {
   "lease.requested": true,
   "lease.queued": true,
