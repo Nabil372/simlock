@@ -82,11 +82,6 @@ export interface CliBackgroundHandle {
   readonly pid: number | undefined;
 }
 
-/**
- * Starts a `simlock` invocation that stays running (held-mode `lease`), for tests
- * that need to observe progress, kill the process, or hold a lease across other
- * assertions.
- */
 export function cliBackground(
   args: readonly string[],
   env: NodeJS.ProcessEnv,

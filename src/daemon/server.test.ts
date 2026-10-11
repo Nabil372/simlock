@@ -1040,8 +1040,6 @@ describe("DaemonServer", () => {
     process.on("unhandledRejection", recordUnhandled);
     try {
       connection.hangUp();
-      // Another holder of the same principal releases the lease, so the daemon pushes
-      // lease-lost to this connection while its peer is gone and it is not yet destroyed.
       await harness.engine.release(leaseIdOf(grant), "explicit");
       await new Promise((resolve) => setImmediate(resolve));
 
@@ -3076,7 +3074,6 @@ class SingleConnectionHost implements ConnectionHost {
   async stop(): Promise<void> {}
 }
 
-/** One side of a connection whose writes complete only when this test says so. */
 class BlockingConnection implements IpcConnection {
   readonly closed = false;
   readonly frames: Record<string, unknown>[] = [];
@@ -3128,7 +3125,6 @@ class BlockingConnection implements IpcConnection {
     for (const resolve of pending) resolve();
   }
 
-  /** Sends a request frame and waits for its reply, which arrives on `frames`. */
   async request(payload: unknown, type: string, id = type): Promise<ServerFrame> {
     for (const listener of this.#dataListeners) {
       listener(`${JSON.stringify({ id, payload, type })}\n`);
@@ -3138,7 +3134,6 @@ class BlockingConnection implements IpcConnection {
   }
 }
 
-/** A `FakeDriver` that claims the `simctl` wrapper, for the `device.exec` flows. */
 function passthroughDriver(clock: FakeClock): FakeDriver {
   return new FakeDriver({
     availableOsVersions: ["26.5"],
