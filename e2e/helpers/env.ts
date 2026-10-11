@@ -242,8 +242,9 @@ export async function withDaemon(options: WithDaemonOptions = {}): Promise<TestE
       // `daemon start` exits once the daemon answers `status.get`, which it does from its socket
       // claim on, but the daemon writes `admin.token` only after that claim (ADR 0003 §5). A CLI
       // that reads the file before it lands connects as agent, so an admin command run next
-      // (`token create`, the teardown's `daemon stop`) fails FORBIDDEN. Waiting for the file
-      // orders every later CLI call after the write instead of racing it.
+      // (`token create`, the teardown's `daemon stop`) fails FORBIDDEN. After a first start,
+      // waiting for the file orders later CLI calls after the write; after a restart the previous
+      // run's file may still be there and passes the wait at once.
       if (started.code === 0) {
         await waitFor(() => existsSync(join(home, "admin.token")), {
           label: "admin.token written",
@@ -255,8 +256,7 @@ export async function withDaemon(options: WithDaemonOptions = {}): Promise<TestE
       // Wait for the *process* to actually exit, not just its socket file to
       // disappear -- `daemon.stop()` unlinks the socket as part of shutdown, which
       // can land slightly before the process fully drains its event loop. Starting
-      // a new daemon while the old one is still mid-exit was a real, reproduced
-      // source of leaked daemon processes (see the module doc above `activeEnvs`).
+      // a new daemon while the old one is still mid-exit leaks daemon processes.
       const pidsBeforeStop = await pidsHoldingSocket(socketPath);
       await cli(["daemon", "stop"], env);
       await waitFor(() => !existsSync(socketPath), {
@@ -264,10 +264,8 @@ export async function withDaemon(options: WithDaemonOptions = {}): Promise<TestE
         label: "daemon socket removed",
       });
       // Best-effort: under heavy system load a still-exiting process can
-      // legitimately take a while, and `teardown()`'s own grace-period check is the
-      // real backstop for a genuine leak -- this just reduces (not guarantees
-      // against) the ordinary-case race, so a timeout here must not abort the
-      // restart itself.
+      // legitimately take a while. This only reduces the ordinary-case race, so a
+      // timeout here must not abort the restart itself.
       await waitFor(
         async () => {
           const stillAlive = await Promise.all(pidsBeforeStop.map((pid) => isProcessAlive(pid)));
