@@ -107,6 +107,13 @@ agent can land, ordered so every task depends only on earlier ones. For each
 task, write a body from `docs/internal/templates/task.md` with Scope,
 Technical spec, Done when, Out of scope and Depends on filled in.
 
+Size each task to about 30 Tests lines and about 20 modules touched at
+most. Every stage of delivery grows with them: a task with 85 Tests lines
+fills an agent's context and a session's budget, and its review rounds find
+more each time. A task over either splits again along a seam its tests can
+drive on their own; when no such seam exists, keep it whole and say why
+under its Scope.
+
 Write each body so the spec check finds nothing:
 
 - no Done when line its own Tests or Scope make false, none a reviewer

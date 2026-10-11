@@ -158,9 +158,12 @@ fresh eyes, and has the comment reviewer below sweep its comments. Agents
 pass each other `key: value` lines, not prose. It
 runs only the tests its change can reach — `pnpm test:changed` and the e2e
 files it touched. Every other check runs on its own: format, lint and
-typecheck on commit; Fallow, the e2e typecheck and `pnpm mutate` (mutants
-on the changed lines only, so every changed line is shown to matter before
-anyone reviews it) on push; the full suite in CI. Each push cancels the CI
+typecheck on commit; Fallow and the e2e typecheck on push; the full suite
+in CI. Mutation testing is not part of delivery: it ran on every push and
+held each push for minutes, and the tests it added in its last weeks were
+mostly details no caller depends on. The weekly `harden-tests` routine runs
+it on what `main` changed, and kills only the survivors a caller or user
+could see. Each push cancels the CI
 run before it, so before every review round and fix run the orchestrator
 reads the newest finished run with `.agents/scripts/ci-failures.mjs`, and
 its failed tests go into the next fix run.
@@ -194,17 +197,25 @@ what another sees.
   interleaving that makes a changed function wrong, and for other code
   acting on the same state. The other looks for tests that cannot fail for
   the reason their title gives, breaking code up to six times to see what
-  stays green, and for broken rules. `pnpm check`, `pnpm mutate` and the
-  browser and slow lanes are left to the git hooks and CI.
+  stays green, and for broken rules. `pnpm check` and the browser and slow
+  lanes are left to the git hooks and CI.
 - The claims reviewer gets the diff and the output of
   `.agents/scripts/stale-refs.sh`, which lists every line in the repo that
   still names a path, declaration or quoted string the diff removed. It
   checks that comments, docs, test titles and messages are true of the code.
 - The comment reviewer, on Haiku, gets the comment rule and the output of
-  `.agents/scripts/comments.mjs`: every comment the diff adds or edits, and
-  every comment within 20 lines of code it adds. It says whether the rule
-  allows each one. A comment says why the code does something unexpected,
-  or it goes.
+  `.agents/scripts/comments.mjs`: every comment the diff adds or edits. It
+  says whether the rule allows each one. A comment says why the code does
+  something unexpected, or it goes. Older comments are the weekly
+  `garden-comments` routine's: in round 1 of two tasks, two thirds of the
+  comment findings were old comments near the diff, not the diff's own.
+
+How many of these reviews a PR gets depends on its diff's kind
+(`.agents/scripts/diff-kind.mjs`): an ADR-only diff gets the spec review
+alone; a docs-only diff the spec and claims reviews; a comments-only diff
+those and the comment review; a tests-only diff all but the behaviour lens;
+a small diff (at most 100 changed lines) all of them with one code reviewer
+holding both lenses; any other diff all of them.
 
 The spec and code reviewers are blind to each other on purpose: a reviewer
 holding both the spec and the rules resolves a conflict between them
@@ -338,9 +349,11 @@ a fixed layout:
   checks. The other files are this project's own rules.
 - `docs/internal/adr/` with a `README.md` index, and
   `docs/internal/templates/` with `feature.md` and `task.md`.
-- `.agents/scripts/`: `worktree.sh`, `review-inputs.sh`, `stale-refs.sh`,
-  `comments.mjs`, `ci-failures.mjs`, `merge-pr.sh`, `delivery-stats.mjs`
-  and `budget-guard.mjs`. `worktree.sh` and
+- `.agents/scripts/`: `worktree.sh`, `review-inputs.sh`, `diff-kind.mjs`,
+  `stale-refs.sh`, `comments.mjs`, `ci-failures.mjs`, `merge-pr.sh`,
+  `delivery-stats.mjs`, `budget-guard.mjs` (a token cap per sub-agent and
+  per session) and `report-guard.mjs` (a stage agent may not stop before
+  its report block). `worktree.sh` and
   `ensure-pnpm.sh` are this project's (they install its dependencies); the
   others are not.
 - `.github/workflows/issue-state.yml` and the labels in `.github/labels.json`.
@@ -363,7 +376,9 @@ To move it: copy the agents, skills, scripts, workflow, labels,
 - Skills: `.claude/skills/spec-session`, `.claude/skills/triage-bug`,
   `.claude/skills/deliver` (orchestrator), and the stage wrappers
   `.claude/skills/check-spec`, `.claude/skills/implement`,
-  `.claude/skills/review`, `.claude/skills/verify-hardware`
+  `.claude/skills/review`, `.claude/skills/verify-hardware`, and the
+  weekly routines `.claude/skills/harden-tests` and
+  `.claude/skills/garden-comments`
 - Agents: `.claude/agents/` — `implementer`, `reviewer`,
   `hardware-verifier`, `spec-checker`, `bug-triager` (the stage
   instructions), and `spec-reviewer`, `code-reviewer`, `claims-reviewer`,
@@ -373,6 +388,8 @@ To move it: copy the agents, skills, scripts, workflow, labels,
   hook; installs the pinned pnpm into a cache when PATH lacks it),
   `.agents/scripts/review-inputs.sh`, `.agents/scripts/stale-refs.sh`,
   `.agents/scripts/comments.mjs`, `.agents/scripts/ci-failures.mjs`,
+  `.agents/scripts/diff-kind.mjs`, `.agents/scripts/report-guard.mjs`
+  (a SubagentStop hook in `.claude/settings.json`),
   `.agents/scripts/merge-pr.sh`,
   `.agents/scripts/delivery-stats.mjs`,
   `scripts/slow-e2e.sh`, `scripts/mutate.mjs` (`pnpm mutate`)

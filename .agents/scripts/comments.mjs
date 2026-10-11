@@ -1,21 +1,22 @@
 #!/usr/bin/env node
-// `node .agents/scripts/comments.mjs <base> [<head>]`: every comment block a diff adds or edits,
-// and every one within 20 lines of a code line it adds, each with the code line after it. Without
-// <head>, the diff runs from <base> to the working tree, untracked files included. Code files
-// only (JavaScript, TypeScript, shell); tool directives are left out. Prints nothing when no
-// comment is in reach.
+// `node .agents/scripts/comments.mjs [--all] <base> [<head>]`: every comment block a diff adds or
+// edits, each with the code line after it. `--all` lists every comment block in the files the
+// diff touches, unchanged ones too, for the weekly comment routine. Without <head>, the diff runs
+// from <base> to the working tree, untracked files included. Code files only (JavaScript,
+// TypeScript, shell); tool directives are left out. Prints nothing when no comment is listed.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 
-const REACH = 20;
 const SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 const SHELL = /\.(?:sh|bash)$/;
 const DIRECTIVE =
   /^(?:\/\/\/?|\/\*+|\{\/\*+|\*|#)\s*(?:@ts-|oxlint-|eslint-|fallow-ignore|Stryker (?:disable|restore)|prettier-ignore|biome-ignore|c8 |istanbul |shellcheck |<reference |#?(?:end)?region\b)/;
 
-const [base, head] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const all = args[0] === "--all";
+const [base, head] = all ? args.slice(1) : args;
 if (base === undefined) {
-  console.error("usage: comments.mjs <base> [<head>]");
+  console.error("usage: comments.mjs [--all] <base> [<head>]");
   process.exit(64);
 }
 const git = (...args) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 1 << 28 });
@@ -37,11 +38,9 @@ for (const path of [...new Set(files)].filter((f) => SCRIPT.test(f) || SHELL.tes
   const added = addedLines(path, lines.length);
   const kinds = SHELL.test(path) ? shellKinds(lines) : scriptKinds(lines);
 
-  const anchors = [...added].filter((n) => kinds[n - 1].code && lines[n - 1].trim() !== "");
-  const near = (n) => anchors.some((a) => Math.abs(a - n) <= REACH);
   const shown = new Set();
   for (let n = 1; n <= lines.length; n++) {
-    if (!kinds[n - 1].comment || shown.has(n) || !(added.has(n) || near(n))) continue;
+    if (!kinds[n - 1].comment || shown.has(n) || !(all || added.has(n))) continue;
     let [start, end] = [n, n];
     if (!kinds[n - 1].code) {
       while (start > 1 && kinds[start - 2].comment && !kinds[start - 2].code) start--;
@@ -52,7 +51,7 @@ for (const path of [...new Set(files)].filter((f) => SCRIPT.test(f) || SHELL.tes
     if (block.every((l) => DIRECTIVE.test(l.trim()) || l.trim() === "")) continue;
 
     const changed = block.filter((_, i) => added.has(start + i)).length;
-    const state = changed === block.length ? "added" : changed > 0 ? "edited" : "near";
+    const state = changed === block.length ? "added" : changed > 0 ? "edited" : "unchanged";
     out.push(`${path}:${start === end ? start : `${start}-${end}`} (${state})`);
     block.forEach((l, i) => out.push(`  ${start + i} | ${l}`));
     if (!kinds[n - 1].code) {

@@ -8,11 +8,14 @@
 #
 #   diff.patch             the PR's diff against its base, as GitHub shows it
 #   commit                 the PR head the directory was built from
+#   kind                   what .agents/scripts/diff-kind.mjs calls the diff: adr-only,
+#                          docs-only, comments-only, tests-only, small or full; it sets which
+#                          reviews run
 #   fix.patch              with a previous commit: the diff from it to the head
 #   stale-refs.txt         what .agents/scripts/stale-refs.sh finds for the PR: lines anywhere in
 #                          the repo that still name something the diff removed
 #   comments.txt           what .agents/scripts/comments.mjs lists for the diff: every comment it
-#                          adds or edits, and every one within 20 lines of code it adds
+#                          adds or edits
 #   comments-fix.txt       with a previous commit: the same for fix.patch
 #   issue.md               the issue the PR closes: the second segment of a <kind>/<n> branch,
 #                          else the first "Closes #n" in the PR body
@@ -62,6 +65,7 @@ mkdir "$out/spec" "$out/rules"
 
 git diff "$fork" "$head" >"$out/diff.patch"
 echo "$head" >"$out/commit"
+node "$(dirname "$0")/diff-kind.mjs" "$fork" "$head" >"$out/kind"
 if [ -n "$previous" ]; then
   if git cat-file -e "$previous^{commit}" 2>/dev/null; then
     git diff "$previous" "$head" >"$out/fix.patch"

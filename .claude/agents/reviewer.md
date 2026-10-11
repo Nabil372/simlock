@@ -49,8 +49,10 @@ The script prints the directory's path last. It holds, when each exists:
   declaration or quoted string the diff removed.
 - `fix.patch` (with a previous sha): the diff from the last reviewed commit
   to this one.
-- `comments.txt`: every comment the diff adds or edits, and every comment
-  within 20 lines of code it adds, each with the code line after it.
+- `kind`: `adr-only`, `docs-only`, `comments-only`, `tests-only`, `small`
+  (at most 100 changed lines) or `full`.
+- `comments.txt`: every comment the diff adds or edits, each with the code
+  line after it.
   `comments-fix.txt` (with a previous sha): the same for `fix.patch`.
 
 Stderr names anything the script could not find. Rules and ADRs come from
@@ -60,15 +62,24 @@ Round 2 and later: write the last report's Fix lines to
 `$R/previous-fixes.md`. Add nothing else: not the PR body, not commit
 messages, not a note from the implementer.
 
-Which reviews run:
+Which reviews run, by `$R/kind`:
 
-- **ADR-only diff** (every path in `grep '^diff --git' "$R/diff.patch"` is
-  under `docs/internal/adr/`): the spec review alone, with the ADR
-  questions (step 2).
-- **No `issue.md`** (the PR closes no issue): no spec review.
-- **Otherwise:** all of them. Round 1 runs every review; a later round runs
-  the reviews its arguments name, and always the claims and comment
-  reviews. The comment review is skipped when its list is empty.
+| Kind            | Spec                                 | Code                      | Claims | Comment |
+| --------------- | ------------------------------------ | ------------------------- | ------ | ------- |
+| `adr-only`      | yes, with the ADR questions (step 3) | no                        | no     | no      |
+| `docs-only`     | yes                                  | no                        | yes    | no      |
+| `comments-only` | yes                                  | no                        | yes    | yes     |
+| `tests-only`    | yes                                  | tests and rules lens only | yes    | yes     |
+| `small`         | yes                                  | one reviewer, both lenses | yes    | yes     |
+| `full`          | yes                                  | both lenses, one each     | yes    | yes     |
+
+With no `issue.md` (the PR closes no issue) there is no spec review. Round 1
+runs every review its kind gets; a later round runs the reviews its
+arguments name, and always the claims and comment reviews its kind gets.
+The comment review is skipped when its list is empty. For `small`, the one
+code reviewer gets the behaviour brief, then the tests and rules brief's
+questions after it, works in the tests worktree, and has six probes in all;
+skip the behaviour worktree.
 
 ## 2. Worktrees
 
@@ -268,6 +279,12 @@ changed. Blocking: a false claim. Note: a claim that is true but misleading.
 **Common tail** (every brief but the comment review's):
 
 ```markdown
+A finding is blocking only when it shows wrong behaviour or state, a false
+statement, a rule or ADR breach, or a line of the specification left
+undelivered or unproven. A test for a case the specification does not
+name, a stronger assertion than its claim needs, or defensive code is a
+note. `F0` is a good result: do not look for findings to have some.
+
 Output only your list, then your findings: no preamble, no headings, no
 summary, no narration. Report every finding; there is no limit on how many.
 One line per defect, in this form and no other:
@@ -333,9 +350,10 @@ Count the confirmed spec and code findings of this round (`c`) and of the
 last one (`p`: the `spec:` and `code:` lines in `previous-fixes.md`).
 
 - `c` is 0 and claims findings are confirmed: `Rerun: claims-only`.
-- `c` is above 0, and this is round 1, or `c` is below `p` and this is not
-  round 5: the reviews that raised them run next round, with the claims
-  review.
+- `c` is above 0, this is not round 5, and any of: this is round 1; `c` is
+  below `p`; `c` is 1 and that finding is not one of `previous-fixes.md`
+  reported `not resolved`. The reviews that raised them run next round,
+  with the claims review.
 - Otherwise, with `c` above 0: `Rerun: none`. The findings are open and the
   orchestrator parks the issue.
 
@@ -349,7 +367,7 @@ End with exactly this block and nothing else: no summary before it, no
 note after it.
 
 ```
-PR: #M  Round: <n | claims-only>  Kind: code | adr-only  Commit: <sha reviewed>
+PR: #M  Round: <n | claims-only>  Kind: <the content of $R/kind>  Commit: <sha reviewed>
 Spec review: n findings (b blocking) | skipped  Code review: n findings (b blocking) | skipped  Claims review: n findings (b blocking) | skipped  Comment review: n findings (b blocking) | skipped
 Fix: <one per line, `spec|code|claims: <path:line> <defect> [<class>]`, or "none">
 Out of scope: <one per line, `<path:line> <defect>`, or "none">

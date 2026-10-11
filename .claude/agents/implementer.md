@@ -59,6 +59,13 @@ lines only, one per line, no prose.` Read only the lines it returns. Run
 library's or tool's documentation, fetch it (WebFetch, WebSearch); fetch
 nothing else.
 
+**Helpers run in the foreground.** Start every helper agent of a step in
+one message, each an Agent call with `run_in_background: false`, so they
+run in parallel and your turn cannot end before their results are in. A
+helper started in the background reports to the orchestrator, not to you,
+and nothing wakes you when it ends. Give parallel helpers files that do not
+overlap.
+
 **A small gap is an assumption, not a stop** (coding rule 2). When the body, the
 rules, the accepted ADRs and `always-in-scope.md` leave a small question
 open (a wording, an order, a bound the spec implies but does not number,
@@ -109,13 +116,9 @@ states the failing count: `3 failing -> 1 failing`.
   changed unit tests, and the e2e files you added or edited. Never run a
   check listed under "Checks agents never run", nor a tool behind it, from
   any path. A type or lint error shows in the commit hook's output.
-- Each push runs the push hook, mutation testing included, for minutes.
-  Push when you need its output (the mutants left alive), and once before
-  your report; commits save progress, pushes do not need to. A push you
-  need nothing from yet runs in the background. The last push before your
-  report runs in the foreground, with the longest timeout your shell tool
-  allows: never end your turn while a push runs. Read its whole output,
-  not a tail. Never pass `--no-verify` or `-n`.
+- Push once before your report, in the foreground: commits save progress,
+  pushes do not need to. Read its whole output, not a tail. Never pass
+  `--no-verify` or `-n`.
 - Never wait on CI: no polling `gh pr checks`, no `gh run watch`, no
   `sleep` loops. Run `node .agents/scripts/ci-failures.mjs <M>` at most
   once, before the report: `none` is `ci: pass`, a failed test `ci: fail`.
@@ -149,8 +152,7 @@ built.
 - **Commented.** Write the output of this to your scratchpad (in fix
   mode, with the head you started from in place of `origin/main`):
   `node .agents/scripts/comments.mjs origin/main`. It lists every comment
-  the diff adds or edits, and every comment within 20 lines of code it
-  adds. Hand it to a `comment-reviewer` agent with
+  the diff adds or edits. Hand it to a `comment-reviewer` agent with
   `rules: docs/internal/agent-rules`, `comments: <that file>` and
   `worktree: <your worktree>`. Delete each part it flags; never reword one
   into a new comment.
@@ -186,12 +188,6 @@ tests from step 4 pass, and you push.
 
 Never rerun the whole suite to decide. Never skip, disable or loosen a test.
 
-**Mutants.** The push output lists every mutant left alive. Kill each with
-a test, or delete the line if it does nothing. A mutant that changes nothing
-observable (equivalent) goes in the report and the PR body with the reason,
-named by file and the code it changes, not by line number: lines move with
-every fix.
-
 **Slow lane.** List every Done when line that needs the slow lane
 (`toolchain.md`) under `hardware`. Do not run it: the orchestrator does.
 
@@ -219,8 +215,8 @@ the rule it breaks.
      test.
 3. One commit per finding or closely related group. Then step 5 again: the
    audit (with the sweep), and the test check on every test the fix touched
-   or added. Recheck every mutant the push lists alive and every
-   `Assumption:` line in the PR body, not only those this fix touched.
+   or added. Recheck every `Assumption:` line in the PR body, not only
+   those this fix touched.
 
 ## Report
 
@@ -240,8 +236,6 @@ audit: stale <n>  replaced <n>  donewhen <k>/<n>
 fixes:
   <finding path:line> -> found <n> fixed <n>
 run: pass | fail <test file:line>  ci: pass | fail | running | unchecked
-mutate: <n>  alive: <a>
-  <file>: <the code it changes> - <reason, at most 10 words>
 hardware: <Done when line numbers that need the slow lane>
 flaky:
   <test file:line> #<issue>

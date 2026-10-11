@@ -140,6 +140,5 @@ grounds for rejecting a change even if it works.
     a script's usage header, and tool directives (`@ts-expect-error`,
     `oxlint-disable`, `fallow-ignore`, `Stryker disable`). This rule
     overrides the comment density of the code around you. Every comment a
-    change adds or edits, and every comment within 20 lines of code it adds,
-    meets it; delete the rest. `node .agents/scripts/comments.mjs <base>`
-    lists them.
+    change adds or edits meets it; `node .agents/scripts/comments.mjs <base>`
+    lists them. Older comments are the weekly `garden-comments` routine's.
