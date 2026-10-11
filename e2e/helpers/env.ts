@@ -238,7 +238,18 @@ export async function withDaemon(options: WithDaemonOptions = {}): Promise<TestE
     events: (since, timeout) => events(env, since, timeout),
     expectEvents: (names, expectOptions) => expectEvents(env, names, expectOptions),
     async startDaemon() {
-      return cli(["daemon", "start"], env);
+      const started = await cli(["daemon", "start"], env);
+      // `daemon start` exits once the daemon answers `status.get`, which it does from its socket
+      // claim on, but the daemon writes `admin.token` only after that claim (ADR 0003 §5). A CLI
+      // that reads the file before it lands connects as agent, so an admin command run next
+      // (`token create`, the teardown's `daemon stop`) fails FORBIDDEN. Waiting for the file
+      // orders every later CLI call after the write instead of racing it.
+      if (started.code === 0) {
+        await waitFor(() => existsSync(join(home, "admin.token")), {
+          label: "admin.token written",
+        });
+      }
+      return started;
     },
     async restartDaemon() {
       // Wait for the *process* to actually exit, not just its socket file to
@@ -264,7 +275,7 @@ export async function withDaemon(options: WithDaemonOptions = {}): Promise<TestE
         },
         { timeout: 10_000, label: "previous daemon process actually exited" },
       ).catch(() => undefined);
-      await cli(["daemon", "start"], env);
+      await testEnv.startDaemon();
     },
     async killDaemon(signal: NodeJS.Signals = "SIGKILL") {
       const pids = await pidsHoldingSocket(socketPath);
