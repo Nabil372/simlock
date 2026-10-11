@@ -57,6 +57,9 @@ export function assess(request: RoutableRequest, views: readonly WorkerView[]): 
       reason: "unresolvable-spec",
     };
   }
+  // A physical request names an enrolled device, not a catalog model or runtime (ADR 0022):
+  // each worker's own check answers it, so the table's remaining rows do not apply (interim until #442).
+  if (request.physical === true) return { kind: "route-or-wait" };
   if (!known.some((worker) => listsModel(worker, request))) return unknownModel(request);
   if (!known.some((worker) => matchRequest(worker, request) !== undefined)) {
     const osVersion = request.osVersion ?? "default";

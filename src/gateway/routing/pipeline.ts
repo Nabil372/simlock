@@ -20,6 +20,8 @@ export interface RoutableRequest {
   readonly imageTag?: string;
   /** The mode the request names; absent for none, which the worker answers with its default. */
   readonly mode?: "slim" | "full";
+  /** ADR 0022: asks for an enrolled physical device, which the gateway cannot yet see (#442). */
+  readonly physical?: boolean;
 }
 
 /** Drops every worker `keeps` answers `false` for. Never decides a pick on its own. */

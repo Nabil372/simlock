@@ -12,6 +12,7 @@ export function viewLoadKey(view: WorkerView): string {
     devices: (view.devices ?? []).map(({ transitionAgeMs: _transitionAgeMs, ...device }) => device),
     health: view.health,
     leases: (view.leases ?? []).map((lease) => lease.id),
+    physicalQueueDepth: view.physicalQueueDepth,
     queueDepth: view.queueDepth,
   });
 }

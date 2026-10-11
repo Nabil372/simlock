@@ -184,7 +184,8 @@ export class FleetLeaseCoordinator {
     this.#queue = new FleetQueue({
       clock: options.clock,
       idGenerator: options.idGenerator,
-      onDepthChange: (depth) => this.#emit("queue.changed", { depth }),
+      onDepthChange: (depth, line) =>
+        this.#emit("queue.changed", line === "physical" ? { depth, physical: true } : { depth }),
       // The rejection itself already happened inside `WaitQueue#armTimeout` by the time this
       // fires (see `queue.ts`); this only reports the gateway's own fact for it.
       onTimeout: (waiter) => this.#emitRejected(waiter, "timeout"),
@@ -201,8 +202,13 @@ export class FleetLeaseCoordinator {
     this.#unsubscribeViews = options.views.onViewsChanged(() => this.#onViewsChanged());
   }
 
+  /** The virtual line's waiters; a physical request waits in its own (ADR 0022). */
   get queueDepth(): number {
     return this.#queue.depth;
+  }
+
+  get physicalQueueDepth(): number {
+    return this.#queue.physicalDepth;
   }
 
   /** Reports the fleet queue's depth once, as the gateway starts, so every run begins with a
@@ -776,7 +782,9 @@ export class FleetLeaseCoordinator {
    * same place as the per-pass claim set.
    */
   #dispatchPass(candidate?: FleetWaiter): boolean {
-    const claimedThisPass = new Set<string>();
+    // A worker picked for a virtual request is still offered the next physical one, and the
+    // reverse: the two lines are matched separately, so each claims its own set (ADR 0022).
+    const claimedThisPass = { physical: new Set<string>(), virtual: new Set<string>() };
     const attempted = new Set<FleetWaiter | undefined>();
     const waiters =
       candidate === undefined || this.#queue.isQueued(candidate)
@@ -792,7 +800,11 @@ export class FleetLeaseCoordinator {
 
   /** One waiter's turn in the walk. Whether it was sent to a worker; a waiter the table rejects
    * is terminal by then, and `#admit` finds both of its follow-ups no-ops on it. */
-  #walkWaiter(waiter: FleetWaiter, claimedThisPass: Set<string>): boolean {
+  #walkWaiter(
+    waiter: FleetWaiter,
+    claims: { readonly physical: Set<string>; readonly virtual: Set<string> },
+  ): boolean {
+    const claimedThisPass = waiter.request.physical === true ? claims.physical : claims.virtual;
     const refusals = this.#cannotServe.get(waiter);
     // ADR 0009 §5: a worker that told this waiter it cannot serve it is out of every view below,
     // the table's included. A worker claimed this pass or one that answered `NO_CAPACITY` is
@@ -1198,7 +1210,11 @@ export class FleetLeaseCoordinator {
   #enqueue(waiter: FleetWaiter): void {
     const alreadyQueued = this.#queue.isQueued(waiter);
     if (this.#queue.enqueue(waiter) && !alreadyQueued) {
-      this.#emit("lease.queued", { queuePosition: this.#queue.depth, requestId: waiter.id });
+      this.#emit("lease.queued", {
+        queuePosition:
+          waiter.request.physical === true ? this.#queue.physicalDepth : this.#queue.depth,
+        requestId: waiter.id,
+      });
     }
   }
 
@@ -1373,7 +1389,8 @@ function forwardedModel(
   views: readonly WorkerView[],
   decision: RoutingDecision,
 ): ModelName {
-  if (request.model === undefined) return {};
+  // A physical request is matched by the worker against its enrolled devices, as typed.
+  if (request.model === undefined || request.physical === true) return {};
   const view = views.find((worker) => worker.id === decision.workerId);
   return { model: (view === undefined ? undefined : matchRequest(view, request)) ?? request.model };
 }
@@ -1397,5 +1414,6 @@ function routable(waiter: FleetWaiter): RoutableRequest {
     ...(waiter.request.osVersion === undefined ? {} : { osVersion: waiter.request.osVersion }),
     ...(waiter.request.imageTag === undefined ? {} : { imageTag: waiter.request.imageTag }),
     ...(waiter.request.mode === undefined ? {} : { mode: waiter.request.mode }),
+    ...(waiter.request.physical === true ? { physical: true as const } : {}),
   };
 }

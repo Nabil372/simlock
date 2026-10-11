@@ -3628,6 +3628,7 @@ describe("Dispatcher: status.get while the daemon is starting", () => {
         "host",
         "installs",
         "leases",
+        "physicalQueueDepth",
         "queueDepth",
         "waiting",
         "warmPool",

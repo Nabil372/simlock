@@ -139,6 +139,7 @@ export interface GatewayDispatcherOptions {
     | "releaseAll"
     | "exec"
     | "queueDepth"
+    | "physicalQueueDepth"
     | "ownerId"
     | "leaseRequesterId"
     | "pendingRequestOwner"
@@ -259,6 +260,7 @@ export class GatewayDispatcher {
       health: this.options.health(),
       host: this.options.host,
       // ADR 0005 §20: the gateway's own fleet queue depth, and the requests waiting in it.
+      physicalQueueDepth: this.options.coordinator.physicalQueueDepth,
       queueDepth: this.options.coordinator.queueDepth,
       waiting: [...this.options.coordinator.waitingRequests()],
       leaseIndex: this.options.leaseIndex,

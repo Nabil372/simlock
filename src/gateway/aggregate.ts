@@ -48,8 +48,9 @@ export interface AggregateStatusOptions {
   readonly health: StatusOutput["daemon"]["health"];
   /** The *gateway's* own machine. Each worker's is on its view. */
   readonly host: StatusOutput["host"];
-  /** The gateway's fleet queue depth -- 0 until #118 gives it a queue. */
+  /** The gateway's fleet queue depth, the virtual line's: a physical request waits in its own. */
   readonly queueDepth: number;
+  readonly physicalQueueDepth?: number;
   /** The requests waiting in the fleet queue. Each worker's own are on its view. */
   readonly waiting?: StatusOutput["waiting"];
   /**
@@ -97,6 +98,9 @@ export function aggregateStatus(
       ),
     ),
     queueDepth: options.queueDepth,
+    ...(options.physicalQueueDepth === undefined
+      ? {}
+      : { physicalQueueDepth: options.physicalQueueDepth }),
     waiting: [...(options.waiting ?? [])],
     // A gateway keeps no pool of its own: each worker's is on its entry in `workers`.
     warmPool: { enabled: false, reserveRunning: { android: 0, ios: 0 }, targets: [] },

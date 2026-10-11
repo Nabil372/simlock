@@ -69,8 +69,8 @@ export interface FleetQueueOptions {
    * terminal and gone from the queue, and nothing here re-runs `#dispatch` for the *other*
    * waiters still behind it). */
   readonly onTimeout?: (waiter: FleetWaiter) => void;
-  /** Called with the new depth each time a waiter joins or leaves the queue. */
-  readonly onDepthChange?: ((depth: number) => void) | undefined;
+  /** Called with a line's new depth each time a waiter joins or leaves that line. */
+  readonly onDepthChange?: ((depth: number, line: "virtual" | "physical") => void) | undefined;
 }
 
 /**
@@ -99,8 +99,13 @@ export class FleetQueue {
     });
   }
 
+  /** The virtual line's waiters; a physical request waits in its own line (ADR 0022). */
   get depth(): number {
     return this.#queue.depth;
+  }
+
+  get physicalDepth(): number {
+    return this.#queue.physicalDepth;
   }
 
   /** Every waiter still holding a slot, oldest first (ADR 0005 §11's dispatch order). See

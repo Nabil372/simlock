@@ -6,6 +6,7 @@ export { freeCapacity } from "./stages/free-capacity.js";
 export { freeSlot } from "./stages/free-slot.js";
 export { healthy } from "./stages/healthy.js";
 export { idleQueue } from "./stages/idle-queue.js";
+export { physicalInterim } from "./stages/physical-interim.js";
 export { ramBudget } from "./stages/ram-budget.js";
 export { takesRequests } from "./stages/takes-requests.js";
 export { warmHit } from "./stages/warm-hit.js";

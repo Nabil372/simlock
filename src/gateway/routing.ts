@@ -13,6 +13,7 @@ import {
   freeSlot,
   healthy,
   idleQueue,
+  physicalInterim,
   ramBudget,
   type RoutableRequest,
   type RoutingStage,
@@ -49,11 +50,22 @@ export interface RoutingPolicy {
   select(request: RoutableRequest, workers: readonly WorkerView[]): RoutingDecision | undefined;
 }
 
+/**
+ * A physical request's walk (ADR 0022, interim until #442): the workers that take requests and are
+ * healthy, then the lowest worker id. The catalog, capacity and warm-device stages say nothing
+ * about an enrolled device, so they are not asked.
+ */
+const physicalStages = [
+  takesRequests,
+  healthy,
+  physicalInterim,
+] as const satisfies readonly RoutingStage[];
+
 function composeRoutingPolicy(stages: readonly RoutingStage[]): RoutingPolicy {
   return {
     assess,
     select(request, workers) {
-      const pick = runStages(stages, request, workers);
+      const pick = runStages(request.physical === true ? physicalStages : stages, request, workers);
       if (pick === undefined) return undefined;
       return {
         reason: pick.stage === warmHit.name ? "warm-hit" : "free-capacity",
