@@ -19,7 +19,7 @@ import { LeaseHealthMonitor } from "./lease-health-monitor.js";
 
 const gibibyte = 1024 ** 3;
 const statePath = "/home/agent/.simlock/state.json";
-const spec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+const spec = { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
 
 function config(overrides: Partial<Config["health"]> = {}): Config {
   return {
@@ -228,6 +228,35 @@ describe("LeaseHealthMonitor", () => {
     expect(harness.registry.snapshot.devices[0]?.state).toBe("leased");
     expect(harness.releaseCalls).toEqual([]);
     expect(healthEvents(harness.eventBus)).toEqual([]);
+    harness.monitor.dispose();
+  });
+
+  it("observes only leased devices: a ready device the driver reports stopped costs no driver listing and starts no recovery", async () => {
+    const harness = await createHarness();
+    const device = await harness.registry.registerDevice({
+      driverData: { fakeDeviceId: "simlock-idle" },
+      driverDeviceId: "simlock-idle",
+      provisionDuration: 0,
+      spec,
+    });
+    await harness.registry.transitionDevice(device.id, "ready", {
+      event: "device.ready",
+      payload: { bootDuration: 0, deviceId: device.id },
+    });
+    harness.driver.setManagedReality({
+      devices: [observedDevice("simlock-idle", "stopped")],
+      processes: [],
+    });
+
+    harness.monitor.start();
+    harness.clock.advance(30_000);
+    await flush();
+    harness.clock.advance(30_000);
+    await flush();
+
+    expect(listManagedCalls(harness.driver)).toBe(0);
+    expect(makeReadyCalls(harness.driver)).toBe(0);
+    expect(harness.registry.snapshot.devices[0]?.state).toBe("ready");
     harness.monitor.dispose();
   });
 

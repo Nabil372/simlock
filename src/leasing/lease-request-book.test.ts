@@ -16,7 +16,12 @@ import {
 import { RequestCancelledError } from "./wait-queue.js";
 
 const statePath = "/home/agent/.simlock/state.json";
-const request = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+const request = {
+  physical: false,
+  model: "iPhone 16",
+  osVersion: "26.5",
+  platform: "ios",
+} as const;
 const failure = { code: "NO_CAPACITY", message: "No device capacity is currently available" };
 
 async function loadRegistry(
@@ -259,7 +264,7 @@ describe("Registry lease requests", () => {
         device: {
           driverDeviceId: "udid",
           id: "dev_1",
-          spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+          spec: { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" },
           ...device,
         },
         environment: {},
@@ -298,7 +303,7 @@ describe("Registry lease requests", () => {
   it("drops a full key stored before ADR 0007 from a request and from its grant's device spec, and does not write it back", async () => {
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
-    const spec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" };
+    const spec = { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" };
     await filesystem.writeFileAtomic(
       statePath,
       JSON.stringify({
@@ -308,6 +313,7 @@ describe("Registry lease requests", () => {
             createdAt: 1_000,
             grant: {
               device: {
+                physical: false,
                 driverDeviceId: "udid",
                 id: "dev_1",
                 mode: "full",

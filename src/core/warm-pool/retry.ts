@@ -1,4 +1,4 @@
-import { type DeviceSpec, sameSpec } from "../domain.js";
+import { type VirtualSpec, sameSpec } from "../domain.js";
 
 /** The wait after a spec's first failure; each further failure in a row doubles it. */
 export const RETRY_FIRST_MS = 60_000;
@@ -6,7 +6,7 @@ export const RETRY_FIRST_MS = 60_000;
 export const RETRY_MAX_MS = 600_000;
 
 interface Failure {
-  readonly spec: DeviceSpec;
+  readonly spec: VirtualSpec;
   /** Failures in a row since the last success. */
   readonly count: number;
   /** The first moment a try is allowed again. */
@@ -26,19 +26,19 @@ interface Failure {
 export class RetrySchedule {
   #failures: Failure[] = [];
 
-  mayAttempt(spec: DeviceSpec, now: number): boolean {
+  mayAttempt(spec: VirtualSpec, now: number): boolean {
     const failure = this.#failureOf(spec);
     return failure === undefined || now >= failure.retryAt;
   }
 
-  failed(spec: DeviceSpec, now: number): void {
+  failed(spec: VirtualSpec, now: number): void {
     const count = (this.#failureOf(spec)?.count ?? 0) + 1;
     const delay = Math.min(RETRY_FIRST_MS * 2 ** (count - 1), RETRY_MAX_MS);
     this.succeeded(spec);
     this.#failures.push({ count, retryAt: now + delay, spec });
   }
 
-  succeeded(spec: DeviceSpec): void {
+  succeeded(spec: VirtualSpec): void {
     this.#failures = this.#failures.filter((failure) => !sameSpec(failure.spec, spec));
   }
 
@@ -51,7 +51,7 @@ export class RetrySchedule {
     return earliest;
   }
 
-  #failureOf(spec: DeviceSpec): Failure | undefined {
+  #failureOf(spec: VirtualSpec): Failure | undefined {
     return this.#failures.find((failure) => sameSpec(failure.spec, spec));
   }
 }

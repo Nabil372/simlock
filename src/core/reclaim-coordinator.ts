@@ -1,8 +1,15 @@
 import type { EventBus } from "../bus/index.js";
 import type { Clock, Logger } from "../ports/index.js";
 import type { DeviceOperationClaims } from "./device-operation-claims.js";
-import { type DeviceRecord, type LeaseRecord, mayBeGranted, type Platform } from "./domain.js";
-import type { Driver, DriverDevice } from "./driver.js";
+import {
+  assertVirtual,
+  type DeviceRecord,
+  type LeaseRecord,
+  mayBeGranted,
+  type Platform,
+  type VirtualDevice,
+} from "./domain.js";
+import type { Driver, VirtualDriverDevice } from "./driver.js";
 import type { QuarantinePurgeFailure } from "./quarantine-coordinator.js";
 import type { ReleasedLease } from "./registry.js";
 import type { SerializedDecision } from "./serialized-decision.js";
@@ -14,7 +21,7 @@ export interface ReclaimDriverCatalog {
 
 export interface ReclaimRegistry {
   readonly snapshot: {
-    readonly devices: readonly DeviceRecord[];
+    readonly virtualDevices: readonly VirtualDevice[];
     readonly leases: readonly LeaseRecord[];
   };
   transitionDevice(
@@ -75,11 +82,16 @@ export class ReclaimCoordinator {
   // Not `async`: returning the inner promise adds no microtask hop to a reclaim's start, and
   // the tests that step a fake clock count those hops.
   reclaim(released: ReleasedLease): Promise<void> {
-    if (!mayBeGranted(released.device)) return this.#retireSpent(released);
+    // Simlock cannot erase a physical device. Until the physical reclaim exists the device stays
+    // `reclaiming`, aged from `lastLeaseEndedAt`, and doctor's stalled-transition rule moves it on.
+    if (released.device.physical) return Promise.resolve();
+    if (!mayBeGranted(released.device)) {
+      return this.#retireSpent({ device: released.device, lease: released.lease });
+    }
     return this.#purge(released.device, released.lease.id);
   }
 
-  async #purge(device: DeviceRecord, leaseId: string): Promise<void> {
+  async #purge(device: VirtualDevice, leaseId: string): Promise<void> {
     const driver = this.options.drivers.get(device.spec.platform);
     const startedAt = this.options.clock.now();
     const attemptedStrategy = driver.reclaimStrategy({ clean: "standard" });
@@ -116,7 +128,7 @@ export class ReclaimCoordinator {
    */
   async recoverInterrupted(deviceId: string): Promise<boolean> {
     const device = await this.options.decisions.run(async () => {
-      const current = this.options.registry.snapshot.devices.find(
+      const current = this.options.registry.snapshot.virtualDevices.find(
         (candidate) => candidate.id === deviceId,
       );
       const leased = this.options.registry.snapshot.leases.some(
@@ -132,7 +144,7 @@ export class ReclaimCoordinator {
 
     await this.options.drivers.get(device.spec.platform).shutdown(toDriverDevice(device));
     const recovered = await this.options.decisions.run(async () => {
-      const current = this.options.registry.snapshot.devices.find(
+      const current = this.options.registry.snapshot.virtualDevices.find(
         (candidate) => candidate.id === deviceId,
       );
       const leased = this.options.registry.snapshot.leases.some(
@@ -157,7 +169,7 @@ export class ReclaimCoordinator {
    * failure logged rather than thrown, once the wipe settles: no caller awaits it. A driver
    * failure never gets that far, since `#purge` hands it to quarantine.
    */
-  #wipeInBackground(device: DeviceRecord, leaseId: string): boolean {
+  #wipeInBackground(device: VirtualDevice, leaseId: string): boolean {
     const claim = this.options.claims.tryClaim(device.id, "reclaim");
     if (claim === undefined) return false;
     const wipe = this.#purge(device, leaseId)
@@ -197,7 +209,10 @@ export class ReclaimCoordinator {
    * reclaimed), then the delete. Either driver step failing hands the device to quarantine,
    * which retries the delete.
    */
-  async #retireSpent(released: ReleasedLease): Promise<void> {
+  async #retireSpent(released: {
+    readonly device: VirtualDevice;
+    readonly lease: LeaseRecord;
+  }): Promise<void> {
     const driver = this.options.drivers.get(released.device.spec.platform);
     const startedAt = this.options.clock.now();
     try {
@@ -212,8 +227,8 @@ export class ReclaimCoordinator {
       );
       return;
     }
-    const shutdown = await this.options.decisions.run(() =>
-      this.options.registry.completeReclaimWithoutPurge(released.device.id),
+    const shutdown = await this.options.decisions.run(async () =>
+      assertVirtual(await this.options.registry.completeReclaimWithoutPurge(released.device.id)),
     );
     // Running capacity is free from here; the device itself stays ungrantable.
     this.options.notifyAvailability();
@@ -232,7 +247,7 @@ export class ReclaimCoordinator {
   }
 
   /** Destroys a spent device and commits `shutdown -> deleted`, if it is still that device. */
-  async #deleteSpent(device: DeviceRecord): Promise<boolean> {
+  async #deleteSpent(device: VirtualDevice): Promise<boolean> {
     await this.options.drivers.get(device.spec.platform).destroy(toDriverDevice(device));
     const deleted = await this.options.decisions.run(async () => {
       if (this.#unleasedDevice(device.id, "shutdown") === undefined) return false;
@@ -246,9 +261,9 @@ export class ReclaimCoordinator {
     return deleted;
   }
 
-  #unleasedDevice(deviceId: string, state: DeviceRecord["state"]): DeviceRecord | undefined {
-    const { devices, leases } = this.options.registry.snapshot;
-    const current = devices.find((candidate) => candidate.id === deviceId);
+  #unleasedDevice(deviceId: string, state: DeviceRecord["state"]): VirtualDevice | undefined {
+    const { leases, virtualDevices } = this.options.registry.snapshot;
+    const current = virtualDevices.find((candidate) => candidate.id === deviceId);
     if (current?.state !== state || leases.some((lease) => lease.deviceId === deviceId)) {
       return undefined;
     }
@@ -282,10 +297,11 @@ export class ReclaimCoordinator {
  * `address` is never trusted by a driver's `shutdown` / `reclaim` / `makeReady` -- they derive
  * whatever they need from `driverData` -- so a placeholder here is harmless.
  */
-function toDriverDevice(device: DeviceRecord): DriverDevice {
+function toDriverDevice(device: VirtualDevice): VirtualDriverDevice {
   return {
     address: device.address ?? "",
     deviceId: device.driverDeviceId,
     driverData: device.driverData,
+    physical: false,
   };
 }

@@ -1,4 +1,4 @@
-import type { DeviceSpec } from "../../../core/index.js";
+import type { FittableSpec } from "../../../core/index.js";
 import type { WorkerView } from "../../worker-registry.js";
 import { deviceFit } from "../request-match.js";
 import type { RankStage } from "../pipeline.js";
@@ -33,7 +33,7 @@ export const warmHit: RankStage = {
 };
 
 /** The view's device spec in the core's shape, which leaves an absent image tag out. */
-function deviceSpec(spec: NonNullable<WorkerView["devices"]>[number]["spec"]): DeviceSpec {
+function deviceSpec(spec: NonNullable<WorkerView["devices"]>[number]["spec"]): FittableSpec {
   const { imageTag, ...rest } = spec;
   return imageTag === undefined ? rest : { ...rest, imageTag };
 }

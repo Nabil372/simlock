@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { DeviceRecord, DeviceState, LeaseRecord, Platform } from "./domain.js";
+import type { VirtualDevice, DeviceState, LeaseRecord, Platform } from "./domain.js";
 import { SerializedDecision } from "./serialized-decision.js";
 import { StartupConverger } from "./startup-converger.js";
 import { StartupRead } from "./startup-read.js";
@@ -10,28 +10,29 @@ function device(
   platform: Platform,
   state: DeviceState,
   lastLeaseEndedAt: number,
-): DeviceRecord {
+): VirtualDevice {
   return {
+    physical: false,
     createdAt: lastLeaseEndedAt,
     driverData: {},
     driverDeviceId: `driver-${id}`,
     id,
     lastLeaseEndedAt,
-    spec: { model: "test", osVersion: "1", platform },
+    spec: { physical: false, model: "test", osVersion: "1", platform },
     mode: "full",
     state,
   };
 }
 
 function createHarness(
-  devices: DeviceRecord[],
+  devices: VirtualDevice[],
   leases: LeaseRecord[] = [],
   darkPlatforms: ReadonlySet<Platform> = new Set(),
 ) {
   const order: string[] = [];
   const claimed = new Set<string>();
   const recovery = {
-    recoverInterruptedReclaim: vi.fn(async (target: DeviceRecord) => {
+    recoverInterruptedReclaim: vi.fn(async (target: VirtualDevice) => {
       order.push(`recover:${target.id}`);
       updateState(target.id, "shutdown");
     }),
@@ -39,7 +40,7 @@ function createHarness(
   const quarantined = new Set<string>();
   const restored: string[] = [];
   const quarantineRestore = {
-    restore: vi.fn((include: (target: DeviceRecord) => boolean) => {
+    restore: vi.fn((include: (target: VirtualDevice) => boolean) => {
       order.push("quarantine-restore");
       for (const target of devices) {
         if (quarantined.has(target.id) && include(target)) restored.push(target.id);
@@ -47,7 +48,7 @@ function createHarness(
     }),
   };
   const spentDeviceDeletion = {
-    deleteSpent: vi.fn(async (target: DeviceRecord) => {
+    deleteSpent: vi.fn(async (target: VirtualDevice) => {
       order.push(`delete-spent:${target.id}`);
       updateState(target.id, "deleted");
     }),
@@ -59,7 +60,7 @@ function createHarness(
     quarantineRestore,
     registry: {
       get snapshot() {
-        return { devices, leases };
+        return { leases, virtualDevices: devices };
       },
     },
     spentDeviceDeletion,

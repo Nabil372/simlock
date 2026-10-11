@@ -19,8 +19,10 @@ import {
   type DeviceClass,
   type DeviceMode,
   type DeviceRecord,
+  type VirtualDevice,
   type DeviceRequirement,
   type DeviceSpec,
+  type VirtualSpec,
   exactRequirement,
   type LeaseGrant,
   type LeaseProgress,
@@ -83,6 +85,7 @@ class NukeCancelledError extends Error {
 export interface LeaseAcquisitionRegistry {
   readonly snapshot: {
     readonly devices: readonly DeviceRecord[];
+    readonly virtualDevices: readonly VirtualDevice[];
     readonly leases: readonly LeaseRecord[];
   };
 }
@@ -152,7 +155,7 @@ interface AcquisitionWaiter extends Waiter {
   /** What an idle device must satisfy besides its pool mode, kept beside `spec` (ADR 0015 §5). */
   classOf?: ((model: string) => DeviceClass | undefined) | undefined;
   requirement?: DeviceRequirement | undefined;
-  spec?: DeviceSpec;
+  spec?: VirtualSpec;
   timing: LeaseTiming;
 }
 
@@ -197,8 +200,11 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
   /**
    * Whether a device with this spec is in the pool a request naming no mode draws from: its pool
    * mode (the spec's mode, full when it names none) is the platform's default mode (ADR 0009 §6).
+   * A physical spec is in none.
    */
   servesDefaultMode(spec: DeviceSpec): boolean {
+    // A physical device has no mode, so it is in no pool a request draws from by default.
+    if (spec.physical) return false;
     return specMode(spec) === this.defaultMode(spec.platform);
   }
 
@@ -408,7 +414,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     options: LeaseRequestOptions,
     onProgress: (progress: DownloadingProgress) => void,
   ): Promise<{
-    readonly spec: DeviceSpec;
+    readonly spec: VirtualSpec;
     readonly requirement: DeviceRequirement;
     readonly classOf: ((model: string) => DeviceClass | undefined) | undefined;
   }> {
@@ -550,7 +556,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     driver: Driver,
     request: ExactDeviceRequest,
     options: LeaseRequestOptions,
-  ): Promise<DeviceSpec> {
+  ): Promise<VirtualSpec> {
     try {
       return await driver.resolveSpec(request);
     } catch (error: unknown) {
@@ -831,7 +837,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
 
   async #evictRunning(
     waiter: AcquisitionWaiter,
-    device: DeviceRecord,
+    device: VirtualDevice,
     claim: DeviceOperationClaim,
   ): Promise<void> {
     try {
@@ -862,7 +868,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
 
   async #evictManaged(
     waiter: AcquisitionWaiter,
-    device: DeviceRecord,
+    device: VirtualDevice,
     claim: DeviceOperationClaim,
   ): Promise<void> {
     try {
@@ -915,7 +921,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
 
   async #bootShutdown(
     waiter: AcquisitionWaiter,
-    device: DeviceRecord,
+    device: VirtualDevice,
     capacityReservation: CapacityReservation,
     claim: DeviceOperationClaim,
   ): Promise<void> {
@@ -1135,7 +1141,7 @@ function operationPlan(plan: AcquisitionPlan): OperationPlan | undefined {
 }
 
 /** The spec without a planned mode: the full spec of the same model and runtime. */
-function fullSpec(spec: DeviceSpec): DeviceSpec {
+function fullSpec(spec: VirtualSpec): VirtualSpec {
   if (spec.mode === undefined) return spec;
   const { mode: _mode, ...full } = spec;
   return full;
@@ -1171,7 +1177,7 @@ function sameDownloadingProgress(left: DownloadingProgress, right: DownloadingPr
  * accepted only for a slim request, so a driver that returns the wrong thing still cannot put a
  * full request on a slim device.
  */
-function checkedSpec(resolved: DeviceSpec, request: DeviceRequest, mode: DeviceMode): DeviceSpec {
+function checkedSpec(resolved: VirtualSpec, request: DeviceRequest, mode: DeviceMode): VirtualSpec {
   if (resolved.imageTag !== request.imageTag) {
     throw new Error(
       `The ${request.platform} driver resolved image tag ${String(resolved.imageTag)} ` +
@@ -1182,7 +1188,7 @@ function checkedSpec(resolved: DeviceSpec, request: DeviceRequest, mode: DeviceM
 }
 
 /** What a target's refusal is called: the kinds a pool can act on, and any other as is. */
-function refusalOf(error: unknown): Exclude<TargetResolution, { spec: DeviceSpec }>["refusal"] {
+function refusalOf(error: unknown): Exclude<TargetResolution, { spec: VirtualSpec }>["refusal"] {
   if (error instanceof RuntimeMissingError) return "runtime-missing";
   if (error instanceof UnknownModelError) return "unknown-model";
   return "unresolvable";

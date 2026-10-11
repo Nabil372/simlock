@@ -7,6 +7,7 @@ import type {
   DeviceSpec,
   DeviceTransitionUpdate,
   Platform,
+  VirtualSpec,
 } from "./domain.js";
 
 /**
@@ -60,6 +61,22 @@ export interface DriverDevice {
    * -- every non-iOS driver -- and is stored as `"full"` (see `readyTransitionUpdate`).
    */
   readonly mode?: DeviceMode;
+}
+
+/**
+ * A device the driver may boot, shut down, destroy and erase: one Simlock created in a root it
+ * owns (ADR 0022 §5). The core builds it from a `VirtualDevice`, so a driver call that takes it
+ * does not compile for a physical record. A physical driver device, and the `reclaim` that takes
+ * it, come with the physical reclaim.
+ */
+export type VirtualDriverDevice = DriverDevice & { readonly physical: false };
+
+/**
+ * A device a driver listed from its own root (`listManaged`) as a driver device that may be
+ * destroyed. The root holds only simulators and emulators, so what it lists is virtual.
+ */
+export function virtualDriverDevice(device: DriverDevice): VirtualDriverDevice {
+  return { ...device, physical: false };
 }
 
 /**
@@ -271,7 +288,7 @@ export interface Driver {
    * `RuntimeMissingError` with `downloadable: true` and `component`, the string to hand to
    * `installComponent` -- the core never decides whether to download from inside a driver.
    */
-  resolveSpec(request: ExactDeviceRequest): Promise<DeviceSpec>;
+  resolveSpec(request: ExactDeviceRequest): Promise<VirtualSpec>;
   /**
    * A read: the installed component that satisfies `component`, with its exact version and its
    * receipt, or `undefined`. Never downloads. A string that is not a version, such as the
@@ -316,7 +333,7 @@ export interface Driver {
     receipt: ComponentReceipt,
     options: { readonly signal: AbortSignal },
   ): Promise<ComponentRemoval>;
-  provision(spec: DeviceSpec): Promise<DriverDevice>;
+  provision(spec: VirtualSpec): Promise<DriverDevice>;
   /**
    * Boots the device and returns it with a freshly read `address`. Never trust the address a
    * caller passed in or one captured at `provision` -- an Android console port is assigned per
@@ -324,7 +341,7 @@ export interface Driver {
    * one. `deviceId` and the registry-relevant parts of `driverData` do not change.
    */
   makeReady(
-    device: DriverDevice,
+    device: VirtualDriverDevice,
     options: {
       /**
        * What this readiness call is for. `"prepare"` (the default) may do work that changes
@@ -345,12 +362,12 @@ export interface Driver {
     },
   ): Promise<DriverDevice>;
   reclaim(
-    device: DriverDevice,
+    device: VirtualDriverDevice,
     options: { readonly clean: "standard" | "full" },
   ): Promise<ReclaimResult>;
   reclaimStrategy(options: { readonly clean: "standard" | "full" }): ReclaimStrategy;
-  shutdown(device: DriverDevice): Promise<void>;
-  destroy(device: DriverDevice): Promise<void>;
+  shutdown(device: VirtualDriverDevice): Promise<void>;
+  destroy(device: VirtualDriverDevice): Promise<void>;
   listManaged(): Promise<DriverReality>;
   /** Read-only: must never trigger a runtime / system-image download. */
   listCatalog(): Promise<DriverCatalogEntry>;
@@ -400,7 +417,7 @@ export interface Driver {
    * the device is in the registry: registry-only destruction (safety rule 1) is satisfied
    * by the record, not by the root (ADR 0001, Migration).
    */
-  destroyLegacy?(device: DriverDevice): Promise<void>;
+  destroyLegacy?(device: VirtualDriverDevice): Promise<void>;
   /**
    * Configuration-level problems only this driver can see -- reported by `doctor` alongside its
    * drift findings. Read-only and side-effect free (same contract as `listCatalog`): it must

@@ -148,7 +148,7 @@ such as **All 12 workers**, takes you to the cards for the rest.
 Select a worker to open its page. It adds:
 
 - **Devices**: every device on the worker, with its state, platform, model,
-  runtime, mode and image tag. A leased device shows how long ago its lease
+  runtime, mode (empty for a physical device, which has none) and image tag. A leased device shows how long ago its lease
   was granted, and a device being provisioned or reclaimed on a connected
   worker how long that has taken so far. Other states show `—`: the daemon
   reports no time for them.
@@ -183,7 +183,7 @@ Each lease shows:
 | Holder | Who holds the lease (see below) |
 | Worker | The worker the device is on, by its label, or its id when it has none |
 | Device | The device's model and id |
-| Mode | `slim` or `full` |
+| Mode | `slim` or `full`, or `—` for a lease on a physical device, which has none |
 | Image tag | The image tag the device was created from, or `—` |
 | Granted | How long ago the lease was granted |
 | Expires in | How long until the lease expires unless it is renewed. It counts down every second. |

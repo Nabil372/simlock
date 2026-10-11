@@ -7,6 +7,7 @@ import {
   OwnedRootError,
   type DeviceClass,
   type DeviceSpec,
+  type VirtualSpec,
   BootTimeoutError,
   type ComponentInstallProgress,
   type ComponentInstallResult,
@@ -764,7 +765,7 @@ export class AndroidDriver implements Driver {
    * naming an image tag resolves only to an installed image of that tag, and never names a
    * component, so it can never lead to a download.
    */
-  async resolveSpec(request: ExactDeviceRequest): Promise<DeviceSpec> {
+  async resolveSpec(request: ExactDeviceRequest): Promise<VirtualSpec> {
     if (request.platform !== this.platform) {
       throw new Error(`Android driver cannot resolve ${request.platform} requests`);
     }
@@ -778,6 +779,7 @@ export class AndroidDriver implements Driver {
         imageTag: request.imageTag,
         model: profile.name,
         osVersion: apiLevel,
+        physical: false,
         platform: this.platform,
       };
     }
@@ -795,10 +797,10 @@ export class AndroidDriver implements Driver {
     }
 
     this.#resolvedProfiles.set(profile.name.toLocaleLowerCase(), profile);
-    return { model: profile.name, osVersion: apiLevel, platform: this.platform };
+    return { model: profile.name, osVersion: apiLevel, physical: false, platform: this.platform };
   }
 
-  async provision(spec: DeviceSpec): Promise<DriverDevice> {
+  async provision(spec: VirtualSpec): Promise<DriverDevice> {
     this.#assertAndroidSpec(spec);
     const profile = await this.#profileFor(spec.model);
     const image = await this.#requireImage(spec.osVersion, spec.imageTag);
@@ -2032,7 +2034,7 @@ export class AndroidDriver implements Driver {
     return restored;
   }
 
-  #assertAndroidSpec(spec: DeviceSpec): void {
+  #assertAndroidSpec(spec: VirtualSpec): void {
     if (spec.platform !== this.platform) {
       throw new Error(`Android driver cannot provision ${spec.platform} devices`);
     }

@@ -84,8 +84,7 @@ import {
   type RoutingDecision,
   type RoutingPolicy,
 } from "./routing.js";
-import type { Rejection } from "./routing/serviceability.js";
-import { viewLoadKey } from "./routing/view-state.js";
+import { type Rejection, viewLoadKey } from "./routing/index.js";
 
 /** The only worker error codes that mean "this worker cannot serve this request" and so send it to
  * another worker (ADR 0009 §5). Any other code is final. */

@@ -30,7 +30,7 @@ async function createHarness(options: { readonly filesystem?: Filesystem } = {})
     driverData: {},
     driverDeviceId: "driver_1",
     provisionDuration: 0,
-    spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+    spec: { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" },
   });
   await registry.transitionDevice(device.id, "ready", {
     event: "device.ready",

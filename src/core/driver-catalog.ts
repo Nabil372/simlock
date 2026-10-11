@@ -1,6 +1,6 @@
 import { type Logger, NoopLogger } from "../ports/index.js";
 import { classCandidates, pairedRuntimes } from "./catalog-match.js";
-import { DEVICE_CLASSES, type DeviceClass, type DeviceSpec, type Platform } from "./domain.js";
+import { DEVICE_CLASSES, type DeviceClass, type VirtualSpec, type Platform } from "./domain.js";
 import type {
   ExactDeviceRequest,
   Driver,
@@ -84,7 +84,7 @@ export class DriverCatalog {
     throw new UnknownPassthroughToolError(tool);
   }
 
-  async resolveSpec(request: ExactDeviceRequest): Promise<DeviceSpec> {
+  async resolveSpec(request: ExactDeviceRequest): Promise<VirtualSpec> {
     return this.get(request.platform).resolveSpec(request);
   }
 

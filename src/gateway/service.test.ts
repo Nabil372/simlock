@@ -447,10 +447,51 @@ describe("GatewayService", () => {
     }
     expect(harness.service.workers.grantedDevices()).toEqual([
       {
+        physical: false,
         driverDeviceId: "UDID-1",
         id: "dev_1",
         mode: "full",
-        spec: { model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+        spec: { physical: false, model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+        workerId: "wrk_1",
+      },
+    ]);
+
+    await harness.service.stop();
+  });
+
+  it("keeps a worker's physical device in the grant shape beside its view, with physical and class and no mode, so a lease on it is not UNKNOWN_LEASE", async () => {
+    const harness = fleet();
+    await harness.service.start();
+    const worker = new ScriptedWorkerClient();
+    worker.devices = [
+      {
+        class: "phone",
+        createdAt: 1,
+        driverData: {},
+        driverDeviceId: "00008110-001A2B3C4D5E",
+        id: "dev_p",
+        physical: true,
+        servesDefaultMode: false,
+        spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+        state: "ready",
+      },
+    ];
+
+    await harness.join("wrk_1", worker);
+    await vi.waitFor(() => expect(harness.service.workers.view("wrk_1")?.devices).toHaveLength(1));
+
+    expect(harness.service.workers.view("wrk_1")?.devices?.[0]).toMatchObject({
+      class: "phone",
+      id: "dev_p",
+      physical: true,
+    });
+    expect(harness.service.workers.grantedDevices()).toEqual([
+      {
+        class: "phone",
+        driverDeviceId: "00008110-001A2B3C4D5E",
+        id: "dev_p",
+        physical: true,
+        spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
         workerId: "wrk_1",
       },
     ]);
@@ -1096,12 +1137,12 @@ describe("GatewayService", () => {
     await harness.service.stop();
   });
 
-  it("marks a worker one protocol version behind the gateway incompatible (ADR 0021 §6: it would refuse fleetRequestId)", async () => {
+  it("marks a worker one protocol version behind the gateway incompatible (ADR 0022 §1: its devices carry no `physical`, which the gateway schema requires)", async () => {
     const previous = {
       min: PROTOCOL_VERSION_RANGE.max - 1,
       max: PROTOCOL_VERSION_RANGE.max - 1,
     };
-    expect(PROTOCOL_VERSION_RANGE.max).toBe(22);
+    expect(PROTOCOL_VERSION_RANGE.max).toBe(23);
     expect(negotiateProtocolVersion(PROTOCOL_VERSION_RANGE, previous)).toBeUndefined();
     const harness = fleet();
     await harness.service.start();

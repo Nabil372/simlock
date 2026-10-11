@@ -274,8 +274,8 @@ event envelope an `id`, taking it to 10, and ADR 0009 makes `atRamBudget` a
 required capacity field, taking it to 11, and ADR 0015 §3 makes
 `modelClasses` a required catalog field, taking it to 12, and ADR 0015 §4 makes
 `classDefaults` one too, taking it to 13, and a device's `servesDefaultMode`, required too, takes it to 16 (ADR 0015 §1 and §2 took it to 14 and 15), and `config.get`'s required `warmPool.reserveRunning` takes it to 17, and a starting daemon's `status.get`, which
-answers `daemon` and `host` only, takes it to 18, and `config.get`'s required `warmPool.targets` and `warmPool.maxConcurrentBoots` take it to 19, and `status.get`'s `warmPool` block takes it to 20, and a lease request's optional `leaseId` takes it to 21, and its optional `fleetRequestId` (ADR 0021) takes it to 22. So the range both
-sides advertise is `{min: 22, max: 22}`, an older client and a current daemon simply
+answers `daemon` and `host` only, takes it to 18, and `config.get`'s required `warmPool.targets` and `warmPool.maxConcurrentBoots` take it to 19, and `status.get`'s `warmPool` block takes it to 20, and a lease request's optional `leaseId` takes it to 21, and its optional `fleetRequestId` (ADR 0021) takes it to 22, and a device's required `physical` (ADR 0022) takes it to 23. So the range both
+sides advertise is `{min: 23, max: 23}`, an older client and a current daemon simply
 do not overlap, and `hello` fails with `PROTOCOL_VERSION_UNSUPPORTED` naming
 both ranges. The same negotiation runs over a worker's uplink, which is why a
 worker older than this shows up in a gateway's views as `incompatible`
@@ -966,7 +966,7 @@ emits its own facts — `worker.connected`, `worker.disconnected`,
   ADR 0014 to `{min: 10, max: 10}`, because every event envelope has an `id`, and
   ADR 0009 to `{min: 11, max: 11}`, because `atRamBudget` is required, and
   ADR 0015 to `{min: 12, max: 12}`, because the catalog's `modelClasses` is required, then
-  to `{min: 13, max: 13}`, because its `classDefaults` is, and ADR 0009 to `{min: 16, max: 16}`, because a device's `servesDefaultMode` is, then to `{min: 17, max: 17}`, because `config.get`'s `warmPool.reserveRunning` is, and a starting `status.get` to `{min: 18, max: 18}`, because its `devices`, `leases`, `capacity` and `queueDepth` are optional, then to `{min: 19, max: 19}`, because `config.get`'s `warmPool.targets` and `warmPool.maxConcurrentBoots` are required, and to `{min: 20, max: 20}`, because `status.get` gains `warmPool`, and to `{min: 21, max: 21}`, because a lease request may carry `leaseId`, and to `{min: 22, max: 22}`, because it may carry `fleetRequestId`; a
+  to `{min: 13, max: 13}`, because its `classDefaults` is, and ADR 0009 to `{min: 16, max: 16}`, because a device's `servesDefaultMode` is, then to `{min: 17, max: 17}`, because `config.get`'s `warmPool.reserveRunning` is, and a starting `status.get` to `{min: 18, max: 18}`, because its `devices`, `leases`, `capacity` and `queueDepth` are optional, then to `{min: 19, max: 19}`, because `config.get`'s `warmPool.targets` and `warmPool.maxConcurrentBoots` are required, and to `{min: 20, max: 20}`, because `status.get` gains `warmPool`, and to `{min: 21, max: 21}`, because a lease request may carry `leaseId`, and to `{min: 22, max: 22}`, because it may carry `fleetRequestId`, and to `{min: 23, max: 23}`, because every device carries `physical`; a
   worker on an older version is `incompatible` the same way. That is the ordinary upgrade path, not a failure mode:
   upgrade the worker. An incompatible worker is marked `incompatible` in its
   view with both ranges shown and is never dispatched to, and it is not
@@ -1136,8 +1136,8 @@ operation that starts a device. Where those limits come from is a
 machine and adds a RAM budget, `fixed` pins them to a configured number.
 Each strategy lives behind one entry point in `core/capacity/strategies/`
 and is registered in one map, so adding a policy touches neither the
-coordinator nor its callers. The core accounts `ready`, `leased`,
-`reclaiming`, and `quarantined` devices as running. A serialized,
+coordinator nor its callers. The core accounts a virtual device in `ready`, `leased`,
+`reclaiming`, or `quarantined` as running; a physical device is never counted, since capacity reads the virtual devices only. A serialized,
 platform-agnostic reservation covers provisioning and boots from `shutdown`
 until the registry commits the resulting running or non-running state. Global
 and platform limits are checked atomically; no driver-specific runtime
@@ -1300,7 +1300,7 @@ bypassing the FIFO head.
 
 `quarantined` is the shared state for a device the core cannot vouch
 for right now: it stays in the registry and keeps counting against running
-capacity (so it is not silently over-provisioned away), but it is invisible
+capacity when it is a virtual device (so it is not silently over-provisioned away; a physical device never counts), but it is invisible
 to every grant path, because `AcquisitionPlanner` and its eviction
 helpers select targets by exact state (`state === "ready"`), never by
 excluding known-bad states. Anything that needs "in the registry, counts
@@ -1315,8 +1315,9 @@ outrun a driver-derived threshold, meaning the driver call meant to resolve
 it never did and the registry's view has diverged from the driver's. Safer
 to quarantine than re-drive: the device may be mid-erase.
 
-`QuarantineCoordinator` retries the triggering operation on a `Clock`-driven
-backoff (`warmPool.quarantine` config: retry count, backoff, multiplier, cap).
+`QuarantineCoordinator` retries the triggering operation of a virtual device on a `Clock`-driven
+backoff (`warmPool.quarantine` config: retry count, backoff, multiplier, cap). A physical
+device is quarantined with no retry armed until the physical reclaim adds one.
 A successful retry returns the device to `ready` (or `shutdown`) and it
 rejoins the warm pool; exhausting the retry budget destroys it
 (registry-only, never merely `shutdown`, since `shutdown` is reusable warm

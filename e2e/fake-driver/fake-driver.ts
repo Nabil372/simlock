@@ -29,6 +29,7 @@ import {
   removeListedComponent,
   type DeviceClass,
   type DeviceSpec,
+  type VirtualSpec,
   type Platform,
 } from "../../dist/core/index.js";
 import type {
@@ -244,7 +245,7 @@ export class OutOfProcessFakeDriver implements Driver {
     await this.#beforeCall("revalidateRoot", []);
   }
 
-  async resolveSpec(request: ExactDeviceRequest): Promise<DeviceSpec> {
+  async resolveSpec(request: ExactDeviceRequest): Promise<VirtualSpec> {
     const script = await this.#beforeCall("resolveSpec", [request]);
     this.#assertKnownModel(request.model, script);
     const osVersion =
@@ -255,6 +256,7 @@ export class OutOfProcessFakeDriver implements Driver {
     return {
       model: request.model,
       osVersion,
+      physical: false,
       platform: this.platform,
       ...(request.imageTag === undefined ? {} : { imageTag: request.imageTag }),
       ...(slim === true ? { mode: "slim" as const } : {}),
@@ -390,8 +392,7 @@ export class OutOfProcessFakeDriver implements Driver {
     };
   }
 
-  // fallow-ignore-next-line unused-class-member -- called by the daemon through the Driver interface; this module is loaded via SIMLOCK_DRIVERS_MODULE.
-  async provision(spec: DeviceSpec): Promise<DriverDevice> {
+  async provision(spec: VirtualSpec): Promise<DriverDevice> {
     await this.#beforeCall("provision", [spec]);
     const deviceId = `fake-${this.platform}-${this.#nextDeviceNumber}`;
     this.#nextDeviceNumber += 1;
@@ -475,7 +476,6 @@ export class OutOfProcessFakeDriver implements Driver {
 
   /** Read straight from the script, not through `#beforeCall`: the daemon asks for these on
    * its own schedule, and a test's call log should hold only what the test caused. */
-  // fallow-ignore-next-line unused-class-member -- called by the daemon through the Driver interface; this module is loaded via SIMLOCK_DRIVERS_MODULE.
   async toolVersions(): Promise<readonly DriverToolVersion[]> {
     return (await this.#readScript()).toolVersions ?? [];
   }
@@ -505,7 +505,6 @@ export class OutOfProcessFakeDriver implements Driver {
   }
 
   /** Synchronous like `estimate`, and cached the same way: the last script read wins. */
-  // fallow-ignore-next-line unused-class-member -- called by the daemon through the Driver interface; this module is loaded via SIMLOCK_DRIVERS_MODULE.
   leaseEnvironment(): Readonly<Record<string, string>> {
     // Defaults to the recognisable fakes rather than `{}`: a grant that carried nothing would
     // make "the environment reached the CLI" and "there was never anything to carry" look

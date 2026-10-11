@@ -5,8 +5,8 @@ import { FakeClock, JsonLinesLogger, MemoryLogSink } from "../../ports/index.js"
 import type { RunningCapacity } from "../capacity/index.js";
 import { DeviceOperationClaims } from "../device-operation-claims.js";
 import type {
-  DeviceRecord,
-  DeviceSpec,
+  VirtualDevice,
+  VirtualSpec,
   LeaseRecord,
   TargetResolution,
   WaitingDemand,
@@ -21,11 +21,12 @@ const now = 1_000 * minute;
 
 function device(
   id: string,
-  state: DeviceRecord["state"],
+  state: VirtualDevice["state"],
   endedAgo: number,
   platform: "ios" | "android" = "ios",
-): DeviceRecord {
+): VirtualDevice {
   return {
+    physical: false,
     createdAt: 1,
     driverData: {},
     driverDeviceId: `driver-${id}`,
@@ -34,8 +35,8 @@ function device(
     mode: "full",
     spec:
       platform === "ios"
-        ? { model: "iPhone 15", osVersion: "26.0", platform }
-        : { model: "Pixel 8", osVersion: "35", platform },
+        ? { model: "iPhone 15", osVersion: "26.0", physical: false, platform }
+        : { model: "Pixel 8", osVersion: "35", physical: false, platform },
     state,
   };
 }
@@ -55,13 +56,13 @@ function leaseOn(deviceId: string): LeaseRecord {
 }
 
 function harness(
-  initial: readonly DeviceRecord[],
+  initial: readonly VirtualDevice[],
   options: {
     limit?: number;
     enabled?: boolean;
     refuseBoot?: boolean;
-    shutdown?: (target: DeviceRecord) => Promise<DeviceRecord | undefined>;
-    boot?: (target: DeviceRecord) => Promise<DeviceRecord | undefined>;
+    shutdown?: (target: VirtualDevice) => Promise<VirtualDevice | undefined>;
+    boot?: (target: VirtualDevice) => Promise<VirtualDevice | undefined>;
     waiting?: () => readonly WaitingDemand[];
     maintenance?: () => boolean;
     refuseClaim?: boolean;
@@ -72,7 +73,7 @@ function harness(
     /** What a target resolves to; by default the request's own model and OS (26.0 when none). */
     resolve?: (request: DeviceRequest) => TargetResolution | Promise<TargetResolution>;
     /** Holds a creation until the test lets it go; the creation fails when this rejects. */
-    provision?: (spec: DeviceSpec, attempt: number) => Promise<void>;
+    provision?: (spec: VirtualSpec, attempt: number) => Promise<void>;
     refuseProvision?: boolean;
     /** The budget allows a creation when asked, then refuses the reservation: a lost race. */
     refuseReservation?: boolean;
@@ -85,7 +86,7 @@ function harness(
   const sink = new MemoryLogSink();
   const claims = new DeviceOperationClaims();
   const state = { devices: [...initial], leases: [] as LeaseRecord[] };
-  const setState = (id: string, next: DeviceRecord["state"]): DeviceRecord => {
+  const setState = (id: string, next: VirtualDevice["state"]): VirtualDevice => {
     const current = state.devices.find((item) => item.id === id);
     if (current === undefined) throw new Error(`no device ${id}`);
     const updated = { ...current, state: next };
@@ -111,7 +112,7 @@ function harness(
   const bootCalls: string[] = [];
   const resolveCalls: DeviceRequest[] = [];
   const provisionCalls: {
-    spec: DeviceSpec;
+    spec: VirtualSpec;
     claim: { kind: string; owner?: string | undefined } | undefined;
     reservationReleasedAtReturn: number;
     deviceId?: string;
@@ -129,6 +130,7 @@ function harness(
         if (options.resolve !== undefined) return options.resolve(request);
         return {
           spec: {
+            physical: false,
             model: request.model ?? "",
             osVersion: request.osVersion ?? "26.0",
             platform: request.platform,
@@ -239,7 +241,8 @@ function harness(
           throw error instanceof Error ? error : new BootTimeoutError("new");
         }
         const id = `new-${provisionCalls.length}`;
-        const created: DeviceRecord = {
+        const created: VirtualDevice = {
+          physical: false,
           createdAt: now,
           driverData: {},
           driverDeviceId: `driver-${id}`,
@@ -263,7 +266,7 @@ function harness(
     },
     registry: {
       get snapshot() {
-        return { devices: state.devices, leases: state.leases };
+        return { leases: state.leases, virtualDevices: state.devices };
       },
     },
   };
@@ -791,9 +794,15 @@ describe("warm pool converger", () => {
 });
 
 describe("warm pool targets", () => {
-  const iphone17: WarmTarget = { count: 1, model: "iPhone 17", osVersion: "26.0", platform: "ios" };
-  const kind = { model: "iPhone 17", osVersion: "26.0", platform: "ios" } as const;
-  const ofKind = (id: string, state: DeviceRecord["state"], createdAt = 1): DeviceRecord => ({
+  const iphone17: WarmTarget = {
+    count: 1,
+    model: "iPhone 17",
+    osVersion: "26.0",
+    platform: "ios",
+  };
+  const kind = { model: "iPhone 17", osVersion: "26.0", physical: false, platform: "ios" } as const;
+  const ofKind = (id: string, state: VirtualDevice["state"], createdAt = 1): VirtualDevice => ({
+    physical: false,
     createdAt,
     driverData: {},
     driverDeviceId: `driver-${id}`,
@@ -1075,7 +1084,12 @@ describe("warm pool targets", () => {
       {
         booting: 0,
         count: 1,
-        kind: { mode: "full", model: "iPhone 17", osVersion: "27.0", platform: "ios" },
+        kind: {
+          mode: "full",
+          model: "iPhone 17",
+          osVersion: "27.0",
+          platform: "ios",
+        },
         message: "iOS 27.0 is not installed",
         ready: 0,
         short: "runtime-missing",
@@ -1134,7 +1148,13 @@ describe("warm pool targets", () => {
   it("resolves a target as the request it is: platform, exact model, and the OS and mode it names", async () => {
     const rig = harness([], {
       targets: [
-        { count: 1, mode: "slim", model: "iPhone 16", osVersion: ">=18", platform: "ios" },
+        {
+          count: 1,
+          mode: "slim",
+          model: "iPhone 16",
+          osVersion: ">=18",
+          platform: "ios",
+        },
         { count: 1, model: "Pixel 9", platform: "android" },
       ],
     });
@@ -1526,7 +1546,12 @@ describe("warm pool targets", () => {
       resolve: async (request) => {
         await hold;
         return {
-          spec: { model: request.model ?? "", osVersion: "26.0", platform: request.platform },
+          spec: {
+            physical: false,
+            model: request.model ?? "",
+            osVersion: "26.0",
+            platform: request.platform,
+          },
         };
       },
       targets: [iphone17],
@@ -1774,7 +1799,12 @@ describe("warm pool targets", () => {
             return { message: "why", refusal: "unresolvable" };
           }
           return {
-            spec: { model: request.model ?? "", osVersion: "26.0", platform: request.platform },
+            spec: {
+              physical: false,
+              model: request.model ?? "",
+              osVersion: "26.0",
+              platform: request.platform,
+            },
           };
         },
         targets: [
@@ -1899,7 +1929,12 @@ describe("warm pool targets", () => {
           refuse
             ? { message: "why", refusal: "runtime-missing" }
             : {
-                spec: { model: request.model ?? "", osVersion: "26.0", platform: request.platform },
+                spec: {
+                  physical: false,
+                  model: request.model ?? "",
+                  osVersion: "26.0",
+                  platform: request.platform,
+                },
               },
         targets: [iphone17],
       });
@@ -1949,7 +1984,12 @@ describe("warm pool targets", () => {
           refuse
             ? { message: "why", refusal: "unresolvable" }
             : {
-                spec: { model: request.model ?? "", osVersion: "26.0", platform: request.platform },
+                spec: {
+                  physical: false,
+                  model: request.model ?? "",
+                  osVersion: "26.0",
+                  platform: request.platform,
+                },
               },
         targets: [unversioned],
       });

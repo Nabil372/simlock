@@ -128,6 +128,7 @@ describe("AndroidDriver", () => {
     const driver = await createDriver(filesystem, runner);
 
     await expect(driver.resolveSpec({ model: "Pixel 8", platform: "android" })).resolves.toEqual({
+      physical: false,
       model: "Pixel 8",
       osVersion: "34",
       platform: "android",
@@ -148,6 +149,7 @@ describe("AndroidDriver", () => {
     const driver = await createDriver(filesystem, runner);
 
     await expect(driver.resolveSpec({ model: "Pixel 8", platform: "android" })).resolves.toEqual({
+      physical: false,
       model: "Pixel 8",
       osVersion: "35",
       platform: "android",
@@ -162,7 +164,11 @@ describe("AndroidDriver", () => {
     const driver = await createDriver(filesystem, runner);
 
     await expect(
-      driver.resolveSpec({ model: "Pixel 8", osVersion: "35", platform: "android" }),
+      driver.resolveSpec({
+        model: "Pixel 8",
+        osVersion: "35",
+        platform: "android",
+      }),
     ).rejects.toMatchObject({ component: "35", downloadable: true, name: "RuntimeMissingError" });
     expect(runner.calls.map((call) => call.command)).not.toContain(binaries.sdkmanager);
   });
@@ -216,6 +222,7 @@ describe("AndroidDriver", () => {
       await driver.provision(spec);
 
       expect(spec).toEqual({
+        physical: false,
         imageTag: "google_apis_playstore",
         model: "Pixel 8",
         osVersion: "34",
@@ -276,7 +283,12 @@ describe("AndroidDriver", () => {
       const spec = await driver.resolveSpec({ model: "Pixel 8", platform: "android" });
       await driver.provision(spec);
 
-      expect(spec).toEqual({ model: "Pixel 8", osVersion: "34", platform: "android" });
+      expect(spec).toEqual({
+        physical: false,
+        model: "Pixel 8",
+        osVersion: "34",
+        platform: "android",
+      });
       expect(createdFromPackage(runner)).toBe("system-images;android-34;google_apis;arm64-v8a");
     });
 
@@ -364,7 +376,12 @@ describe("AndroidDriver", () => {
   });
 
   it("boots concurrent devices on different even ports and skips ports adb shows taken", async () => {
-    const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+    const spec = {
+      physical: false,
+      model: "Pixel 8",
+      osVersion: "34",
+      platform: "android",
+    } as const;
     const filesystem = await androidFilesystem();
     const host = new EmulatorHost(filesystem);
     // Another process's emulator holds the first port in the range. This daemon reserved
@@ -418,7 +435,12 @@ describe("AndroidDriver", () => {
         ids: ["one"],
         tcpProbe: new FakeTcpProbe([adbServerPort, listeningPort]),
       });
-      const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+      const spec = {
+        physical: false,
+        model: "Pixel 8",
+        osVersion: "34",
+        platform: "android",
+      } as const;
       await driver.resolveSpec(spec);
 
       const device = await driver.makeReady(await driver.provision(spec));
@@ -1145,7 +1167,7 @@ describe("AndroidDriver", () => {
     });
     const device = await driver.provision(spec);
 
-    await expect(driver.destroy(device)).resolves.toBeUndefined();
+    await expect(driver.destroy({ ...device, physical: false })).resolves.toBeUndefined();
     expect(runner.calls.at(-1)).toMatchObject({
       args: ["delete", "avd", "-n", "simlock_delete-me"],
       command: binaries.avdmanager,
@@ -1157,7 +1179,12 @@ describe("AndroidDriver", () => {
       await androidFilesystem(),
       new ScriptedProcessRunner([]),
     );
-    const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+    const spec = {
+      physical: false,
+      model: "Pixel 8",
+      osVersion: "34",
+      platform: "android",
+    } as const;
 
     expect(driver.estimate({ operation: "provision" }, spec)).toBe(1_000);
     expect(driver.estimate({ operation: "boot" }, spec)).toBe(70_000);
@@ -1168,7 +1195,12 @@ describe("AndroidDriver", () => {
       await androidFilesystem(),
       new ScriptedProcessRunner([]),
     );
-    const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+    const spec = {
+      physical: false,
+      model: "Pixel 8",
+      osVersion: "34",
+      platform: "android",
+    } as const;
 
     // Both measured on an M3 Pro / Pixel 8 / API 35. The gap is real: a `wipe` reclaim defers
     // the wipe to the next `makeReady`; a reclaim that also boots the device back to warm
@@ -1247,6 +1279,7 @@ describe("AndroidDriver", () => {
 
     for (const { model, osVersion } of pairs) {
       await expect(driver.resolveSpec({ model, osVersion, platform: "android" })).resolves.toEqual({
+        physical: false,
         model,
         osVersion,
         platform: "android",
@@ -1331,7 +1364,7 @@ describe("AndroidDriver", () => {
     for (const { model, name } of names) {
       for (const spelling of [name.toUpperCase(), name.toLowerCase()]) {
         await expect(driver.resolveSpec({ model: spelling, platform: "android" })).resolves.toEqual(
-          { model, osVersion: "34", platform: "android" },
+          { physical: false, model, osVersion: "34", platform: "android" },
         );
       }
     }
@@ -1709,7 +1742,12 @@ describe("AndroidDriver", () => {
     const driverB = await createDriver(withMark, new ScriptedProcessRunner(buildExpectations()), {
       ids: ["one"],
     });
-    const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+    const spec = {
+      physical: false,
+      model: "Pixel 8",
+      osVersion: "34",
+      platform: "android",
+    } as const;
     await driverA.resolveSpec(spec);
     await driverB.resolveSpec(spec);
 
@@ -1880,7 +1918,12 @@ describe("AndroidDriver", () => {
         osVersion: "34",
         platform: "android",
       });
-      expect(spec).toEqual({ model: "Custom A", osVersion: "34", platform: "android" });
+      expect(spec).toEqual({
+        physical: false,
+        model: "Custom A",
+        osVersion: "34",
+        platform: "android",
+      });
 
       const device = await driver.provision(spec);
 
@@ -2053,7 +2096,11 @@ describe("AndroidDriver", () => {
       });
 
       await expect(
-        driver.resolveSpec({ model: "Nonexistent Model", osVersion: "34", platform: "android" }),
+        driver.resolveSpec({
+          model: "Nonexistent Model",
+          osVersion: "34",
+          platform: "android",
+        }),
       ).rejects.toMatchObject({ name: "UnknownModelError" });
 
       expect(diagnostics).toEqual([
@@ -2758,7 +2805,12 @@ describe("AndroidDriver ownership", () => {
 
 describe("AndroidDriver readiness on a taken console port", () => {
   it("refuses to ready a device whose serial an emulator of an AVD outside its root answers, and changes nothing on that emulator, even when the device is then shut down (#256)", async () => {
-    const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+    const spec = {
+      physical: false,
+      model: "Pixel 8",
+      osVersion: "34",
+      platform: "android",
+    } as const;
     const filesystem = await androidFilesystem();
     const host = new EmulatorHost(filesystem);
     const machine = new PortTakingMachine(host);
@@ -2971,7 +3023,12 @@ describe("AndroidDriver emulator registration", () => {
 
 describe("AndroidDriver console ports across a restart", () => {
   it("readies a stopped device and one provisioned after a restart each at an address its own emulator answers (#52)", async () => {
-    const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+    const spec = {
+      physical: false,
+      model: "Pixel 8",
+      osVersion: "34",
+      platform: "android",
+    } as const;
     const filesystem = await androidFilesystem();
     const host = new EmulatorHost(filesystem);
 
@@ -2998,7 +3055,7 @@ describe("AndroidDriver console ports across a restart", () => {
 });
 
 describe("AndroidDriver console port reservations", () => {
-  const spec = { model: "Pixel 8", osVersion: "34", platform: "android" } as const;
+  const spec = { physical: false, model: "Pixel 8", osVersion: "34", platform: "android" } as const;
 
   it("keeps a device's console port across its stops, so a call on its stopped record reaches no other device", async () => {
     const filesystem = await androidFilesystem();
@@ -3675,7 +3732,11 @@ async function provisionedHarness(
       : { readinessTimeoutMs: options.readinessTimeoutMs }),
     tcpProbe,
   });
-  const spec = await driver.resolveSpec({ model: "Pixel 8", osVersion: "34", platform: "android" });
+  const spec = await driver.resolveSpec({
+    model: "Pixel 8",
+    osVersion: "34",
+    platform: "android",
+  });
   const device = await driver.provision(spec);
 
   return { clock, device, driver, filesystem, runner, tcpProbe };

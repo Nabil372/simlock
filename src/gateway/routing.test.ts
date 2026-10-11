@@ -5,6 +5,7 @@ import { catalogFixture, deviceFixture, statusFixture } from "./test-support.js"
 import type { WorkerView } from "./worker-registry.js";
 
 const REQUEST = {
+  physical: false,
   model: "iPhone 17",
   osVersion: "26.0",
   platform: "ios" as const,
@@ -190,7 +191,7 @@ describe("the registered warm-then-free policy", () => {
     // planner evicts it, so the slot is free, on the platform and globally.
     const other = {
       ...deviceFixture("dev_1", "ready"),
-      spec: { model: "iPhone 17", osVersion: "25.0", platform: "ios" as const },
+      spec: { physical: false, model: "iPhone 17", osVersion: "25.0", platform: "ios" as const },
     };
     const capacity = statusFixture().capacity;
     const platformHeld = view("wrk_a", {

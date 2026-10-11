@@ -42,7 +42,7 @@ describe("Nuke", () => {
       driverData: { fakeDeviceId: "managed" },
       driverDeviceId: "managed",
       provisionDuration: 0,
-      spec: { model: "Phone", osVersion: "1", platform: "ios" },
+      spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
     });
     await registry.transitionDevice(device.id, "ready", {
       event: "device.ready",

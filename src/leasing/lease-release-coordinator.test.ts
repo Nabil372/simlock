@@ -91,7 +91,7 @@ async function grant(
     driverData: {},
     driverDeviceId: `driver_${harness.registry.snapshot.devices.length}`,
     provisionDuration: 0,
-    spec: { model: "Phone", osVersion: "1", platform: "ios" },
+    spec: { physical: false, model: "Phone", osVersion: "1", platform: "ios" },
   });
   await harness.registry.transitionDevice(device.id, "ready", {
     event: "device.ready",

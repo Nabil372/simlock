@@ -75,11 +75,12 @@ describe("MCP contracts", () => {
   it("validates a lease grant, release, and lease-status shape using contract field names", () => {
     const grant = leaseSimulatorOutputSchema.parse({
       device: {
+        physical: false,
         createdAt: 0,
         driverData: null,
         driverDeviceId: "SIM-1",
         id: "device-1",
-        spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+        spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
         mode: "full",
         state: "leased",
       },

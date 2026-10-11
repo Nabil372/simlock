@@ -23,10 +23,11 @@ function worker(overrides: Partial<WorkerView> = {}): WorkerView {
 
 function device(id: string, overrides: Partial<WorkerDevice> = {}): WorkerDevice {
   return {
+    physical: false,
     id,
     mode: "full",
     servesDefaultMode: true,
-    spec: { model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+    spec: { physical: false, model: "iPhone 16", osVersion: "18.4", platform: "ios" },
     state: "ready",
     ...overrides,
   };
@@ -103,6 +104,19 @@ describe("the attention list", () => {
       "wrk_1 dev_quarantined quarantined",
       "wrk_1 dev_stuck stalled",
     ]);
+  });
+
+  it("a quarantined physical device is an attention item like any quarantined device", () => {
+    const physical: WorkerDevice = {
+      class: "phone",
+      id: "dev_phone",
+      physical: true,
+      servesDefaultMode: false,
+      spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+      state: "quarantined",
+    };
+
+    expect(summary([worker({ devices: [physical] })])).toEqual(["wrk_1 dev_phone quarantined"]);
   });
 
   it("the attention list holds a worker over its RAM budget", () => {

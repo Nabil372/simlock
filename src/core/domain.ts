@@ -21,7 +21,13 @@ export type DeviceClass = (typeof DEVICE_CLASSES)[number];
 /** The mode a device actually has: slimmed by its driver, or not. */
 export type DeviceMode = "slim" | "full";
 
-export interface DeviceSpec {
+/**
+ * A simulator's or emulator's spec. `physical` is always `false` here, in memory and on every
+ * spec a driver resolves; a spec read from `devices` in `state.json` has none on disk and gains it
+ * on load.
+ */
+export interface VirtualSpec {
+  readonly physical: false;
   readonly platform: Platform;
   readonly model: string;
   readonly osVersion: string;
@@ -42,6 +48,26 @@ export interface DeviceSpec {
   readonly imageTag?: string;
 }
 
+/** The kinds of device an admin can enrol (ADR 0022 §1). */
+export type PhysicalClass = "phone" | "tablet";
+
+/**
+ * A physical device's spec (ADR 0022 §1): its platform, model, OS version and class, which is
+ * recorded at enrolment and not read from a catalog. It has no mode and no image tag; they are
+ * declared `undefined` so code that reads a spec's mode or tag compiles for both types.
+ */
+export interface PhysicalSpec {
+  readonly physical: true;
+  readonly platform: Platform;
+  readonly model: string;
+  readonly osVersion: string;
+  readonly class: PhysicalClass;
+  readonly mode?: undefined;
+  readonly imageTag?: undefined;
+}
+
+export type DeviceSpec = VirtualSpec | PhysicalSpec;
+
 /**
  * Why a warm target did not resolve to a spec: the platform has no driver on this machine, its
  * runtime is not installed (and a target never downloads), its model is not listed, or the driver
@@ -51,7 +77,7 @@ export type TargetRefusal = "no-driver" | "runtime-missing" | "unknown-model" | 
 
 /** What the request resolver answers for a request that is not going to be granted a lease. */
 export type TargetResolution =
-  | { readonly spec: DeviceSpec }
+  | { readonly spec: VirtualSpec }
   | { readonly refusal: TargetRefusal; readonly message: string };
 
 /** The mode a spec plans: `"slim"` when it says so, `"full"` otherwise. */
@@ -60,11 +86,13 @@ export function specMode(spec: DeviceSpec): DeviceMode {
 }
 
 /**
- * Spec identity as every selection path means it: same platform, model, OS version, mode, and
- * image tag. A spec with no tag and a spec with one never match, so neither pool serves the other.
+ * Spec identity as every selection path means it: same type (physical or virtual), platform,
+ * model, OS version, mode, and image tag. A spec with no tag and a spec with one never match, so
+ * neither pool serves the other, and a physical spec never matches a virtual one.
  */
 export function sameSpec(left: DeviceSpec, right: DeviceSpec): boolean {
   return (
+    left.physical === right.physical &&
     left.platform === right.platform &&
     left.model === right.model &&
     left.osVersion === right.osVersion &&
@@ -113,7 +141,7 @@ export interface WaitingDemand {
 }
 
 /** The requirement an exact request has once its driver resolved it: that spec's model, OS and tag. */
-export function exactRequirement(spec: DeviceSpec): DeviceRequirement {
+export function exactRequirement(spec: VirtualSpec): DeviceRequirement {
   return {
     imageTag: spec.imageTag,
     osVersion: { kind: "exact", version: spec.osVersion },
@@ -123,16 +151,31 @@ export function exactRequirement(spec: DeviceSpec): DeviceRequirement {
 }
 
 /**
+ * What `fits` reads of a spec. A gateway builds one from a worker's view, where a physical
+ * device's class is not part of its spec, so this is narrower than `DeviceSpec` and both types
+ * satisfy it.
+ */
+export interface FittableSpec {
+  readonly physical: boolean;
+  readonly platform: Platform;
+  readonly model: string;
+  readonly osVersion: string;
+  readonly imageTag?: string | undefined;
+}
+
+/**
  * The one place a requirement meets a device (ADR 0015 §6; architecture rule 10). Holds when the
  * platform is equal, the model is equal or `classOf` says the device's model is the requested
  * class, the OS satisfies the constraint, and the image tag is equal or both absent. It does not
- * read the mode. `sameSpec` stays what names pool identity everywhere else.
+ * read the mode. `sameSpec` stays what names pool identity everywhere else. A physical spec fits
+ * no requirement: every requirement is virtual until a request can ask for a physical device.
  */
 export function fits(
   requirement: DeviceRequirement,
-  spec: DeviceSpec,
+  spec: FittableSpec,
   classOf: (model: string) => DeviceClass | undefined,
 ): boolean {
+  if (spec.physical) return false;
   if (requirement.platform !== spec.platform || requirement.imageTag !== spec.imageTag) {
     return false;
   }
@@ -168,20 +211,17 @@ function satisfiesOs(constraint: OsRequirement, osVersion: string): boolean {
  */
 export type LeaseIdentity = "reusable" | "fresh";
 
-export type DeviceState =
-  | "provisioning"
-  | "ready"
-  | "leased"
-  | "reclaiming"
-  | "quarantined"
-  | "shutdown"
-  | "deleted";
+/** The states both types share (ADR 0022 §1). */
+type SharedState = "ready" | "leased" | "reclaiming" | "quarantined";
+export type VirtualState = SharedState | "provisioning" | "shutdown" | "deleted";
+/** `absent` joins the physical states with the watcher, in a later task. */
+export type PhysicalState = SharedState | "deleted";
+export type DeviceState = VirtualState | PhysicalState;
 
-export interface DeviceRecord {
+/** What a virtual and a physical device record both carry. */
+interface DeviceRecordFields {
   readonly id: string;
   readonly driverDeviceId: string;
-  readonly spec: DeviceSpec;
-  readonly state: DeviceState;
   readonly driverData: unknown;
   readonly createdAt: number;
   readonly lastLeaseEndedAt?: number;
@@ -223,6 +263,13 @@ export interface DeviceRecord {
    * nothing here ever guesses at a value it wasn't told.
    */
   readonly address?: string;
+}
+
+/** A simulator or emulator Simlock created in a root it owns. */
+export interface VirtualDevice extends DeviceRecordFields {
+  readonly physical: false;
+  readonly spec: VirtualSpec;
+  readonly state: VirtualState;
   /**
    * The mode the device actually has (see `DriverDevice.mode`), current as of its last `ready`
    * transition. `registerDevice` writes `"full"` for a device that has not booted yet, and a
@@ -237,6 +284,36 @@ export interface DeviceRecord {
   readonly leaseIdentity?: LeaseIdentity;
 }
 
+/**
+ * A real phone or tablet an admin enrolled (ADR 0022 §1). Simlock cannot create, boot, shut down
+ * or destroy it, so it has no mode and no lease identity: it is always reusable. `mode` and
+ * `leaseIdentity` are declared `undefined` so code that reads them compiles for both types.
+ */
+export interface PhysicalDevice extends DeviceRecordFields {
+  readonly physical: true;
+  readonly spec: PhysicalSpec;
+  readonly state: PhysicalState;
+  /** The apps the enrolment kept; never on the wire. */
+  readonly enrolledApps: readonly string[];
+  readonly mode?: undefined;
+  readonly leaseIdentity?: undefined;
+}
+
+export type DeviceRecord = VirtualDevice | PhysicalDevice;
+
+/**
+ * The record as a virtual device, or a throw for a physical one. For the places where a record
+ * comes back from the registry by ID into code that may only act on simulators and emulators
+ * (ADR 0022 §4): the ID was taken from the virtual read, so a physical record here means a
+ * broken invariant, and the caller must not go on to touch it.
+ */
+export function assertVirtual(device: DeviceRecord): VirtualDevice {
+  if (device.physical) {
+    throw new Error(`Device ${device.id} is physical; only a virtual device may be acted on here`);
+  }
+  return device;
+}
+
 /** When a ready device became ready: `readyAt`, or `createdAt` for a record that has none. */
 export function readySince(device: DeviceRecord): number {
   return device.readyAt ?? device.createdAt;
@@ -246,7 +323,8 @@ export function readySince(device: DeviceRecord): number {
  * The one answer to "may this device be handed to a new lease?". A `fresh` device that has ended
  * a lease is spent: `beginRelease` stamps `lastLeaseEndedAt` on every lease end, so that stamp is
  * the proof it already served its one lease. Every other device is grantable as far as identity
- * goes; state, spec, and claims are the caller's own checks.
+ * goes; state, spec, and claims are the caller's own checks. A physical device has no
+ * `leaseIdentity`, so it is always reusable: `lease.identity` does not apply to it.
  */
 export function mayBeGranted(device: DeviceRecord): boolean {
   return device.leaseIdentity !== "fresh" || device.lastLeaseEndedAt === undefined;
@@ -367,7 +445,7 @@ export function isSettled(record: Pick<LeaseRequestRecord<unknown>, "state">): b
 
 /**
  * `quarantined` is the shared "present in the registry, counts against running
- * capacity, but not grantable" disposition: a device the core cannot vouch for
+ * capacity (a virtual device only), but not grantable" disposition: a device the core cannot vouch for
  * right now, sitting outside the `ready`/`shutdown` states every grant and
  * eviction path already selects on. `reclaiming -> quarantined` is its release-time
  * purge-failure entry (see ReclaimCoordinator); `provisioning -> quarantined` is its
@@ -377,13 +455,26 @@ export function isSettled(record: Pick<LeaseRequestRecord<unknown>, "state">): b
  * second one. Exits: `ready` on a successful retry, `deleted` on a successful retried
  * delete, `shutdown`/`deleted` on giving up.
  */
-const legalTransitions: Readonly<Record<DeviceState, readonly DeviceState[]>> = {
+const legalTransitions: Readonly<Record<VirtualState, readonly VirtualState[]>> = {
   provisioning: ["ready", "deleted", "quarantined"],
   ready: ["leased", "shutdown"],
   leased: ["reclaiming"],
   reclaiming: ["ready", "shutdown", "quarantined"],
   quarantined: ["ready", "shutdown", "deleted"],
   shutdown: ["ready", "deleted", "quarantined"],
+  deleted: [],
+};
+
+/**
+ * A physical device's machine (ADR 0022 §2): it has no `provisioning` and no `shutdown`, because
+ * Simlock never creates, boots or stops it. `deleted` means unenrolled. `reclaiming` is entered
+ * only from `leased` here; the state for a device that is not present comes with its watcher.
+ */
+const legalPhysicalTransitions: Readonly<Record<PhysicalState, readonly PhysicalState[]>> = {
+  ready: ["leased", "deleted"],
+  leased: ["reclaiming"],
+  reclaiming: ["ready", "quarantined"],
+  quarantined: ["ready", "deleted"],
   deleted: [],
 };
 
@@ -408,12 +499,29 @@ export interface DeviceTransitionUpdate {
   readonly mode?: DeviceMode;
 }
 
+/** One transition function, two tables (architecture rule 6): `current.physical` picks the table. */
+export function transition(
+  current: VirtualDevice,
+  to: VirtualState,
+  update?: DeviceTransitionUpdate,
+): VirtualDevice;
+export function transition(
+  current: PhysicalDevice,
+  to: PhysicalState,
+  update?: DeviceTransitionUpdate,
+): PhysicalDevice;
+export function transition(
+  current: DeviceRecord,
+  to: DeviceState,
+  update?: DeviceTransitionUpdate,
+): DeviceRecord;
 export function transition(
   current: DeviceRecord,
   to: DeviceState,
   update?: DeviceTransitionUpdate,
 ): DeviceRecord {
-  if (!legalTransitions[current.state].includes(to)) {
+  if (current.physical) return transitionPhysical(current, to, update);
+  if (!isVirtualState(to) || !legalTransitions[current.state].includes(to)) {
     throw new IllegalTransition(current.state, to);
   }
 
@@ -439,6 +547,34 @@ export function transition(
   }
 
   return { ...record, ...update, state: to };
+}
+
+function transitionPhysical(
+  current: PhysicalDevice,
+  to: DeviceState,
+  update: DeviceTransitionUpdate | undefined,
+): PhysicalDevice {
+  // `current.state` is typed `PhysicalState`, so the check on it narrows nothing. It refuses, at
+  // runtime, a record whose state is outside that type (the load refuses one too).
+  if (
+    !isPhysicalState(current.state) ||
+    !isPhysicalState(to) ||
+    !legalPhysicalTransitions[current.state].includes(to)
+  ) {
+    throw new IllegalTransition(current.state, to);
+  }
+  // A physical device has no driver-reported mode, and a deferred reclaim ends with any exit.
+  const { deferredReclaimLeaseId: _deferred, ...record } = current;
+  const { mode: _mode, ...fields } = update ?? {};
+  return { ...record, ...fields, state: to };
+}
+
+function isVirtualState(state: DeviceState): state is VirtualState {
+  return Object.hasOwn(legalTransitions, state);
+}
+
+function isPhysicalState(state: DeviceState): state is PhysicalState {
+  return Object.hasOwn(legalPhysicalTransitions, state);
 }
 
 /**

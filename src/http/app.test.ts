@@ -1097,6 +1097,84 @@ describe("lease routes", () => {
     });
   });
 
+  it("GET /v1/leases/:id keeps a simulator's mode on the lease object", async () => {
+    const { app, registry } = buildHarness();
+    registry.devices = [makeDevice({ id: "dev_1", mode: "slim" })];
+    registry.leases = [makeLease({ deviceId: "dev_1", id: "lse_1", ownerId: "tok_agent" })];
+
+    const response = await app.request("/v1/leases/lse_1", { headers: agentAuth });
+
+    expect(((await response.json()) as { lease: unknown }).lease).toMatchObject({ mode: "slim" });
+  });
+
+  it("GET /v1/leases/:id answers a lease on a physical device with no mode, on a worker", async () => {
+    const { app, registry } = buildHarness();
+    registry.devices = [
+      {
+        createdAt: 0,
+        driverData: undefined,
+        driverDeviceId: "00008110-001A2B3C4D5E",
+        enrolledApps: [],
+        id: "dev_phys",
+        physical: true,
+        spec: {
+          class: "phone",
+          model: "iPhone 15 Pro",
+          osVersion: "18.4",
+          physical: true,
+          platform: "ios",
+        },
+        state: "leased",
+      },
+    ];
+    registry.leases = [makeLease({ deviceId: "dev_phys", id: "lse_p", ownerId: "tok_agent" })];
+
+    const response = await app.request("/v1/leases/lse_p", { headers: agentAuth });
+
+    expect(response.status).toBe(200);
+    const { lease } = (await response.json()) as { lease: Record<string, unknown> };
+    expect(lease).toMatchObject({
+      device: "iPhone 15 Pro",
+      deviceId: "dev_phys",
+      os: "18.4",
+      udid: "00008110-001A2B3C4D5E",
+    });
+    expect(lease).not.toHaveProperty("mode");
+  });
+
+  it("GET /v1/leases/:id answers a lease on a physical device with no mode, on a gateway", async () => {
+    const { app, dispatcher } = buildHarness({
+      registry: {
+        snapshot: {
+          devices: [
+            {
+              driverDeviceId: "00008110-001A2B3C4D5E",
+              id: "dev_phys",
+              spec: { model: "iPhone 15 Pro", osVersion: "18.4", platform: "ios" },
+              workerId: "wrk_a",
+            },
+          ],
+        },
+      },
+    });
+    dispatcher.handlers["lease.list"] = () => ({
+      leases: [
+        {
+          ...makeLease({ deviceId: "dev_phys", id: "wrk_a.lse_p", ownerId: "tok_agent" }),
+          worker: { id: "wrk_a" },
+          workerId: "wrk_a",
+        },
+      ],
+    });
+
+    const response = await app.request("/v1/leases/wrk_a.lse_p", { headers: agentAuth });
+
+    expect(response.status).toBe(200);
+    const { lease } = (await response.json()) as { lease: Record<string, unknown> };
+    expect(lease).toMatchObject({ deviceId: "dev_phys", udid: "00008110-001A2B3C4D5E" });
+    expect(lease).not.toHaveProperty("mode");
+  });
+
   it("404s an unknown lease id", async () => {
     const { app } = buildHarness();
     const response = await app.request("/v1/leases/lse-missing", { headers: agentAuth });

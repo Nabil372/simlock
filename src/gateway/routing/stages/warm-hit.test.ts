@@ -29,6 +29,33 @@ describe("warm-hit", () => {
     expect(warmHit.score(view("ready"), request)).toBe(1);
   });
 
+  it("scores 0 for a worker whose only ready device that fits the request is physical", () => {
+    const physical = {
+      class: "phone" as const,
+      id: "dev_p",
+      physical: true,
+      // Everything else about it would make it a warm hit: it is the one thing that does not.
+      servesDefaultMode: true,
+      spec: { model: "iPhone 17", osVersion: "26.0", physical: true, platform: "ios" as const },
+      state: "ready" as const,
+    };
+    const view = (devices: NonNullable<WorkerView["devices"]>): WorkerView => ({
+      capacity: statusFixture().capacity,
+      catalog: catalogFixture([{ models: ["iPhone 17"], platform: "ios", runtimes: ["26.0"] }])
+        .platforms,
+      connection: "connected",
+      devices,
+      drained: false,
+      id: "wrk_a",
+      lastSeenAt: 1,
+      leases: [],
+    });
+    const request = { model: "iPhone 17", platform: "ios" as const };
+
+    expect(warmHit.score(view([physical]), request)).toBe(0);
+    expect(warmHit.score(view([physical, deviceFixture("dev_v", "ready")]), request)).toBe(1);
+  });
+
   it("counts no device as warm on a worker whose devices were never read", () => {
     const unread: WorkerView = {
       capacity: statusFixture().capacity,
@@ -119,6 +146,7 @@ describe("warm-hit", () => {
       leases: [],
     });
     const request = {
+      physical: false,
       model: "iPhone 17",
       osVersion: "26.0",
       platform: "ios" as const,
@@ -143,7 +171,12 @@ describe("warm-hit", () => {
       lastSeenAt: 1,
       leases: [],
     });
-    const request = { model: "iPhone 17", osVersion: "26.0", platform: "ios" as const };
+    const request = {
+      physical: false,
+      model: "iPhone 17",
+      osVersion: "26.0",
+      platform: "ios" as const,
+    };
 
     it("does not count a slim device as warm for a full request, nor a full device for a slim one", () => {
       expect(

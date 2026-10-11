@@ -5,20 +5,24 @@
  * registry below maps a policy name to its list. Stages are code: no config key lists or orders
  * them. Nothing outside this module decides how a worker is chosen.
  */
-import { type RoutableRequest, type RoutingStage, runStages } from "./routing/pipeline.js";
-import { type Assessment, assess } from "./routing/serviceability.js";
-import { canServe } from "./routing/stages/can-serve.js";
-import { freeCapacity } from "./routing/stages/free-capacity.js";
-import { freeSlot } from "./routing/stages/free-slot.js";
-import { healthy } from "./routing/stages/healthy.js";
-import { idleQueue } from "./routing/stages/idle-queue.js";
-import { ramBudget } from "./routing/stages/ram-budget.js";
-import { takesRequests } from "./routing/stages/takes-requests.js";
-import { warmHit } from "./routing/stages/warm-hit.js";
+import {
+  type Assessment,
+  assess,
+  canServe,
+  freeCapacity,
+  freeSlot,
+  healthy,
+  idleQueue,
+  ramBudget,
+  type RoutableRequest,
+  type RoutingStage,
+  runStages,
+  takesRequests,
+  warmHit,
+} from "./routing/index.js";
 import type { WorkerView } from "./worker-registry.js";
 
-export type { RoutableRequest } from "./routing/pipeline.js";
-export { matchRequest } from "./routing/request-match.js";
+export { matchRequest, type RoutableRequest } from "./routing/index.js";
 
 export type RoutingReason = "warm-hit" | "free-capacity";
 

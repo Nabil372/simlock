@@ -211,7 +211,11 @@ describe("component.install input", () => {
 
 describe("lease.request osVersion", () => {
   const parse = (osVersion: string) =>
-    OPERATIONS["lease.request"].input.safeParse({ model: "iPhone 17", osVersion, platform: "ios" });
+    OPERATIONS["lease.request"].input.safeParse({
+      model: "iPhone 17",
+      osVersion,
+      platform: "ios",
+    });
 
   it.each([["18.4"], ["Baklava"], ["34-ext12"], [">=18"], [">=18 <26"], ["18 - 26"]])(
     "accepts %s",
@@ -328,7 +332,11 @@ describe("operation input/output round trips", () => {
       platform: "ios",
       osVersion: "18.0",
     });
-    expect(input).toMatchObject({ model: "iPhone 17 Pro", platform: "ios", osVersion: "18.0" });
+    expect(input).toMatchObject({
+      model: "iPhone 17 Pro",
+      platform: "ios",
+      osVersion: "18.0",
+    });
 
     expect(() =>
       OPERATIONS["lease.request"].input.parse({ device: "iPhone 17 Pro", platform: "ios" }),
@@ -386,9 +394,10 @@ describe("operation input/output round trips", () => {
   it("lease.request: round-trips a representative output grant", () => {
     const grant = {
       device: {
+        physical: false,
         id: "dev_1",
         driverDeviceId: "sim-1",
-        spec: { platform: "ios", model: "iPhone 17 Pro", osVersion: "18.0" },
+        spec: { physical: false, platform: "ios", model: "iPhone 17 Pro", osVersion: "18.0" },
         mode: "full",
         state: "leased",
         driverData: { udid: "abc" },
@@ -711,8 +720,9 @@ describe("operation input/output round trips", () => {
     const parsed = OPERATIONS["status.get"].output.parse({
       devices: [
         {
+          physical: false,
           id: "dev_1",
-          spec: { platform: "ios", model: "iPhone 17", osVersion: "26.0" },
+          spec: { physical: false, platform: "ios", model: "iPhone 17", osVersion: "26.0" },
           mode: "full",
           servesDefaultMode: true,
           state: "leased",
@@ -1085,7 +1095,13 @@ describe("operation input/output round trips", () => {
 
   it("config.get: keeps every warm target key and rejects a target with a platform or a mode the config loader would not accept", () => {
     const targets = [
-      { count: 2, mode: "slim", model: "iPhone 17", osVersion: ">=18", platform: "ios" },
+      {
+        count: 2,
+        mode: "slim",
+        model: "iPhone 17",
+        osVersion: ">=18",
+        platform: "ios",
+      },
       { count: 1, mode: "full", model: "Pixel 9", platform: "android" },
     ];
     const warmPool = { targets, maxConcurrentBoots: 3 };

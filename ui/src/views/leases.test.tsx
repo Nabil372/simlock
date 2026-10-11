@@ -44,10 +44,17 @@ const HOST: WorkerView = {
   connection: "connected",
   devices: [
     {
+      physical: false,
       id: "dev_1",
       mode: "slim",
       servesDefaultMode: false,
-      spec: { imageTag: "base", model: "iPhone 16", osVersion: "18.4", platform: "ios" },
+      spec: {
+        physical: false,
+        imageTag: "base",
+        model: "iPhone 16",
+        osVersion: "18.4",
+        platform: "ios",
+      },
       state: "leased",
     },
   ],
@@ -115,6 +122,54 @@ describe("the leases views", () => {
     expect(cells(html, "Granted")).toEqual(["1 min 30 s ago"]);
     expect(cells(html, "Expires in")).toEqual(["2 min 5 s"]);
     expect(cells(html, "Last renewed")).toEqual(["30 s ago"]);
+  });
+
+  it("a lease on a physical device shows a dash in the table's Mode cell and an empty Mode fact on its page", () => {
+    const physical: WorkerView = {
+      ...HOST,
+      devices: [
+        {
+          class: "phone",
+          id: "dev_p",
+          physical: true,
+          servesDefaultMode: false,
+          spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+          state: "leased",
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <LeaseTable
+        leases={[lease({ deviceId: "dev_p" })]}
+        tokens={[token()]}
+        workers={[physical]}
+        now={NOW}
+        showWorker
+        label="All leases"
+      />,
+    );
+    const details: LeaseDetails = {
+      createdAt: new Date(NOW - 90_000).toISOString(),
+      device: "iPhone 15 Pro",
+      deviceId: "dev_p",
+      expiresAt: new Date(NOW + 125_000).toISOString(),
+      id: "lse_1",
+      udid: "00008110-001A2B3C4D5E",
+    };
+    const facts = text(
+      renderToStaticMarkup(
+        <LeaseFacts
+          lease={details}
+          record={lease()}
+          tokens={[token()]}
+          workers={[physical]}
+          now={NOW}
+        />,
+      ),
+    );
+
+    expect(cells(html, "Mode")).toEqual(["—"]);
+    expect(facts).toContain("UDID 00008110-001A2B3C4D5E Mode Image tag");
   });
 
   it("no leases shows as one line saying so", () => {

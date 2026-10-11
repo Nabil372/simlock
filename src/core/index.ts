@@ -18,7 +18,10 @@ export {
   type DeviceSpec,
   type LeaseRecord,
   type LeaseRequestFailure,
+  type PhysicalClass,
   type Platform,
+  type VirtualDevice,
+  type VirtualSpec,
   IllegalTransition,
   transition,
   transitionEnteredAt,
@@ -31,8 +34,7 @@ export {
   type CapacityReservation,
   plannedCapacityDevice,
 } from "./capacity/index.js";
-export { type CleanupRule, type RegistryView } from "./cleanup/types.js";
-export { automaticCleanupRules } from "./cleanup/rules.js";
+export { automaticCleanupRules, type CleanupRule, type RegistryView } from "./cleanup/index.js";
 export { CleanupReaper } from "./reaper.js";
 export {
   BootTimeoutError,
@@ -109,7 +111,7 @@ export {
   type WarmPoolReader,
 } from "./core-ports.js";
 export { findCatalogModel, modelClass, pairedRuntimes } from "./catalog-match.js";
-export { type DeviceRequirement, fits, type LeaseGrant } from "./domain.js";
+export { type DeviceRequirement, type FittableSpec, fits, type LeaseGrant } from "./domain.js";
 export {
   type DriverCatalogImage,
   type MissingPrerequisite,

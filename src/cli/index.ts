@@ -2390,7 +2390,7 @@ function formatStatus(status: StatusGetOutput, now: number): string {
     ].filter((marker) => marker !== undefined);
     const suffix = markers.length === 0 ? "" : ` (${markers.join(", ")})`;
     const where = device.workerId === undefined ? "" : ` on ${device.workerId}`;
-    return `Device ${device.id}${where}: ${device.state}, mode ${device.mode}, serves default mode: ${device.servesDefaultMode ? "yes" : "no"}${suffix}`;
+    return `Device ${device.id}${where}: ${device.state}, ${deviceKind(device)}${suffix}`;
   });
   // ADR 0004: `lastRenewedAt` is a stored field written at grant and on every renew, so unlike
   // the derived `lastHeartbeatAt` it replaces, every lease has one to render.
@@ -2412,6 +2412,12 @@ function formatStatus(status: StatusGetOutput, now: number): string {
     ...(installs ?? []).map((install) => formatInstall(install, now)),
     `Queue depth: ${queueDepth}`,
   ].join("\n");
+}
+
+/** What a device line says it is: a physical device's class, or a virtual one's mode and pool. */
+function deviceKind(device: NonNullable<StatusGetOutput["devices"]>[number]): string {
+  if (device.physical) return `physical ${String(device.class)}`;
+  return `mode ${String(device.mode)}, serves default mode: ${device.servesDefaultMode ? "yes" : "no"}`;
 }
 
 /** The warm pool as `status` prints it: the switch and reserve, then a line per target. */

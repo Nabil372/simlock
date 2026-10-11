@@ -9,7 +9,6 @@ import {
   type DeviceClass,
   type DeviceRecord,
   type DeviceRequirement,
-  type DeviceSpec,
   exactRequirement,
   fits,
   type LeaseRecord,
@@ -19,10 +18,15 @@ import {
   selectIdleRunningVictim,
   selectManagedVictim,
   type IdleVictimScope,
+  type VirtualDevice,
+  type VirtualSpec,
 } from "../core/index.js";
 
 export interface AcquisitionPlannerSnapshot {
+  /** Every device: the ready grant reads them all, and `fits` refuses a physical one. */
   readonly devices: readonly DeviceRecord[];
+  /** The virtual read: everything that boots, evicts or counts toward a limit reads this. */
+  readonly virtualDevices: readonly VirtualDevice[];
   readonly leases: readonly LeaseRecord[];
 }
 
@@ -33,7 +37,7 @@ export interface AcquisitionPlannerInput {
   readonly owner?: string | undefined;
   readonly snapshot: AcquisitionPlannerSnapshot;
   /** The spec a new device would have, and so the pool mode an idle device must be in. */
-  readonly spec: DeviceSpec;
+  readonly spec: VirtualSpec;
   /**
    * What an idle device must satisfy besides its pool mode (ADR 0015 §5). Absent, the request is
    * exact and the requirement is `spec`'s own model, OS and image tag.
@@ -49,18 +53,18 @@ export type AcquisitionPlan =
       readonly kind: "boot-shutdown";
       readonly capacityReservation: CapacityReservation;
       readonly claim: DeviceOperationClaim;
-      readonly device: DeviceRecord;
+      readonly device: VirtualDevice;
     }
   | { readonly kind: "provision"; readonly reservation: CapacityReservation }
   | {
       readonly kind: "evict-running";
       readonly claim: DeviceOperationClaim;
-      readonly device: DeviceRecord;
+      readonly device: VirtualDevice;
     }
   | {
       readonly kind: "evict-managed";
       readonly claim: DeviceOperationClaim;
-      readonly device: DeviceRecord;
+      readonly device: VirtualDevice;
     }
   | { readonly kind: "wait" }
   | { readonly kind: "no-capacity" };
@@ -96,13 +100,16 @@ export class AcquisitionPlanner {
     // request when it is ready: waiting for it costs less than starting a second. A device
     // another request is booting or creating is its own, so it is left alone. Under `noWait`
     // the case is ignored and the request plans as it always did.
-    if (!input.noWait && snapshot.devices.some((device) => this.#isOnItsWay(device, serves))) {
+    if (
+      !input.noWait &&
+      snapshot.virtualDevices.some((device) => this.#isOnItsWay(device, serves))
+    ) {
       return { kind: "wait" };
     }
 
     // A spent fresh device sits `shutdown` between its lease-end shutdown commit and its
     // delete; `mayBeGranted` is what keeps it from being booted for a new lease in that window.
-    const shutdown = snapshot.devices.find(
+    const shutdown = snapshot.virtualDevices.find(
       (device) => device.state === "shutdown" && servesRequest(device),
     );
     if (shutdown !== undefined) return this.#planShutdownBoot(input, shutdown);
@@ -110,17 +117,17 @@ export class AcquisitionPlanner {
     return this.#planProvision(input);
   }
 
-  #isOnItsWay(device: DeviceRecord, serves: (device: DeviceRecord) => boolean): boolean {
+  #isOnItsWay(device: VirtualDevice, serves: (device: DeviceRecord) => boolean): boolean {
     if (device.state !== "provisioning" && device.state !== "shutdown") return false;
     const claim = this.claims.claim(device.id);
     return claim?.kind === "boot" && claim.owner === undefined && serves(device);
   }
 
-  #planShutdownBoot(input: AcquisitionPlannerInput, device: DeviceRecord): AcquisitionPlan {
+  #planShutdownBoot(input: AcquisitionPlannerInput, device: VirtualDevice): AcquisitionPlan {
     // A boot refused for RAM evicts nothing: freeing a running slot frees no RAM.
     const running = this.capacity.tryReserveBoot(
       capacityDevice(device),
-      capacityDevices(input.snapshot.devices),
+      capacityDevices(input.snapshot.virtualDevices),
     );
     if (!running.ok) {
       const victim = this.#runningVictim(input.snapshot, running.reason, input.spec.platform);
@@ -140,7 +147,7 @@ export class AcquisitionPlanner {
   #planProvision(input: AcquisitionPlannerInput): AcquisitionPlan {
     const reservation = this.capacity.tryReserveProvisioning(
       plannedCapacityDevice(input.spec),
-      capacityDevices(input.snapshot.devices),
+      capacityDevices(input.snapshot.virtualDevices),
     );
     if (reservation.ok) {
       if (input.failures < 2) return { kind: "provision", reservation: reservation.reservation };
@@ -160,12 +167,12 @@ export class AcquisitionPlanner {
     return victim === undefined ? blocked(input.noWait) : this.#claimEviction(victim, input.noWait);
   }
 
-  #claimManagedEviction(device: DeviceRecord, noWait: boolean): AcquisitionPlan {
+  #claimManagedEviction(device: VirtualDevice, noWait: boolean): AcquisitionPlan {
     const claim = this.claims.tryClaim(device.id, "eviction");
     return claim === undefined ? blocked(noWait) : { claim, device, kind: "evict-managed" };
   }
 
-  #claimEviction(device: DeviceRecord, noWait: boolean): AcquisitionPlan {
+  #claimEviction(device: VirtualDevice, noWait: boolean): AcquisitionPlan {
     const claim = this.claims.tryClaim(device.id, "eviction");
     return claim === undefined ? blocked(noWait) : { claim, device, kind: "evict-running" };
   }
@@ -174,9 +181,9 @@ export class AcquisitionPlanner {
     snapshot: AcquisitionPlannerSnapshot,
     reason: "device-limit" | "ram-budget" | "global-running-limit" | "platform-running-limit",
     platform: Platform,
-  ): DeviceRecord | undefined {
+  ): VirtualDevice | undefined {
     if (reason !== "global-running-limit" && reason !== "platform-running-limit") return undefined;
-    const capacity = this.capacity.runningCapacity(capacityDevices(snapshot.devices));
+    const capacity = this.capacity.runningCapacity(capacityDevices(snapshot.virtualDevices));
     const platformBlocked =
       capacity[platform].running + capacity[platform].reserved >= capacity[platform].maxRunning;
     const scope: IdleVictimScope = platformBlocked
@@ -185,9 +192,9 @@ export class AcquisitionPlanner {
     return selectIdleRunningVictim(this.#eligibleEvictionDevices(snapshot), scope);
   }
 
-  #eligibleEvictionDevices(snapshot: AcquisitionPlannerSnapshot): readonly DeviceRecord[] {
+  #eligibleEvictionDevices(snapshot: AcquisitionPlannerSnapshot): readonly VirtualDevice[] {
     const leased = new Set(snapshot.leases.map((lease) => lease.deviceId));
-    return snapshot.devices.filter(
+    return snapshot.virtualDevices.filter(
       (device) => !leased.has(device.id) && !this.claims.isClaimed(device.id),
     );
   }

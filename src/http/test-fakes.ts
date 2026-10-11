@@ -4,6 +4,7 @@ import {
   type LeaseRecord,
   SerializedDecision,
   type LeaseGrant,
+  type VirtualDevice,
 } from "../core/index.js";
 import {
   InMemoryLeaseRequestStore,
@@ -108,14 +109,15 @@ export function sequenceIdGenerator(prefix = "id"): IdGenerator {
   };
 }
 
-export function makeDevice(overrides: Partial<DeviceRecord> = {}): DeviceRecord {
+export function makeDevice(overrides: Partial<VirtualDevice> = {}): VirtualDevice {
   return {
     createdAt: 0,
     driverData: undefined,
     driverDeviceId: "ABCD-1234",
     id: "dev_1",
-    spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
     mode: "full",
+    physical: false,
+    spec: { model: "iPhone 17 Pro", osVersion: "26.5", physical: false, platform: "ios" },
     state: "leased",
     ...overrides,
   };
@@ -138,7 +140,7 @@ export function makeLease(overrides: Partial<LeaseRecord> = {}): LeaseRecord {
 
 export function makeGrant(
   overrides: {
-    readonly device?: Partial<DeviceRecord>;
+    readonly device?: Partial<VirtualDevice>;
     readonly lease?: Partial<LeaseRecord>;
   } = {},
 ): LeaseGrant {
@@ -303,8 +305,14 @@ export class FakeRegistry {
     readonly devices: readonly DeviceRecord[];
     readonly leases: readonly LeaseRecord[];
     readonly components: readonly [];
+    readonly virtualDevices: readonly VirtualDevice[];
   } {
-    return { components: [], devices: this.devices, leases: this.leases };
+    return {
+      components: [],
+      devices: this.devices,
+      leases: this.leases,
+      virtualDevices: this.devices.filter((device): device is VirtualDevice => !device.physical),
+    };
   }
 }
 

@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { CapacityRefusalReason, RunningCapacity } from "../capacity/index.js";
 import type {
   DeviceClass,
-  DeviceRecord,
-  DeviceSpec,
+  VirtualDevice,
+  VirtualSpec,
   LeaseRecord,
   WaitingDemand,
 } from "../domain.js";
@@ -26,22 +26,23 @@ const phones = new Set(["iPhone 15", "iPhone 17"]);
 const classOf = (model: string): DeviceClass | undefined =>
   phones.has(model) ? "phone" : "tablet";
 
-function spec(model: string, overrides: Partial<DeviceSpec> = {}): DeviceSpec {
-  return { model, osVersion: "26.0", platform: "ios", ...overrides };
+function spec(model: string, overrides: Partial<VirtualSpec> = {}): VirtualSpec {
+  return { model, osVersion: "26.0", physical: false, platform: "ios", ...overrides };
 }
 
 function device(
   id: string,
-  state: DeviceRecord["state"],
+  state: VirtualDevice["state"],
   options: {
-    spec?: DeviceSpec;
+    spec?: VirtualSpec;
     endedAgo?: number;
     createdAt?: number;
     readyAt?: number;
     leaseIdentity?: "fresh";
   } = {},
-): DeviceRecord {
+): VirtualDevice {
   return {
+    physical: false,
     createdAt: options.createdAt ?? 1,
     ...(options.readyAt === undefined ? {} : { readyAt: options.readyAt }),
     ...(options.leaseIdentity === undefined ? {} : { leaseIdentity: options.leaseIdentity }),
@@ -55,7 +56,7 @@ function device(
   };
 }
 
-function leaseOn(target: DeviceRecord): LeaseRecord {
+function leaseOn(target: VirtualDevice): LeaseRecord {
   return {
     deviceId: target.id,
     grantedAt: 1,
@@ -70,7 +71,7 @@ function leaseOn(target: DeviceRecord): LeaseRecord {
 }
 
 function capacityOf(
-  devices: readonly DeviceRecord[],
+  devices: readonly VirtualDevice[],
   limits: { global: number; ios?: number; android?: number },
   reserved = 0,
 ): RunningCapacity {
@@ -129,7 +130,7 @@ function modelDemand(model: string): WaitingDemand {
 
 // fallow-ignore-next-line complexity -- one test fixture builder; each option is a plain pass-through to a view field.
 function view(
-  devices: readonly DeviceRecord[],
+  devices: readonly VirtualDevice[],
   options: {
     limit?: number;
     limits?: { ios?: number; android?: number };
@@ -138,14 +139,14 @@ function view(
     waiting?: readonly WaitingDemand[];
     enabled?: boolean;
     claimed?: readonly string[];
-    leased?: readonly DeviceRecord[];
+    leased?: readonly VirtualDevice[];
     handoffInFlight?: boolean;
     reset?: readonly string[];
     targets?: readonly ResolvedTarget[];
     spared?: readonly ResolvedTarget[];
-    inFlight?: readonly DeviceSpec[];
+    inFlight?: readonly VirtualSpec[];
     maxConcurrentBoots?: number;
-    blocked?: readonly DeviceSpec[];
+    blocked?: readonly VirtualSpec[];
     refuseProvision?: CapacityRefusalReason;
     refuseBoot?: CapacityRefusalReason;
   } = {},
@@ -289,7 +290,7 @@ describe("warm pool policy", () => {
     const ready = device("ready", "ready", { endedAgo: 1_000 });
     const android = device("android", "ready", {
       endedAgo: 2_000,
-      spec: { model: "Pixel 8", osVersion: "35", platform: "android" },
+      spec: { physical: false, model: "Pixel 8", osVersion: "35", platform: "android" },
     });
     const leased = device("leased", "leased");
     const shutdown = device("shutdown", "shutdown", { endedAgo: 1_000 });
@@ -417,7 +418,7 @@ describe("warm pool policy", () => {
     const android = (id: string, endedAgo: number) =>
       device(id, "ready", {
         endedAgo,
-        spec: { model: "Pixel 8", osVersion: "35", platform: "android" },
+        spec: { physical: false, model: "Pixel 8", osVersion: "35", platform: "android" },
       });
     const oldestAndroid = android("android-old", 90 * minute);
     const newerAndroid = android("android-new", 5 * minute);
@@ -532,7 +533,7 @@ describe("warm pool policy", () => {
   it("proposes no shutdown at exactly the budget, globally or on either platform", () => {
     const android = device("android", "ready", {
       endedAgo: 1_000,
-      spec: { model: "Pixel 8", osVersion: "35", platform: "android" },
+      spec: { physical: false, model: "Pixel 8", osVersion: "35", platform: "android" },
     });
     const ios = device("ios", "ready", { endedAgo: 2_000 });
     const devices = [android, ios];
@@ -552,7 +553,7 @@ describe("warm pool policy", () => {
   it("proposes no boot at the budget, and none for a claimed, leased or spent device", () => {
     const busy = device("busy", "leased");
     const claimed = device("claimed", "shutdown", { endedAgo: 1_000 });
-    const spent: DeviceRecord = {
+    const spent: VirtualDevice = {
       ...device("spent", "shutdown", { endedAgo: 1_000 }),
       leaseIdentity: "fresh",
     };
@@ -566,11 +567,11 @@ describe("warm pool policy", () => {
 
   it("proposes a boot only where its platform has room", () => {
     const androidBusy = device("busy", "leased", {
-      spec: { model: "Pixel 8", osVersion: "35", platform: "android" },
+      spec: { physical: false, model: "Pixel 8", osVersion: "35", platform: "android" },
     });
     const androidShut = device("android-shut", "shutdown", {
       endedAgo: 1_000,
-      spec: { model: "Pixel 8", osVersion: "35", platform: "android" },
+      spec: { physical: false, model: "Pixel 8", osVersion: "35", platform: "android" },
     });
     const iosShut = device("ios-shut", "shutdown", { endedAgo: 2_000 });
     const devices = [androidBusy, androidShut, iosShut];
@@ -586,7 +587,7 @@ describe("warm pool policy", () => {
   });
 
   describe("reserveRunning", () => {
-    const idleIos = (count: number): DeviceRecord[] =>
+    const idleIos = (count: number): VirtualDevice[] =>
       Array.from({ length: count }, (_, index) =>
         device(`ios-${index}`, "ready", { endedAgo: (index + 1) * minute }),
       );
@@ -603,7 +604,7 @@ describe("warm pool policy", () => {
 
     it("takes the sum of the platform reserves off the global budget", () => {
       const androidSpec = spec("Pixel 9", { osVersion: "36", platform: "android" });
-      const idle = (count: number): DeviceRecord[] => [
+      const idle = (count: number): VirtualDevice[] => [
         ...idleIos(count - 1),
         device("android-0", "ready", { endedAgo: minute, spec: androidSpec }),
       ];
@@ -682,11 +683,11 @@ describe("warm pool policy", () => {
   });
   describe("targets", () => {
     const kind = spec("iPhone 17");
-    const target = (count: number, overrides: Partial<DeviceSpec> = {}): ResolvedTarget => ({
+    const target = (count: number, overrides: Partial<VirtualSpec> = {}): ResolvedTarget => ({
       count,
       spec: { ...kind, ...overrides },
     });
-    const ofKind = (id: string, state: DeviceRecord["state"], extra = {}): DeviceRecord =>
+    const ofKind = (id: string, state: VirtualDevice["state"], extra = {}): VirtualDevice =>
       device(id, state, { spec: kind, ...extra });
 
     it("with a target of two, one ready device of its kind and a shut-down one, proposes one boot of the shut-down one", () => {
@@ -862,7 +863,12 @@ describe("warm pool policy", () => {
         {
           booting: 0,
           count: 1,
-          kind: { mode: "full", model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+          kind: {
+            mode: "full",
+            model: "iPhone 17",
+            osVersion: "26.0",
+            platform: "ios",
+          },
           ready: 0,
           short: "running-limit",
           spec: kind,
@@ -908,7 +914,12 @@ describe("warm pool policy", () => {
         {
           booting: 0,
           count: 1,
-          kind: { mode: "full", model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+          kind: {
+            mode: "full",
+            model: "iPhone 17",
+            osVersion: "26.0",
+            platform: "ios",
+          },
           ready: 1,
           spec: kind,
           target: "ios iPhone 17 26.0",
@@ -1045,7 +1056,12 @@ describe("warm pool policy", () => {
         {
           booting: 0,
           count: 1,
-          kind: { mode: "full", model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+          kind: {
+            mode: "full",
+            model: "iPhone 17",
+            osVersion: "26.0",
+            platform: "ios",
+          },
           ready: 1,
           spec: kind,
           target: "ios iPhone 17 26.0",
@@ -1075,7 +1091,12 @@ describe("warm pool policy", () => {
       expect(result.targets[0]).toStrictEqual({
         booting: 1,
         count: 2,
-        kind: { mode: "full", model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+        kind: {
+          mode: "full",
+          model: "iPhone 17",
+          osVersion: "26.0",
+          platform: "ios",
+        },
         ready: 0,
         spec: kind,
         target: "ios iPhone 17 26.0",
@@ -1257,7 +1278,7 @@ describe("warm pool policy", () => {
     });
 
     describe("targetedDevices", () => {
-      const input = (devices: readonly DeviceRecord[], targets: readonly ResolvedTarget[]) => ({
+      const input = (devices: readonly VirtualDevice[], targets: readonly ResolvedTarget[]) => ({
         devices,
         isClaimed: (id: string) => id === "claimed",
         leases: devices.filter((item) => item.state === "leased").map(leaseOn),

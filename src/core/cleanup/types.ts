@@ -1,11 +1,11 @@
 import type { Config } from "../config.js";
-import type { DeviceRecord, LeaseRecord } from "../domain.js";
+import type { VirtualDevice, LeaseRecord } from "../domain.js";
 
 export type CleanupAction = "shutdown" | "destroy";
 
 export interface RegistryView {
   readonly config: Config;
-  readonly devices: readonly DeviceRecord[];
+  readonly devices: readonly VirtualDevice[];
   readonly diskFreeBytes: number;
   readonly leases: readonly LeaseRecord[];
   readonly now: number;

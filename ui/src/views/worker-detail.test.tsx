@@ -43,10 +43,11 @@ const RUNNING: WorkerView = {
   connection: "connected",
   devices: [
     {
+      physical: false,
       id: "dev_1",
       mode: "full",
       servesDefaultMode: true,
-      spec: { model: "iPhone 17", osVersion: "26.0", platform: "ios" },
+      spec: { physical: false, model: "iPhone 17", osVersion: "26.0", platform: "ios" },
       state: "ready",
     },
   ],

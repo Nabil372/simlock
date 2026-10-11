@@ -1,5 +1,5 @@
 import type { Clock } from "../ports/index.js";
-import type { DeviceClass, DeviceMode, DeviceSpec, Platform } from "./domain.js";
+import type { DeviceClass, DeviceMode, DeviceSpec, Platform, VirtualSpec } from "./domain.js";
 import {
   type ComponentInstallProgress,
   type ComponentInstallResult,
@@ -248,7 +248,7 @@ export class FakeDriver implements Driver {
   }
 
   /** Never installs: a version that is not available throws, naming it as the component. */
-  async resolveSpec(request: ExactDeviceRequest): Promise<DeviceSpec> {
+  async resolveSpec(request: ExactDeviceRequest): Promise<VirtualSpec> {
     await this.#beforeCall("resolveSpec", request);
     this.#assertMatchingPlatform(request.platform);
 
@@ -264,6 +264,7 @@ export class FakeDriver implements Driver {
     return {
       model: request.model,
       osVersion,
+      physical: false,
       platform: this.platform,
       ...(request.imageTag === undefined ? {} : { imageTag: request.imageTag }),
       ...(request.mode === "slim" && this.#slimmableOsVersions.has(osVersion)
@@ -419,7 +420,7 @@ export class FakeDriver implements Driver {
     });
   }
 
-  async provision(spec: DeviceSpec): Promise<DriverDevice> {
+  async provision(spec: VirtualSpec): Promise<DriverDevice> {
     await this.#beforeCall("provision", spec);
     this.#assertMatchingPlatform(spec.platform);
 

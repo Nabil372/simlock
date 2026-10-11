@@ -66,10 +66,13 @@ that cannot be slimmed (an iOS runtime older than 18.5, or any Android
 device) is granted `"full"`, and a `"full"` request is never granted
 `"slim"`. A slim device lacks some system features — push notifications,
 Spotlight, StoreKit sheets, universal links, system pickers — so check it
-before treating such a failure as a bug. Every device in `getStatus()` and in
+before treating such a failure as a bug. Every virtual device in `getStatus()` and in
 an admin's `list({ kind: "devices" })` carries the same `mode`, and
 `servesDefaultMode`: `true` when a request with no `mode` would draw from the
-device's pool on that daemon (the default mode of the device's platform).
+device's pool on that daemon (the default mode of the device's platform). Every
+device also carries `physical`: `false` for a simulator or emulator, `true` for a
+real phone or tablet. A physical device has a `class` (`"phone"` or `"tablet"`)
+and no `mode`, and a lease on one has no `mode` either.
 
 On Android, `requestLease` also takes an optional `imageTag`: the system image
 type to create the device from, such as `"google_apis_playstore"`, as

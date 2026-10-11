@@ -150,15 +150,17 @@ misbehaving.
 of readiness-checking it back into circulation. The reclaim coordinator
 (`ReclaimCoordinator`), which runs the purge after a release, hands the
 failed device to quarantine with the strategy it attempted. `quarantined` is a shared
-"present in the registry, counts against running capacity, not grantable"
-disposition (see `docs/internal/ARCHITECTURE.md`, "Quarantine: present but not
+"present in the registry, not grantable" disposition; a quarantined virtual
+device counts against running capacity, and a quarantined physical device never
+does (see `docs/internal/ARCHITECTURE.md`, "Quarantine: present but not
 grantable") — `AcquisitionPlanner` and the idle-order eviction helpers select
 targets by exact state, so a quarantined device is simply invisible to every
 grant path with no special-casing required. `QuarantineCoordinator` retries
-the purge on a `Clock`-driven backoff (`warmPool.quarantine.{maxRetries,
+the purge of a virtual device on a `Clock`-driven backoff (`warmPool.quarantine.{maxRetries,
 retryBackoffMs,retryBackoffMultiplier,maxRetryBackoffMs}`); a successful
 retry returns the device to the warm pool, and exhausting the retry budget
-destroys it (registry-only, as always). The device stays visible as
+destroys it (registry-only, as always). A quarantined physical device gets no
+retry yet: it stays quarantined. The device stays visible as
 `quarantined` in `simlock status` and `simlock list --devices` throughout.
 `device.purge-failed` still fires as before; `device.quarantined`,
 `device.quarantine-recovered`, and `device.quarantine-abandoned` are the new
@@ -1154,3 +1156,23 @@ never boot is retried after 1, 2, 4 and so on minutes, at most 10 apart, for
 as long as the daemon runs. There is no attempt limit; each try boots the
 target's shut-down device of that kind, or, when it has none, creates a device
 and deletes it again. `retry.ts` is the one place to add a limit.
+
+## An older Simlock cannot end a lease on a physical device (ADR 0022 §1)
+
+A physical device's record is in its own list in `state.json`, `physicalDevices`,
+which an older Simlock keeps as an unknown key and never loads. A lease on a
+physical device is in the `leases` list, which it does load, so it keeps that
+lease and its startup reconciler skips it, because it holds no such device.
+
+**The pitfall:** the older Simlock cannot end that lease. Its expiry, `release`,
+`release --all` and `nuke` all go through `beginRelease`, which throws
+`UnknownDeviceError` when the lease's device is not in `devices`. The lease stays
+in the file, and the device it names is not one that daemon can reach.
+
+**Why it is accepted:** a rollback after physical devices were enrolled is rare,
+and the record is safe: the older Simlock never sees the device, so it cannot
+treat a phone as a simulator.
+
+**What to do before a rollback:** release every lease on a physical device while
+the newer Simlock is still running. No upgrade note says so yet: the release that
+enrols physical devices adds one.

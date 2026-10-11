@@ -154,6 +154,7 @@ function withHttp(config: Config, http: Config["http"] | undefined): Config {
   return http === undefined ? config : { ...config, http };
 }
 
+// fallow-ignore-next-line complexity -- one test harness builder; each option is a plain pass-through to a collaborator.
 async function buildDispatcher(
   overrides: {
     readonly downloadsPolicy?: Config["downloads"]["policy"];
@@ -217,11 +218,16 @@ async function buildDispatcher(
     readonly otherStallDrivers?: readonly FakeDriver[];
     /** Extra leasing options, such as `defaultModes` (a platform's default device mode). */
     readonly engine?: Pick<Parameters<typeof createTestEngine>[0], "defaultModes">;
+    /** A `state.json` the registry loads, for a test that starts from records already on disk. */
+    readonly state?: object;
   } = {},
 ) {
   const clock = overrides.clock ?? new FakeClock(1_000);
   const eventBus = new EventBus(clock);
   const filesystem = new MemoryFilesystem();
+  if (overrides.state !== undefined) {
+    await filesystem.writeFileAtomic("/state.json", JSON.stringify(overrides.state));
+  }
   const registry = await Registry.load({
     clock,
     eventBus,
@@ -846,7 +852,12 @@ describe("Dispatcher: ownership", () => {
     await expect(
       dispatcher.dispatch(
         "lease.request",
-        { model: "iPhone 17 Pro", osVersion: "26.5", owner: "someone-else", platform: "ios" },
+        {
+          model: "iPhone 17 Pro",
+          osVersion: "26.5",
+          owner: "someone-else",
+          platform: "ios",
+        },
         session({ principal: "tok_agent", role: "agent" }),
       ),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -865,7 +876,12 @@ describe("Dispatcher: ownership", () => {
     await expect(
       dispatcher.dispatch(
         "lease.request",
-        { model: "iPhone 17 Pro", osVersion: "26.5", owner: "someone-else", platform: "ios" },
+        {
+          model: "iPhone 17 Pro",
+          osVersion: "26.5",
+          owner: "someone-else",
+          platform: "ios",
+        },
         session({ principal: "tok_operator", role: "admin" }),
       ),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -876,7 +892,12 @@ describe("Dispatcher: ownership", () => {
 
     const grant = await dispatcher.dispatch(
       "lease.request",
-      { model: "iPhone 17 Pro", osVersion: "26.5", owner: "agent-7", platform: "ios" },
+      {
+        model: "iPhone 17 Pro",
+        osVersion: "26.5",
+        owner: "agent-7",
+        platform: "ios",
+      },
       session({ isGatewayUplink: true, principal: "tok_gateway", role: "admin" }),
     );
 
@@ -1277,6 +1298,53 @@ describe("Dispatcher: device mode on every surface", () => {
     expect(status.capacity?.ios).toMatchObject({ running: 1, warm: 0, used: 1 });
   });
 
+  it("status.get and list.get show a physical record with physical, its class and no mode or enrolledApps, and count nothing of it in the capacity figures", async () => {
+    const { dispatcher, engine } = await buildDispatcher({
+      state: {
+        devices: [],
+        leases: [],
+        physicalDevices: [
+          {
+            createdAt: 1,
+            driverData: {},
+            driverDeviceId: "00008110-001A2B3C4D5E",
+            enrolledApps: ["com.example.kept"],
+            id: "dev_phys",
+            physical: true,
+            spec: {
+              class: "tablet",
+              model: "iPad Pro",
+              osVersion: "18.4",
+              physical: true,
+              platform: "ios",
+            },
+            state: "ready",
+          },
+        ],
+      },
+    });
+    await engine.convergeRunningCapacity();
+    const lease = await dispatcher.dispatch("lease.request", request, session());
+
+    const status = await dispatcher.dispatch("status.get", {}, session());
+    const listed = (await dispatcher.dispatch(
+      "list.get",
+      { kind: "devices" },
+      session({ role: "admin" }),
+    )) as { id: string; class?: string; mode?: string; physical: boolean }[];
+
+    for (const devices of [status.devices ?? [], listed]) {
+      const phys = devices.find((device) => device.id === "dev_phys");
+      expect(phys).toMatchObject({ class: "tablet", physical: true, state: "ready" });
+      expect(phys).not.toHaveProperty("mode");
+      expect(phys).not.toHaveProperty("enrolledApps");
+      const simulator = devices.find((device) => device.id === lease.device.id);
+      expect(simulator).toMatchObject({ mode: "full", physical: false });
+      expect(simulator).not.toHaveProperty("class");
+    }
+    expect(status.capacity?.ios).toMatchObject({ running: 1, used: 1, warm: 0 });
+  });
+
   it("status.get carries the warm pool's figures: the reserve, and a target the pass could not meet with its reason", async () => {
     const { dispatcher, engine } = await buildDispatcher({
       warmPool: {
@@ -1355,7 +1423,7 @@ describe("Dispatcher: device mode on every surface", () => {
       driverData: {},
       driverDeviceId: "driver-provisioning",
       provisionDuration: 0,
-      spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+      spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
     });
 
     const status = await dispatcher.dispatch("status.get", {}, session());
@@ -1390,6 +1458,7 @@ describe("Dispatcher: device mode on every surface", () => {
           driverDeviceId,
           provisionDuration: 0,
           spec: {
+            physical: false,
             model: "iPhone 17 Pro",
             osVersion: "26.5",
             platform: "ios",
@@ -1425,7 +1494,7 @@ describe("Dispatcher: device mode on every surface", () => {
         driverData: {},
         driverDeviceId,
         provisionDuration: 0,
-        spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+        spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
       });
     const stuck = await register("driver-stuck");
     // The fake driver estimates 0, so the threshold is the 60 s floor. The stuck device is past
@@ -1465,7 +1534,7 @@ describe("Dispatcher: device mode on every surface", () => {
       driverData: {},
       driverDeviceId: "driver-booting",
       provisionDuration: 0,
-      spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+      spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
     });
     clock.advance(60_001);
     const stalled = async () =>
@@ -1491,7 +1560,7 @@ describe("Dispatcher: device mode on every surface", () => {
       driverData: {},
       driverDeviceId: "driver-ios-stuck",
       provisionDuration: 0,
-      spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+      spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
     });
     clock.advance(60_001);
 
@@ -1594,7 +1663,12 @@ describe("Dispatcher: image tags", () => {
       await buildDispatcher({ driverOptions: androidImages })
     ).dispatcher.dispatch(
       "lease.request",
-      { model: "Pixel 8", osVersion: "34", platform: "android", requesterId: "untagged" },
+      {
+        model: "Pixel 8",
+        osVersion: "34",
+        platform: "android",
+        requesterId: "untagged",
+      },
       session(),
     );
 
@@ -1602,11 +1676,13 @@ describe("Dispatcher: image tags", () => {
       imageTag: "google_apis_playstore",
       model: "Pixel 8",
       osVersion: "34",
+      physical: false,
       platform: "android",
     });
     expect(untagged.device.spec).toEqual({
       model: "Pixel 8",
       osVersion: "34",
+      physical: false,
       platform: "android",
     });
   });
@@ -1672,7 +1748,12 @@ describe("Dispatcher: the download policy clamp applies regardless of caller", (
     await expect(
       dispatcher.dispatch(
         "lease.request",
-        { allowDownload: true, model: "iPhone 17 Pro", osVersion: "27.0", platform: "ios" },
+        {
+          allowDownload: true,
+          model: "iPhone 17 Pro",
+          osVersion: "27.0",
+          platform: "ios",
+        },
         session(),
       ),
     ).rejects.toMatchObject({ name: "RuntimeMissingError" });
@@ -1736,7 +1817,12 @@ describe("Dispatcher: the download policy clamp applies regardless of caller", (
     const { dispatcher, driver } = await buildDispatcher({ downloadsPolicy: "on-request" });
     await dispatcher.dispatch(
       "lease.request",
-      { allowDownload: true, model: "iPhone 17 Pro", osVersion: "27.0", platform: "ios" },
+      {
+        allowDownload: true,
+        model: "iPhone 17 Pro",
+        osVersion: "27.0",
+        platform: "ios",
+      },
       session(),
     );
     expect(
@@ -1766,7 +1852,7 @@ describe("Dispatcher: status.get installs in progress", () => {
       registry: {
         deleteComponent: () => Promise.resolve(),
         recordComponent: () => Promise.resolve(),
-        snapshot: { components: [], devices: [], leases: [] },
+        snapshot: { components: [], devices: [], leases: [], virtualDevices: [] },
       },
       timeoutMs: installTimeoutMs,
     });
@@ -1849,7 +1935,11 @@ describe("Dispatcher: status.get installs in progress", () => {
 });
 
 describe("Dispatcher: list.get requests and status.get waiting", () => {
-  const IOS_REQUEST = { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" } as const;
+  const IOS_REQUEST = {
+    model: "iPhone 17 Pro",
+    osVersion: "26.5",
+    platform: "ios",
+  } as const;
 
   /** A lease request from `requesterId`, left running: it resolves once granted. */
   function request(
@@ -2094,7 +2184,12 @@ describe("Dispatcher: component.install", () => {
     await until(() => installCalls(driver).length === 1, "the install started");
     const lease = dispatcher.dispatch(
       "lease.request",
-      { allowDownload: true, model: "iPhone 17 Pro", osVersion: "27.0", platform: "ios" },
+      {
+        allowDownload: true,
+        model: "iPhone 17 Pro",
+        osVersion: "27.0",
+        platform: "ios",
+      },
       session(),
     );
     // The lease reaches the installer while the install is still held, so it can only join.
@@ -2455,7 +2550,11 @@ describe("Dispatcher: status.get RAM budget", () => {
       },
       driverOptions: { slimmableOsVersions: ["26.5"] },
     });
-    const ios = { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" } as const;
+    const ios = {
+      model: "iPhone 17 Pro",
+      osVersion: "26.5",
+      platform: "ios",
+    } as const;
     await dispatcher.dispatch("lease.request", { ...ios, mode: "slim" }, session());
     await dispatcher.dispatch(
       "lease.request",
@@ -2466,7 +2565,7 @@ describe("Dispatcher: status.get RAM budget", () => {
       driverData: {},
       driverDeviceId: "driver-provisioning",
       provisionDuration: 0,
-      spec: { ...ios, mode: "slim" },
+      spec: { ...ios, mode: "slim", physical: false },
     });
 
     const status = await dispatcher.dispatch("status.get", {}, session());
@@ -2507,12 +2606,16 @@ describe("Dispatcher: status.get RAM budget", () => {
           driverData: {},
           driverDeviceId: `driver-${index}`,
           provisionDuration: 0,
-          spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+          spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
         });
       }
       return built;
     }
-    const ios = { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" } as const;
+    const ios = {
+      model: "iPhone 17 Pro",
+      osVersion: "26.5",
+      platform: "ios",
+    } as const;
 
     it("is true for a platform whose next full device the planner refuses for RAM, and false while it would be admitted", async () => {
       // 13 devices use 26 of 28 GiB: one more iOS device fits, an Android one does not.
@@ -3374,7 +3477,7 @@ describe("Dispatcher: status.get while the daemon is starting", () => {
       driverData: {},
       driverDeviceId: "driver-unchecked",
       provisionDuration: 0,
-      spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+      spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
     });
 
     const status = await dispatcher.dispatch("status.get", {}, session());
@@ -3392,7 +3495,7 @@ describe("Dispatcher: status.get while the daemon is starting", () => {
         driverData: {},
         driverDeviceId: "driver-known",
         provisionDuration: 0,
-        spec: { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+        spec: { physical: false, model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
       });
 
       const status = await dispatcher.dispatch("status.get", {}, session());

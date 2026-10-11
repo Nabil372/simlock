@@ -185,7 +185,7 @@ describe("DaemonServer", () => {
     [20, "cannot send lease.request's leaseId or read a lease's idChosenByRequester"],
     [21, "cannot send lease.request's fleetRequestId"],
   ])(
-    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 22, to a client on protocol %i, which %s",
+    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 23, to a client on protocol %i, which %s",
     async (version) => {
       const harness = await createHarness();
       const previous = await createClient(harness.socketPath);
@@ -195,7 +195,7 @@ describe("DaemonServer", () => {
       ).resolves.toMatchObject({
         error: {
           code: "PROTOCOL_VERSION_UNSUPPORTED",
-          details: { client: { min: version, max: version }, daemon: { min: 22, max: 22 } },
+          details: { client: { min: version, max: version }, daemon: { min: 23, max: 23 } },
         },
         ok: false,
       });
@@ -1301,7 +1301,11 @@ describe("DaemonServer startup readiness", () => {
  * held open must poll for the listener rather than assume it exists synchronously.
  */
 describe("DaemonServer stored lease requests", () => {
-  const iPhone = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+  const iPhone = {
+    model: "iPhone 16",
+    osVersion: "26.5",
+    platform: "ios",
+  } as const;
 
   /** `holder` takes the one device; `waiter` queues behind it under `key-1`. */
   async function queueBehindHolder(harness: Awaited<ReturnType<typeof createHarness>>) {
@@ -1884,7 +1888,7 @@ describe("DaemonServer decorations", () => {
       driverData: {},
       driverDeviceId: "driver_provisioning",
       provisionDuration: 0,
-      spec: { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+      spec: { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" },
     });
     harness.clock.advance(5_000);
 

@@ -12,8 +12,12 @@ describe("DriverCatalog", () => {
     const catalog = new DriverCatalog([driver]);
 
     await expect(
-      catalog.resolveSpec({ model: "iPhone 16", osVersion: "26.5", platform: "ios" }),
-    ).resolves.toEqual({ model: "iPhone 16", osVersion: "26.5", platform: "ios" });
+      catalog.resolveSpec({
+        model: "iPhone 16",
+        osVersion: "26.5",
+        platform: "ios",
+      }),
+    ).resolves.toEqual({ physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" });
   });
 
   it("retains NoDriverError-compatible platform, name, and message", () => {

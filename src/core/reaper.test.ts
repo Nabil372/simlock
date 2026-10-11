@@ -27,7 +27,7 @@ import { createTestEngine } from "../leasing/testing.js";
 
 const gibibyte = 1024 ** 3;
 const statePath = "/home/agent/.simlock/state.json";
-const spec = { model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
+const spec = { physical: false, model: "iPhone 16", osVersion: "26.5", platform: "ios" } as const;
 
 /**
  * MemoryFilesystem's free-disk figure is fixed at construction; this
