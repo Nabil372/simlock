@@ -113,6 +113,22 @@ describe("the Waiting view", () => {
     expect(html).toContain('class="status status-idle"');
   });
 
+  it('shows "1 (physical)" as the place of a waiting physical request at place 1, and "1" for a virtual one', () => {
+    const physical = request({
+      id: "req_p",
+      requesterId: "agent-p",
+      spec: { model: "iPhone 15 Pro", physical: true, platform: "ios" },
+    } as unknown as Partial<WaitingRequest>);
+    const virtual = request({ id: "req_v", requesterId: "agent-v" });
+
+    const html = renderToStaticMarkup(
+      <WaitingTable requests={[physical, virtual]} workers={[]} now={NOW} />,
+    );
+
+    expect(text(html)).toContain("agent-p iOS iPhone 15 Pro — queued 1 (physical) 1 min 15 s");
+    expect(text(html)).toContain("agent-v iOS iPhone 16 — queued 1 1 min 15 s");
+  });
+
   it("says so when nothing is waiting", () => {
     const html = renderToStaticMarkup(<WaitingTable requests={[]} workers={[]} now={NOW} />);
 

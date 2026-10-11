@@ -132,6 +132,23 @@ describe("workerViewFields", () => {
     });
   });
 
+  it("copies the physical line's depth beside the virtual one", () => {
+    const status = {
+      capacity: CAPACITY,
+      daemon: { health: "running", mode: "worker" },
+      devices: [],
+      host: HOST,
+      leases: [],
+      physicalQueueDepth: 1,
+      queueDepth: 2,
+    } as unknown as Parameters<typeof workerViewFields>[0]["status"];
+
+    const view = workerViewFields({ devices: [], status });
+
+    expect(view.queueDepth).toBe(2);
+    expect(view).toHaveProperty("physicalQueueDepth", 1);
+  });
+
   it("leaves a field out of a running worker's view when the worker's answer has none, rather than making it empty", () => {
     const view = workerViewFields({
       status: { daemon: { health: "running", mode: "worker" }, host: HOST },

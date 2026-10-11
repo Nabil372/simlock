@@ -10,7 +10,9 @@ import {
   InsufficientDiskSpaceError,
   type PhysicalInspection,
   sameReceipt,
+  toDriverDevice,
   UnknownModelError,
+  uninstallPlan,
 } from "./driver.js";
 import { FakeDriver } from "./fake-driver.js";
 import type { ManagedDeviceLifecycle } from "./managed-device-lifecycle.js";
@@ -247,5 +249,74 @@ describe("PhysicalInspection (ADR 0022 §5)", () => {
       "enrolled-on-other-platform",
     );
     expect(otherPlatformDoesNotCompile).toBeTypeOf("function");
+  });
+});
+
+describe("toDriverDevice", () => {
+  const recordFields = {
+    address: "emulator-5554",
+    createdAt: 1_000,
+    driverData: { opaque: true },
+    driverDeviceId: "driver_1",
+    id: "dev_1",
+  };
+
+  it("carries physical: true and its enrollment app list for a physical record", () => {
+    const record: PhysicalDevice = {
+      ...recordFields,
+      enrolledApps: ["com.example.kept", "com.example.other"],
+      physical: true,
+      spec: {
+        class: "phone",
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        physical: true,
+        platform: "ios",
+      },
+      state: "leased",
+    };
+
+    expect(toDriverDevice(record)).toEqual({
+      address: "emulator-5554",
+      deviceId: "driver_1",
+      driverData: { opaque: true },
+      enrolledApps: ["com.example.kept", "com.example.other"],
+      physical: true,
+    });
+  });
+
+  it("gives a virtual record's address, deviceId, driverData and physical: false", () => {
+    const record: VirtualDevice = {
+      ...recordFields,
+      mode: "full",
+      physical: false,
+      spec: { model: "iPhone 16", osVersion: "26.5", physical: false, platform: "ios" },
+      state: "reclaiming",
+    };
+
+    expect(toDriverDevice(record)).toEqual({
+      address: "emulator-5554",
+      deviceId: "driver_1",
+      driverData: { opaque: true },
+      physical: false,
+    });
+  });
+});
+
+describe("uninstallPlan", () => {
+  it("returns the listed-now apps not on the enrollment list, and the enrollment apps not listed now", () => {
+    expect(
+      uninstallPlan(
+        ["com.example.kept", "com.example.stray", "com.example.another"],
+        ["com.example.kept", "com.example.gone"],
+      ),
+    ).toEqual({
+      missing: ["com.example.gone"],
+      uninstall: ["com.example.stray", "com.example.another"],
+    });
+  });
+
+  it("returns nothing to uninstall and nothing missing when the two lists name the same apps", () => {
+    expect(uninstallPlan(["a", "b"], ["b", "a"])).toEqual({ missing: [], uninstall: [] });
   });
 });

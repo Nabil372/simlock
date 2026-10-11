@@ -4314,3 +4314,292 @@ describe("FleetLeaseCoordinator records every fleet request's outcome (ADR 0021)
     },
   );
 });
+
+describe("FleetLeaseCoordinator routes a physical request to its workers in id order (interim until #442)", () => {
+  function physicalRequest(
+    overrides: { readonly model?: string; readonly osVersion?: string } = {},
+  ) {
+    return {
+      ...REQUEST,
+      model: "iPhone 99",
+      osVersion: "99.0",
+      ...overrides,
+      physical: true as const,
+    };
+  }
+
+  function leaseRequests(client: ScriptedWorkerClient): string[] {
+    return client.calls.filter((call) => call.startsWith("lease.request"));
+  }
+
+  /** Starts the request and lets it settle as far as it will without the clock moving. */
+  async function start(
+    coordinator: FleetLeaseCoordinator,
+    request: Parameters<FleetLeaseCoordinator["request"]>[0],
+    options: Parameters<typeof requestOptions>[0] = {},
+  ) {
+    const outcome = coordinator.request(request, requestOptions(options));
+    const ended = outcome.catch((error: unknown) => error);
+    const state = promiseState(outcome);
+    await tick();
+    return { ended, outcome, state };
+  }
+
+  function twoWorkers() {
+    const fleetHarness = harness();
+    const a = new ScriptedWorkerClient();
+    const b = new ScriptedWorkerClient();
+    fleetHarness.directory.add("wrk_a", a);
+    fleetHarness.directory.add("wrk_b", b);
+    connectWorker(fleetHarness.workers, "wrk_a");
+    connectWorker(fleetHarness.workers, "wrk_b");
+    return { a, b, ...fleetHarness };
+  }
+
+  it.each([
+    {
+      model: "iPhone 99",
+      osVersion: "26.0",
+      row: "model",
+      setup: (workers: WorkerRegistry) => connectWorker(workers, "wrk_a"),
+    },
+    {
+      model: "iPhone 17",
+      osVersion: "99.0",
+      row: "runtime",
+      setup: (workers: WorkerRegistry) => connectWorker(workers, "wrk_a"),
+    },
+    {
+      model: "iPhone 17",
+      osVersion: "26.0",
+      row: "last",
+      setup: async (workers: WorkerRegistry) => {
+        connectWorker(workers, "wrk_a", { models: ["iPhone 16"] });
+        connectWorker(workers, "wrk_b");
+        await workers.setDrained("wrk_b", true);
+      },
+    },
+    {
+      model: "iphone 17",
+      osVersion: "26.0",
+      row: "model-name",
+      setup: (workers: WorkerRegistry) => connectWorker(workers, "wrk_a"),
+    },
+  ])(
+    "a physical request skips the model, runtime and last rows and is dispatched with physical: true and its model as typed ($row row, $model $osVersion)",
+    async ({ model, osVersion, setup }) => {
+      const { coordinator, directory, workers } = harness();
+      const client = new ScriptedWorkerClient();
+      directory.add("wrk_a", client);
+      client.requestLeaseQueue.push({ grant: grantFixture(), kind: "grant" });
+      await setup(workers);
+
+      const { state } = await start(coordinator, physicalRequest({ model, osVersion }));
+
+      expect(state.state).toBe("fulfilled");
+      expect(leaseRequests(client)).toHaveLength(1);
+      expect(client.lastRequestLeaseInput).toMatchObject({ model, osVersion, physical: true });
+    },
+  );
+
+  it.each([
+    {
+      code: "NO_CAPACITY",
+      reason: "no-worker",
+      request: physicalRequest(),
+      row: "no worker takes requests",
+      setup: (_workers: WorkerRegistry) => {},
+    },
+    {
+      code: "NO_DRIVER",
+      reason: "unresolvable-spec",
+      request: {
+        ...physicalRequest({ model: "Pixel 9", osVersion: "16" }),
+        platform: "android" as const,
+      },
+      row: "no known worker has its platform",
+      setup: (workers: WorkerRegistry) => connectWorker(workers, "wrk_a"),
+    },
+  ])(
+    "a physical request still fails $code $reason when $row",
+    async ({ code, reason, request, setup }) => {
+      const { coordinator, directory, eventBus, workers } = harness();
+      const client = new ScriptedWorkerClient();
+      directory.add("wrk_a", client);
+      setup(workers);
+      const rejected: unknown[] = [];
+      eventBus.subscribe("lease.rejected", (envelope) => rejected.push(envelope.payload));
+
+      const { ended, state } = await start(coordinator, request);
+
+      expect(state.state).toBe("rejected");
+      expect(await ended).toMatchObject({ code });
+      expect(rejected).toEqual([expect.objectContaining({ reason })]);
+      expect(leaseRequests(client)).toEqual([]);
+    },
+  );
+
+  it("a physical request is offered to a worker with no free running slot, and the pick's stage is physical-interim with reason free-capacity", async () => {
+    const { coordinator, directory, eventBus, workers } = harness();
+    const client = new ScriptedWorkerClient();
+    directory.add("wrk_a", client);
+    client.requestLeaseQueue.push({ grant: grantFixture(), kind: "grant" });
+    connectWorker(workers, "wrk_a", { capacity: saturatedIos() });
+    const dispatched: unknown[] = [];
+    eventBus.subscribe("request.dispatched", (envelope) => dispatched.push(envelope.payload));
+
+    await start(coordinator, physicalRequest({ model: "iPhone 17", osVersion: "26.0" }));
+
+    expect(dispatched).toEqual([
+      expect.objectContaining({
+        reason: "free-capacity",
+        stage: "physical-interim",
+        workerId: "wrk_a",
+      }),
+    ]);
+  });
+
+  it("a physical request refused UNKNOWN_MODEL by worker 1 is offered to worker 2, and fails UNKNOWN_MODEL when every worker refused it so", async () => {
+    const unknownModel = (message: string) =>
+      new SimlockError("UNKNOWN_MODEL", "domain", message, { model: "iPhone 99", platform: "ios" });
+    const offered = twoWorkers();
+    offered.a.requestLeaseQueue.push({ error: unknownModel("worker a: no"), kind: "error" });
+    offered.b.requestLeaseQueue.push({ grant: grantFixture(), kind: "grant" });
+
+    const second = await start(offered.coordinator, physicalRequest());
+
+    expect(second.state.state).toBe("fulfilled");
+    expect(leaseRequests(offered.a)).toHaveLength(1);
+    expect(leaseRequests(offered.b)).toHaveLength(1);
+    expect((await second.outcome).lease.worker?.id).toBe("wrk_b");
+
+    const refused = twoWorkers();
+    refused.a.requestLeaseQueue.push({ error: unknownModel("worker a: no"), kind: "error" });
+    refused.b.requestLeaseQueue.push({ error: unknownModel("worker b: no"), kind: "error" });
+
+    const failed = await start(refused.coordinator, physicalRequest());
+
+    expect(failed.state.state).toBe("rejected");
+    expect(await failed.ended).toMatchObject({ code: "UNKNOWN_MODEL", message: "worker b: no" });
+    expect(leaseRequests(refused.a)).toHaveLength(1);
+    expect(leaseRequests(refused.b)).toHaveLength(1);
+  });
+
+  it("a physical request refused NO_CAPACITY waits in the gateway queue, and fails NO_CAPACITY with noWait", async () => {
+    const { coordinator, directory, workers } = harness();
+    const client = new ScriptedWorkerClient();
+    directory.add("wrk_a", client);
+    connectWorker(workers, "wrk_a");
+
+    const waiting = await start(coordinator, physicalRequest());
+
+    expect(waiting.state.state).toBe("pending");
+    expect(leaseRequests(client)).toHaveLength(1);
+    expect(coordinator.waitingRequests()).toEqual([
+      expect.objectContaining({ queuePosition: 1, stage: "queued" }),
+    ]);
+    expect(coordinator.queueDepth).toBe(0);
+
+    const noWait = await start(
+      coordinator,
+      physicalRequest(),
+      requestOptions({ noWait: true, ownerId: "agent-2", requesterId: "agent-2" }),
+    );
+
+    expect(noWait.state.state).toBe("rejected");
+    expect(await noWait.ended).toMatchObject({ code: "NO_CAPACITY" });
+    expect(leaseRequests(client)).toHaveLength(2);
+  });
+
+  it.each([
+    { first: "virtual", name: "a virtual and then a physical", second: "physical" },
+    { first: "physical", name: "a physical and then a virtual", second: "virtual" },
+  ] as const)(
+    "in one pass, a worker picked for $first request is offered the next $second request ($name)",
+    async ({ first, second }) => {
+      const { clock, coordinator, directory, workers } = harness();
+      const client = new ScriptedWorkerClient();
+      directory.add("wrk_a", client);
+      client.requestLeaseQueue.push(
+        { error: noCapacityError(), kind: "error" },
+        { kind: "hang" },
+        { kind: "hang" },
+      );
+      connectWorker(workers, "wrk_a", { capacity: saturatedIos() });
+      const request = (kind: "virtual" | "physical") =>
+        kind === "physical" ? physicalRequest({ model: "iPhone 17", osVersion: "26.0" }) : REQUEST;
+
+      await start(
+        coordinator,
+        request(first),
+        requestOptions({ ownerId: "agent-1", requesterId: "agent-1" }),
+      );
+      await start(
+        coordinator,
+        request(second),
+        requestOptions({ ownerId: "agent-2", requesterId: "agent-2" }),
+      );
+      const before = leaseRequests(client).length;
+      clock.advance(1_000);
+      workers.refresh("wrk_a", { capacity: roomierIos() });
+      await tick();
+
+      const passCalls = leaseRequests(client).slice(before);
+      expect(passCalls.sort()).toEqual([
+        `lease.request:${GATEWAY_PREFIX}agent-1`,
+        `lease.request:${GATEWAY_PREFIX}agent-2`,
+      ]);
+    },
+  );
+
+  it("in one pass, a second physical request is not sent to the worker picked for the first", async () => {
+    const { clock, coordinator, directory, workers } = harness();
+    const client = new ScriptedWorkerClient();
+    directory.add("wrk_a", client);
+    client.requestLeaseQueue.push(
+      { error: noCapacityError(), kind: "error" },
+      { error: noCapacityError(), kind: "error" },
+      { kind: "hang" },
+      { kind: "hang" },
+    );
+    connectWorker(workers, "wrk_a", { capacity: saturatedIos() });
+    const request = physicalRequest({ model: "iPhone 17", osVersion: "26.0" });
+    await start(
+      coordinator,
+      request,
+      requestOptions({ ownerId: "agent-1", requesterId: "agent-1" }),
+    );
+    await start(
+      coordinator,
+      request,
+      requestOptions({ ownerId: "agent-2", requesterId: "agent-2" }),
+    );
+    expect(leaseRequests(client)).toHaveLength(2);
+
+    clock.advance(1_000);
+    workers.refresh("wrk_a", { capacity: roomierIos() });
+    await tick();
+
+    expect(leaseRequests(client).slice(2)).toEqual([`lease.request:${GATEWAY_PREFIX}agent-1`]);
+  });
+
+  it("a worker that answered a physical request NO_CAPACITY is not asked again after a refresh that leaves its view unchanged, and is asked again after a refresh that changes its devices (interim until #442)", async () => {
+    const { clock, coordinator, directory, workers } = harness();
+    const client = new ScriptedWorkerClient();
+    directory.add("wrk_a", client);
+    connectWorker(workers, "wrk_a");
+
+    await start(coordinator, physicalRequest());
+    expect(leaseRequests(client)).toHaveLength(1);
+
+    clock.advance(1_000);
+    workers.refresh("wrk_a", { capacity: statusFixture().capacity });
+    await tick();
+    expect(leaseRequests(client)).toHaveLength(1);
+
+    clock.advance(1_000);
+    workers.refresh("wrk_a", { devices: [deviceFixture("dev_9", "ready")] });
+    await tick();
+    expect(leaseRequests(client)).toHaveLength(2);
+  });
+});

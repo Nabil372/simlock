@@ -33,7 +33,8 @@ export interface ReclaimRegistry {
           readonly payload: {
             readonly deviceId: string;
             readonly duration: number;
-            readonly strategy: "erase" | "snapshot" | "wipe";
+            readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+            readonly missingApps?: readonly string[];
           };
         }
       | {
@@ -94,7 +95,7 @@ export class ReclaimCoordinator {
   async #purge(device: VirtualDevice, leaseId: string): Promise<void> {
     const driver = this.options.drivers.get(device.spec.platform);
     const startedAt = this.options.clock.now();
-    const attemptedStrategy = driver.reclaimStrategy({ clean: "standard" });
+    const attemptedStrategy = driver.reclaimStrategy(toDriverDevice(device), { clean: "standard" });
     let result: Awaited<ReturnType<Driver["reclaim"]>>;
     try {
       result = await driver.reclaim(toDriverDevice(device), { clean: "standard" });

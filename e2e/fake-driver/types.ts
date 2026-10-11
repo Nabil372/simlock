@@ -23,7 +23,9 @@ export type FakeDriverOperation =
   | "listComponents"
   | "removeComponent"
   | "revalidateRoot"
-  | "inspectPhysical";
+  | "inspectPhysical"
+  | "listPresentPhysical"
+  | "uninstall";
 
 export type FakeDriverEstimateOperation = "provision" | "boot" | "reclaim";
 
@@ -51,6 +53,15 @@ export interface ScriptedPhysicalDevice {
   readonly osVersion?: string;
   readonly class?: "phone" | "tablet";
   readonly apps?: readonly string[];
+  /**
+   * What is installed on the device now, as a presence-less list the reclaim reads: absent means
+   * `apps`. A test changes it between calls to play an agent installing or removing an app. A
+   * reclaim writes the apps it uninstalled out of it and logs one `uninstall` entry per app, with
+   * the device's canonical ID and the app ID as its arguments.
+   */
+  readonly installedApps?: readonly string[];
+  /** Whether `listPresentPhysical` reports the device present; absent means present. */
+  readonly present?: boolean;
   readonly refusal?: { readonly reason: FakeDriverRefusalReason; readonly message: string };
 }
 

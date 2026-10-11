@@ -141,7 +141,8 @@ export interface EventMap {
   "device.ready": { readonly deviceId: string; readonly bootDuration: number };
   "device.reclaimed": {
     readonly deviceId: string;
-    readonly strategy: "erase" | "snapshot" | "wipe";
+    readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+    readonly missingApps?: readonly string[];
     readonly duration: number;
   };
   "device.purge-failed": {
@@ -178,7 +179,8 @@ export interface EventMap {
   "device.quarantine-recovered": {
     readonly deviceId: string;
     readonly attempts: number;
-    readonly strategy: "erase" | "snapshot" | "wipe";
+    readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+    readonly missingApps?: readonly string[];
   };
   "device.quarantine-abandoned": { readonly deviceId: string; readonly attempts: number };
   "device.quarantine-stranded": {

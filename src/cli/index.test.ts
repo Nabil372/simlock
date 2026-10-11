@@ -3228,6 +3228,35 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
       );
     });
 
+    it.each(["worker", "gateway"] as const)(
+      "simlock status of a %s with queueDepth 2 and physicalQueueDepth 1 prints Queue depth: 2",
+      async (mode) => {
+        const output = outputCapture();
+        const answer = {
+          ...EMPTY_STATUS,
+          daemon: { health: "running", mode },
+          physicalQueueDepth: 1,
+          queueDepth: 2,
+        } as unknown as StatusGetOutput;
+
+        await runCli(
+          ["status"],
+          output.environmentWith({
+            connectAdmin: async () => fakeClient({ getStatus: () => Promise.resolve(answer) }),
+          }),
+        );
+
+        expect(output.stdout).toBe(
+          `Daemon: running (${mode})\n` +
+            "Host: macOS 15.5 arm64\n" +
+            "Running global: 0 + 0 reserved/2, warm 0\n" +
+            "Capacity ios: managed 0/1, running 0 + 0 reserved/1, warm 0\n" +
+            "Capacity android: managed 0/1, running 0 + 0 reserved/1, warm 0\n" +
+            "Queue depth: 2\n",
+        );
+      },
+    );
+
     it("simlock status --json carries the block as the daemon sent it", async () => {
       const output = outputCapture();
 

@@ -67,6 +67,21 @@ const twoPixelDevices =
   `Available devices:\nid: 0 or "pixel_8"\n    Name: Pixel 8\n    OEM : Google\n` +
   `---------\nid: 1 or "pixel_9"\n    Name: Pixel 9\n    OEM : Google\n`;
 
+const VIRTUAL_DEVICE = {
+  address: "",
+  deviceId: "device",
+  driverData: {},
+  physical: false,
+} as const;
+
+const PHYSICAL_DEVICE = {
+  address: "R58M123ABC",
+  deviceId: "R58M123ABC",
+  driverData: {},
+  enrolledApps: ["com.example.kept"],
+  physical: true,
+} as const;
+
 describe("AndroidDriver", () => {
   it("discovers ANDROID_HOME before the other SDK locations and rejects a missing SDK", async () => {
     const filesystem = await androidFilesystem();
@@ -1578,6 +1593,56 @@ describe("AndroidDriver", () => {
     expect(runner.calls).toHaveLength(callsBefore);
   });
 
+  it("hands a lease holder of a physical device its serial and the default adb server", async () => {
+    const driver = await createDriver(await androidFilesystem(), new ScriptedProcessRunner([]));
+
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual({
+      ANDROID_ADB_SERVER_PORT: String(adbServerPort),
+    });
+    expect(driver.leaseEnvironment(PHYSICAL_DEVICE)).toEqual({
+      ANDROID_ADB_SERVER_PORT: "5037",
+      ANDROID_SERIAL: "R58M123ABC",
+    });
+  });
+
+  it("answers uninstall for the reclaim strategy of a physical device, and snapshot for an emulator's", async () => {
+    const driver = await createDriver(await androidFilesystem(), new ScriptedProcessRunner([]));
+
+    expect(driver.reclaimStrategy(VIRTUAL_DEVICE, { clean: "standard" })).toBe("snapshot");
+    expect(driver.reclaimStrategy(PHYSICAL_DEVICE, { clean: "standard" })).toBe("uninstall");
+    expect(driver.reclaimStrategy(PHYSICAL_DEVICE, { clean: "full" })).toBe("uninstall");
+  });
+
+  it("answers each given ID not present from listPresentPhysical, starting no process", async () => {
+    const filesystem = await androidFilesystem();
+    const runner = new ScriptedProcessRunner([]);
+    const driver = await createDriver(filesystem, runner);
+    const callsBefore = runner.calls.length;
+
+    const present = await driver.listPresentPhysical(["R58M123ABC", "emulator-5554"]);
+
+    expect(present).toEqual([
+      { driverDeviceId: "R58M123ABC", present: false },
+      { driverDeviceId: "emulator-5554", present: false },
+    ]);
+    expect(runner.calls).toHaveLength(callsBefore);
+  });
+
+  it("rejects reclaim of a physical device for being physical, not for its driver data, starting no process", async () => {
+    const filesystem = await androidFilesystem();
+    const runner = new ScriptedProcessRunner([]);
+    const driver = await createDriver(filesystem, runner);
+    const callsBefore = runner.calls.length;
+
+    const failure = await driver
+      .reclaim(PHYSICAL_DEVICE, { clean: "standard" })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toMatch(/driver data/i);
+    expect(runner.calls).toHaveLength(callsBefore);
+  });
+
   it("listManaged passes a 30-second timeout to adb devices", async () => {
     const filesystem = await androidFilesystem();
     await filesystem.mkdirp(`${avdDirectory}/simlock_idle.avd`);
@@ -2511,7 +2576,7 @@ describe("AndroidDriver.create", () => {
       driverConfig: { adbServerPort: 5199 },
     });
 
-    expect(driver.leaseEnvironment()).toEqual({ ANDROID_ADB_SERVER_PORT: "5199" });
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual({ ANDROID_ADB_SERVER_PORT: "5199" });
     await driver.resolveSpec({ model: "Pixel 8", platform: "android" });
     expect(runner.calls[0]?.options).toEqual({
       env: { ...scopedEnv, ANDROID_ADB_SERVER_PORT: "5199" },

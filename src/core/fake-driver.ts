@@ -28,6 +28,8 @@ import {
   PassthroughRefusedError,
   type PassthroughContext,
   type PhysicalInspection,
+  type PresentPhysical,
+  type ReclaimResult,
   removeListedComponent,
   RuntimeMissingError,
   UnknownModelError,
@@ -44,6 +46,7 @@ export type FakeDriverOperation =
   | "destroy"
   | "listManaged"
   | "inspectPhysical"
+  | "listPresentPhysical"
   | "listCatalog"
   | "listComponents"
   | "removeComponent"
@@ -196,6 +199,9 @@ export class FakeDriver implements Driver {
   readonly #bootCounts = new Map<string, number>();
   #managedReality: DriverReality | undefined;
   #physicalDevices: readonly FakePhysicalDevice[] | undefined;
+  readonly #presentPhysical = new Set<string>();
+  readonly #heldPresenceReads = new Set<string>();
+  readonly #pendingPresenceReads: (() => void)[] = [];
   readonly #scriptedPhysicalDevices: FakeDriverOptions["physicalDevices"];
 
   constructor(options: FakeDriverOptions) {
@@ -483,19 +489,17 @@ export class FakeDriver implements Driver {
   async reclaim(
     device: DriverDevice,
     options: { readonly clean: "standard" | "full" },
-  ): Promise<{
-    readonly state: "ready" | "shutdown";
-    readonly strategy: "erase" | "snapshot" | "wipe";
-  }> {
+  ): Promise<ReclaimResult> {
     await this.#beforeCall("reclaim", device, options);
     this.#requireDevice(device);
     this.#devices.set(device.deviceId, this.#reclaimResult);
     return { state: this.#reclaimResult, strategy: this.#reclaimStrategy };
   }
 
-  reclaimStrategy(_options: {
-    readonly clean: "standard" | "full";
-  }): "erase" | "snapshot" | "wipe" {
+  reclaimStrategy(
+    _device: DriverDevice,
+    _options: { readonly clean: "standard" | "full" },
+  ): "erase" | "snapshot" | "wipe" {
     return this.#reclaimStrategy;
   }
 
@@ -531,6 +535,39 @@ export class FakeDriver implements Driver {
 
   setPhysicalDevices(devices: readonly FakePhysicalDevice[]): void {
     this.#physicalDevices = devices;
+  }
+
+  /**
+   * Answers only for the IDs it is given, as a real driver does: an ID no test marked present
+   * reads not present. `failOn("listPresentPhysical", n, error)` makes the nth read reject, and
+   * `holdPresenceReads` keeps a read of a held ID waiting.
+   */
+  async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
+    await this.#beforeCall("listPresentPhysical", enrolledIds);
+    if (enrolledIds.some((id) => this.#heldPresenceReads.has(id))) {
+      await new Promise<void>((resolve) => {
+        this.#pendingPresenceReads.push(resolve);
+      });
+    }
+    return enrolledIds.map((driverDeviceId) => ({
+      driverDeviceId,
+      present: this.#presentPhysical.has(driverDeviceId),
+    }));
+  }
+
+  setPhysicalPresence(driverDeviceId: string, present: boolean): void {
+    if (present) this.#presentPhysical.add(driverDeviceId);
+    else this.#presentPhysical.delete(driverDeviceId);
+  }
+
+  /** A read naming any of these IDs waits, answering from the presence at its end, until released. */
+  holdPresenceReads(...driverDeviceIds: readonly string[]): void {
+    for (const id of driverDeviceIds) this.#heldPresenceReads.add(id);
+  }
+
+  releasePresenceReads(): void {
+    this.#heldPresenceReads.clear();
+    for (const resolve of this.#pendingPresenceReads.splice(0)) resolve();
   }
 
   async inspectPhysical(id: string): Promise<PhysicalInspection> {
@@ -569,7 +606,7 @@ export class FakeDriver implements Driver {
     return this.#estimateMs?.[estimate.operation] ?? 0;
   }
 
-  leaseEnvironment(): Readonly<Record<string, string>> {
+  leaseEnvironment(_device: DriverDevice): Readonly<Record<string, string>> {
     return this.#leaseEnvironment;
   }
 

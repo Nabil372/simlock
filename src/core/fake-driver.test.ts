@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { DriverCrashError, type Driver, UnknownModelError } from "./index.js";
+import {
+  DriverCrashError,
+  type Driver,
+  type PhysicalDriverDevice,
+  UnknownModelError,
+} from "./index.js";
 import { FakeDriver, FakeDriverUnknownDeviceError } from "./fake-driver.js";
 import * as publicIndex from "./index.js";
 import * as testing from "./testing.js";
 import { FakeClock } from "../ports/index.js";
+
+const VIRTUAL_DEVICE = {
+  address: "",
+  deviceId: "device",
+  driverData: {},
+  physical: false,
+} as const;
 
 describe("FakeDriver", () => {
   it("is exported from core/testing.ts and not from the public index", () => {
@@ -46,12 +58,58 @@ describe("FakeDriver", () => {
     expect(driver.estimate({ clean: "standard", operation: "reclaim" }, spec)).toBe(30);
   });
 
+  it("estimates a reclaim of a physical spec at 90 000 ms at both clean levels, and a virtual spec as configured", () => {
+    const driver = new FakeDriver({
+      clock: new FakeClock(),
+      estimateMs: { boot: 20, provision: 10, reclaim: 30 },
+      fullCleanReclaimEstimateMs: 45,
+      platform: "ios",
+    });
+    const virtual = {
+      physical: false,
+      model: "iPhone 16",
+      osVersion: "26.5",
+      platform: "ios",
+    } as const;
+    const physical = {
+      class: "phone",
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      physical: true,
+      platform: "ios",
+    } as const;
+
+    expect(driver.estimate({ clean: "standard", operation: "reclaim" }, virtual)).toBe(30);
+    expect(driver.estimate({ clean: "full", operation: "reclaim" }, virtual)).toBe(45);
+    expect(driver.estimate({ clean: "standard", operation: "reclaim" }, physical)).toBe(90_000);
+    expect(driver.estimate({ clean: "full", operation: "reclaim" }, physical)).toBe(90_000);
+  });
+
+  it("answers uninstall for the reclaim strategy of a physical device, and what it was given for a virtual one", () => {
+    const driver = new FakeDriver({
+      clock: new FakeClock(),
+      platform: "ios",
+      reclaimStrategy: "erase",
+    });
+
+    expect(driver.reclaimStrategy(VIRTUAL_DEVICE, { clean: "standard" })).toBe("erase");
+    const physical: PhysicalDriverDevice = {
+      address: "",
+      deviceId: "udid",
+      driverData: {},
+      enrolledApps: [],
+      physical: true,
+    };
+
+    expect(driver.reclaimStrategy(physical, { clean: "standard" })).toBe("uninstall");
+  });
+
   it("implements the platform-agnostic Driver contract", () => {
     const driver: Driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
 
     expect(driver.platform).toBe("ios");
     expect(driver.deviceRoot).toBe("/fake/ios");
-    expect(driver.leaseEnvironment()).toEqual({});
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual({});
   });
 
   it("carries the root and lease environment a test gives it", () => {
@@ -63,7 +121,9 @@ describe("FakeDriver", () => {
     });
 
     expect(driver.deviceRoot).toBe("/tmp/devices/ios");
-    expect(driver.leaseEnvironment()).toEqual({ SIMLOCK_IOS_DEVICE_SET: "/tmp/devices/ios" });
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual({
+      SIMLOCK_IOS_DEVICE_SET: "/tmp/devices/ios",
+    });
   });
 
   it("reports a staged reality entry whatever it is named, the way a root does", () => {

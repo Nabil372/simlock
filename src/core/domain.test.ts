@@ -10,7 +10,9 @@ import {
   type DeviceRequirement,
   type VirtualSpec,
   fits,
+  fitsPhysical,
   mayBeGranted,
+  noPhysicalMatch,
   sameSpec,
 } from "./domain.js";
 
@@ -408,5 +410,77 @@ describe("assertVirtual", () => {
 
     expect(assertVirtual(virtual)).toBe(virtual);
     expect(() => assertVirtual({ ...physicalDevice, state: "ready" })).toThrow(/dev_phys/);
+  });
+});
+
+describe("fitsPhysical", () => {
+  const iphone = { spec: physicalSpec };
+  const ipad = { spec: { ...physicalSpec, class: "tablet", model: "iPad Pro" } } as const;
+
+  it("matches by platform, by model ignoring case, and by class, with no class meaning phone", () => {
+    expect(fitsPhysical(iphone, { platform: "ios" })).toBe(true);
+    expect(fitsPhysical(iphone, { platform: "android" })).toBe(false);
+
+    expect(fitsPhysical(iphone, { model: "iphone 15 pro", platform: "ios" })).toBe(true);
+    expect(fitsPhysical(iphone, { model: "iPhone 14", platform: "ios" })).toBe(false);
+
+    expect(fitsPhysical(ipad, { class: "tablet", platform: "ios" })).toBe(true);
+    expect(fitsPhysical(iphone, { class: "tablet", platform: "ios" })).toBe(false);
+    expect(fitsPhysical(iphone, { platform: "ios" })).toBe(true);
+    expect(fitsPhysical(ipad, { platform: "ios" })).toBe(false);
+  });
+
+  it("matches --os 18.4 to 18.4 and not 18.4.1, --os 18 to no device on 18.4.1, and a range to 18.4.1", () => {
+    const patched = { spec: { ...physicalSpec, osVersion: "18.4.1" } };
+
+    expect(fitsPhysical(iphone, { osVersion: "18.4", platform: "ios" })).toBe(true);
+    expect(fitsPhysical(patched, { osVersion: "18.4", platform: "ios" })).toBe(false);
+    expect(fitsPhysical(patched, { osVersion: "18", platform: "ios" })).toBe(false);
+    expect(fitsPhysical(patched, { osVersion: ">=18 <19", platform: "ios" })).toBe(true);
+    expect(fitsPhysical(patched, { osVersion: "18 - 18", platform: "ios" })).toBe(true);
+  });
+
+  it("matches an Android physical request with --os 34 to API level 34 and not 33", () => {
+    const api = (osVersion: string) => ({
+      spec: { ...physicalSpec, model: "Pixel 8", osVersion, platform: "android" as const },
+    });
+
+    expect(fitsPhysical(api("34"), { osVersion: "34", platform: "android" })).toBe(true);
+    expect(fitsPhysical(api("33"), { osVersion: "34", platform: "android" })).toBe(false);
+  });
+});
+
+describe("noPhysicalMatch", () => {
+  it("names >=18 <19 for iOS --os 18 and >=18.4 <18.5 for iOS --os 18.4", () => {
+    expect(noPhysicalMatch({ osVersion: "18", platform: "ios" }).message).toContain(">=18 <19");
+    expect(noPhysicalMatch({ osVersion: "18.4", platform: "ios" }).message).toContain(
+      ">=18.4 <18.5",
+    );
+  });
+
+  it("names no range for iOS 18.4.1, for Android 34, Baklava and 34-ext12, for a range, or with no --os", () => {
+    const unnamed = [
+      { osVersion: "18.4.1", platform: "ios" },
+      { osVersion: "34", platform: "android" },
+      { osVersion: "Baklava", platform: "android" },
+      { osVersion: "34-ext12", platform: "android" },
+      { osVersion: ">=18 <19", platform: "ios" },
+      { platform: "ios" },
+    ] as const;
+
+    expect(noPhysicalMatch({ osVersion: "18", platform: "ios" }).message).toContain(">=18 <19");
+    for (const request of unnamed) {
+      const { message } = noPhysicalMatch(request);
+      expect(message).toContain(request.platform);
+      expect(message).not.toMatch(/>=\d+(\.\d+)? <\d/);
+    }
+  });
+
+  it("carries the request's platform, model, class and OS in its details, each only when the request set it", () => {
+    expect(
+      noPhysicalMatch({ class: "tablet", model: "iPad Pro", osVersion: "18", platform: "ios" })
+        .details,
+    ).toEqual({ class: "tablet", model: "iPad Pro", osVersion: "18", platform: "ios" });
+    expect(noPhysicalMatch({ platform: "android" }).details).toEqual({ platform: "android" });
   });
 });

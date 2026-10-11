@@ -140,6 +140,10 @@ export class WaitQueue {
     return this.#waiters.length;
   }
 
+  get physicalDepth(): number {
+    return 0;
+  }
+
   get head(): Waiter | undefined {
     return this.#waiters[0];
   }

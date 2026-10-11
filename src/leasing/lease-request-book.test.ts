@@ -228,6 +228,37 @@ describe("Registry lease requests", () => {
     ]);
   });
 
+  it("reloads an open physical request from disk with physical true, and a stored request without the field as virtual", async () => {
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    const record = (id: string, stored: Record<string, unknown>) => ({
+      createdAt: 1_000,
+      id,
+      ownerId: "agent",
+      request: { platform: "ios", ...stored },
+      requesterId: "agent",
+      state: "open",
+    });
+    await filesystem.writeFileAtomic(
+      statePath,
+      JSON.stringify({
+        devices: [],
+        leaseRequests: [
+          record("req_physical", { model: "iPhone 15 Pro", physical: true }),
+          record("req_virtual", { model: "iPhone 16" }),
+        ],
+        leases: [],
+      }),
+    );
+
+    const { registry } = await loadRegistry({ filesystem });
+
+    expect(registry.leaseRequests().map((loaded) => [loaded.id, loaded.request])).toEqual([
+      ["req_physical", { model: "iPhone 15 Pro", physical: true, platform: "ios" }],
+      ["req_virtual", { model: "iPhone 16", platform: "ios" }],
+    ]);
+  });
+
   it("loads a stored request's image tag, and drops a record whose image tag is not a string", async () => {
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
@@ -463,6 +494,30 @@ describe("LeaseRequestBook", () => {
     await settled();
 
     expect(() => book.replay(different, keyed)).toThrow(IdempotencyConflictError);
+  });
+
+  it("refuses the same idempotency key sent with and without physical as an idempotency conflict", async () => {
+    const withoutPhysical = {
+      model: request.model,
+      osVersion: request.osVersion,
+      platform: "ios",
+    } as const;
+    const physicalFlag = { physical: true } as const;
+    const withPhysical = { ...withoutPhysical, ...physicalFlag };
+    const book = bookOver(memoryStore());
+    await book.admit(withoutPhysical, keyed, () => granted("lse_1"));
+    await settled();
+
+    await expect(book.replay(withoutPhysical, keyed)).resolves.toMatchObject({
+      lease: { id: "lse_1" },
+    });
+    expect(() => book.replay(withPhysical, keyed)).toThrow(IdempotencyConflictError);
+
+    const physicalBook = bookOver(memoryStore());
+    await physicalBook.admit(withPhysical, keyed, () => granted("lse_2"));
+    await settled();
+
+    expect(() => physicalBook.replay(withoutPhysical, keyed)).toThrow(IdempotencyConflictError);
   });
 
   it.each([

@@ -24,6 +24,7 @@ import {
   type DriverEstimate,
   type DriverReality,
   type PhysicalInspection,
+  type PresentPhysical,
   type DriverToolVersion,
   type InstalledComponent,
   LicenseNotAcceptedError,
@@ -635,7 +636,7 @@ export class AndroidDriver implements Driver {
     });
   }
 
-  leaseEnvironment(): Readonly<Record<string, string>> {
+  leaseEnvironment(_device: DriverDevice): Readonly<Record<string, string>> {
     // `adb` reads this variable natively, so a lease holder needs nothing else to reach the
     // device: without it their `adb` talks to the shared server, which cannot see it.
     return { ANDROID_ADB_SERVER_PORT: String(this.#adbServerPort) };
@@ -986,7 +987,10 @@ export class AndroidDriver implements Driver {
     });
   }
 
-  reclaimStrategy(options: { readonly clean: "standard" | "full" }): "snapshot" | "wipe" {
+  reclaimStrategy(
+    _device: DriverDevice,
+    options: { readonly clean: "standard" | "full" },
+  ): "snapshot" | "wipe" {
     return options.clean === "full" ? "wipe" : "snapshot";
   }
 
@@ -1013,6 +1017,10 @@ export class AndroidDriver implements Driver {
         this.#portAllocator.release(state.port);
       }
     });
+  }
+
+  async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
+    throw new Error(`listPresentPhysical is not implemented (${String(enrolledIds.length)})`);
   }
 
   async inspectPhysical(_id: string): Promise<PhysicalInspection> {
@@ -1224,7 +1232,7 @@ export class AndroidDriver implements Driver {
         // the wipe branch when the baseline no longer matches the AVD config, which runs some
         // five times longer; that is the exception rather than the case to quote, and `Doctor`
         // covers it by taking the slower clean level instead of this averaging the two.
-        return this.reclaimStrategy({ clean: estimate.clean }) === "wipe"
+        return this.reclaimStrategy({} as DriverDevice, { clean: estimate.clean }) === "wipe"
           ? WIPE_RECLAIM_ESTIMATE_MS
           : SNAPSHOT_RECLAIM_ESTIMATE_MS;
     }

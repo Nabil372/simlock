@@ -4,10 +4,12 @@ import type { RootRejectionReason } from "./device-root.js";
 import type {
   DeviceClass,
   DeviceMode,
+  DeviceRecord,
   DeviceSpec,
   DeviceTransitionUpdate,
   PhysicalClass,
   Platform,
+  VirtualDevice,
   VirtualSpec,
 } from "./domain.js";
 
@@ -27,6 +29,7 @@ export interface ExactDeviceRequest {
 export interface DeviceRequest extends Omit<ExactDeviceRequest, "model"> {
   readonly model?: string;
   readonly class?: DeviceClass;
+  readonly physical?: boolean;
 }
 
 export interface DriverDevice {
@@ -56,6 +59,39 @@ export interface DriverDevice {
  * it, come with the physical reclaim.
  */
 export type VirtualDriverDevice = DriverDevice & { readonly physical: false };
+
+export type PhysicalDriverDevice = DriverDevice & {
+  readonly physical: true;
+  readonly enrolledApps: readonly string[];
+};
+
+export interface PresentPhysical {
+  readonly driverDeviceId: string;
+  readonly present: boolean;
+}
+
+/**
+ * `address` is never trusted by a driver's `shutdown` / `reclaim` / `makeReady` -- they derive
+ * whatever they need from `driverData` -- so a placeholder here is harmless.
+ */
+export function toDriverDevice(device: VirtualDevice): VirtualDriverDevice;
+export function toDriverDevice(device: DeviceRecord): VirtualDriverDevice | PhysicalDriverDevice;
+export function toDriverDevice(device: DeviceRecord): VirtualDriverDevice | PhysicalDriverDevice {
+  if (device.physical) throw new Error(`toDriverDevice of a physical record is not implemented`);
+  return {
+    address: device.address ?? "",
+    deviceId: device.driverDeviceId,
+    driverData: device.driverData,
+    physical: false,
+  };
+}
+
+export function uninstallPlan(
+  _listedNow: readonly string[],
+  _enrolledApps: readonly string[],
+): { readonly uninstall: readonly string[]; readonly missing: readonly string[] } {
+  return { missing: [], uninstall: [] };
+}
 
 /**
  * A device a driver listed from its own root (`listManaged`) as a driver device that may be
@@ -127,7 +163,8 @@ export interface DriverReality {
 
 export interface ReclaimResult {
   readonly state: "ready" | "shutdown";
-  readonly strategy: "erase" | "snapshot" | "wipe";
+  readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+  readonly missingApps?: readonly string[];
 }
 
 export type ReclaimStrategy = ReclaimResult["strategy"];
@@ -364,14 +401,18 @@ export interface Driver {
     },
   ): Promise<DriverDevice>;
   reclaim(
-    device: VirtualDriverDevice,
+    device: VirtualDriverDevice | PhysicalDriverDevice,
     options: { readonly clean: "standard" | "full" },
   ): Promise<ReclaimResult>;
-  reclaimStrategy(options: { readonly clean: "standard" | "full" }): ReclaimStrategy;
+  reclaimStrategy(
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+    options: { readonly clean: "standard" | "full" },
+  ): ReclaimStrategy;
   shutdown(device: VirtualDriverDevice): Promise<void>;
   destroy(device: VirtualDriverDevice): Promise<void>;
   listManaged(): Promise<DriverReality>;
   inspectPhysical(id: string): Promise<PhysicalInspection>;
+  listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]>;
   /** Read-only: must never trigger a runtime / system-image download. */
   listCatalog(): Promise<DriverCatalogEntry>;
   estimate(estimate: DriverEstimate, spec: DeviceSpec): number;
@@ -380,7 +421,9 @@ export interface Driver {
    * containment cuts both ways, so a grant that did not carry it would hand out a device
    * nobody could address. The core forwards it verbatim; no key here means anything to it.
    */
-  leaseEnvironment(): Readonly<Record<string, string>>;
+  leaseEnvironment(
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+  ): Readonly<Record<string, string>>;
   /**
    * Releases whatever this driver holds outside its own process -- Android supervises an
    * adb server it must reap by pid, since nothing else can (`docs/internal/KNOWN-PITFALLS.md`).

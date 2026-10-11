@@ -48,6 +48,7 @@ import {
   type AcquisitionMaintenance,
   type ManagedDeviceLifecycle,
   type ReadyDeviceHandoff,
+  toDriverDevice,
   type SerializedDecision,
   stableError,
   type TargetResolution,
@@ -820,7 +821,9 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     // Built before the write: the grant a repeat of this request answers is stored with the lease.
     const granted = await this.options.leases.grant({
       deviceId: device.id,
-      environment: this.options.drivers.get(device.spec.platform).leaseEnvironment(),
+      environment: this.options.drivers
+        .get(device.spec.platform)
+        .leaseEnvironment(toDriverDevice(device)),
       ownerId: waiter.options.ownerId,
       requestId: waiter.id,
       requesterId: waiter.options.requesterId,

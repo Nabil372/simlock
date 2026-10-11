@@ -18,6 +18,7 @@ import {
   type DriverEstimate,
   type DriverReality,
   type PhysicalInspection,
+  type PresentPhysical,
   ensureOwnedRoot,
   type EnsureOwnedRootOptions,
   type InstalledComponent,
@@ -1222,7 +1223,10 @@ export class IosSimctlDriver implements Driver {
     return { state: "shutdown", strategy: "erase" };
   }
 
-  reclaimStrategy(_options: { readonly clean: "standard" | "full" }): "erase" {
+  reclaimStrategy(
+    _device: DriverDevice,
+    _options: { readonly clean: "standard" | "full" },
+  ): "erase" {
     return "erase";
   }
 
@@ -1280,6 +1284,10 @@ export class IosSimctlDriver implements Driver {
     // reports a failure that says nothing about whether the delete can proceed.
     await this.#invokeLegacySimctl(["shutdown", udid], COMMAND_TIMEOUT_MS);
     await this.#legacySimctl(["delete", udid], COMMAND_TIMEOUT_MS);
+  }
+
+  async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
+    throw new Error(`listPresentPhysical is not implemented (${String(enrolledIds.length)})`);
   }
 
   async inspectPhysical(_id: string): Promise<PhysicalInspection> {
@@ -1526,7 +1534,7 @@ export class IosSimctlDriver implements Driver {
    * custom set a UDID resolves to nothing without it. `docs/CLI.md` publishes the variable
    * name, and `simlock simctl` reads it back.
    */
-  leaseEnvironment(): Readonly<Record<string, string>> {
+  leaseEnvironment(_device: DriverDevice): Readonly<Record<string, string>> {
     return { SIMLOCK_IOS_DEVICE_SET: this.#deviceRoot };
   }
 

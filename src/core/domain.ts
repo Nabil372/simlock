@@ -616,3 +616,38 @@ export type LeaseProgress =
   | { readonly stage: "provisioning"; readonly etaMs: number }
   | { readonly stage: "booting"; readonly etaMs: number }
   | { readonly stage: "reclaiming"; readonly etaMs: number };
+
+/** What a physical request asks of an enrolled device: `osVersion` is the raw `--os` text. */
+export interface PhysicalRequest {
+  readonly platform: Platform;
+  readonly model?: string;
+  readonly class?: DeviceClass;
+  readonly osVersion?: string;
+}
+
+/** What `fitsPhysical` reads of a device: a worker view's entry carries `class` at the top. */
+export interface FittablePhysical {
+  readonly spec: {
+    readonly platform: Platform;
+    readonly model: string;
+    readonly osVersion: string;
+    readonly class?: PhysicalClass;
+  };
+  readonly class?: PhysicalClass;
+}
+
+export function fitsPhysical(_device: FittablePhysical, _request: PhysicalRequest): boolean {
+  return false;
+}
+
+export function noPhysicalMatch(request: PhysicalRequest): {
+  readonly message: string;
+  readonly details: {
+    readonly platform: Platform;
+    readonly model?: string;
+    readonly class?: DeviceClass;
+    readonly osVersion?: string;
+  };
+} {
+  return { details: { platform: request.platform }, message: "" };
+}

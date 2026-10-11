@@ -26,7 +26,7 @@ export interface QuarantineRegistry {
 export interface QuarantinePurgeFailure {
   readonly deviceId: string;
   readonly leaseId: string;
-  readonly attemptedStrategy: "erase" | "snapshot" | "wipe" | "delete";
+  readonly attemptedStrategy: "erase" | "snapshot" | "wipe" | "delete" | "uninstall";
   readonly duration: number;
   readonly error: string;
 }

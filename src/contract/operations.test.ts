@@ -1266,6 +1266,112 @@ describe("lease.request names a model, a class, or nothing (ADR 0015 §1)", () =
   });
 });
 
+describe("lease.request physical (ADR 0022)", () => {
+  const input = OPERATIONS["lease.request"].input;
+
+  it.each([
+    ["mode", { mode: "slim" }],
+    ["imageTag", { imageTag: "x" }],
+    ["allowDownload", { allowDownload: true }],
+  ])("a physical request with %s is BAD_REQUEST naming the field", (field, extra) => {
+    expect(input.safeParse({ physical: true, platform: "ios" }).success).toBe(true);
+
+    const result = input.safeParse({ ...extra, physical: true, platform: "ios" });
+
+    expect(result.success).toBe(false);
+    const message = result.success ? "" : result.error.issues.map((issue) => issue.message).join();
+    expect(message).toContain(`\`${field}\``);
+  });
+
+  it("a physical request with allowDownload false passes", () => {
+    const result = input.safeParse({ allowDownload: false, physical: true, platform: "ios" });
+
+    expect(result.success).toBe(true);
+    expect(result.success ? (result.data as { physical?: boolean }).physical : undefined).toBe(
+      true,
+    );
+  });
+
+  it("requestedDevice carries physical true only when the input set it", () => {
+    expect(requestedDevice(input.parse({ physical: true, platform: "ios" }))).toStrictEqual({
+      physical: true,
+      platform: "ios",
+    });
+    expect(requestedDevice(input.parse({ physical: false, platform: "ios" }))).toStrictEqual({
+      platform: "ios",
+    });
+    expect(requestedDevice(input.parse({ platform: "ios" }))).toStrictEqual({ platform: "ios" });
+  });
+});
+
+describe("status.get physicalQueueDepth (ADR 0022)", () => {
+  const host = { arch: "arm64", os: "macOS", osVersion: "15.5", tools: [] };
+  const entry = {
+    atRamBudget: false,
+    limit: 1,
+    maxRunning: 1,
+    overLimit: false,
+    reserved: 0,
+    running: 0,
+    used: 0,
+    warm: 0,
+  };
+  const capacity = {
+    android: entry,
+    global: { maxRunning: 1, overLimit: false, reserved: 0, running: 0, warm: 0 },
+    ios: entry,
+  };
+  const output = OPERATIONS["status.get"].output;
+
+  it("a status carries the physical line's depth beside the virtual one", () => {
+    const parsed = output.parse({
+      capacity,
+      daemon: { health: "running", mode: "worker" },
+      devices: [],
+      host,
+      leases: [],
+      physicalQueueDepth: 1,
+      queueDepth: 2,
+    });
+
+    expect(parsed.queueDepth).toBe(2);
+    expect((parsed as { physicalQueueDepth?: number }).physicalQueueDepth).toBe(1);
+  });
+
+  it("a worker's entry in a gateway's status carries it too", () => {
+    const parsed = output.parse({
+      capacity,
+      daemon: { health: "running", mode: "gateway" },
+      devices: [],
+      host,
+      leases: [],
+      queueDepth: 0,
+      workers: [
+        {
+          capacity,
+          catalog: [],
+          connection: "connected",
+          devices: [],
+          drained: false,
+          health: "running",
+          host,
+          id: "wrk_1",
+          label: "mac-mini-1",
+          lastSeenAt: 10,
+          leases: [],
+          physicalQueueDepth: 1,
+          queueDepth: 0,
+          version: "0.3.0",
+        },
+      ],
+    });
+
+    expect(
+      (parsed.workers?.[0] as { physicalQueueDepth?: number } | undefined)?.physicalQueueDepth,
+    ).toBe(1);
+  });
+});
+
 describe("device.add and device.remove ids (ADR 0022 §2)", () => {
   const long = "x".repeat(201);
 

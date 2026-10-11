@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 
@@ -21,11 +21,13 @@ import {
   type DriverEstimate,
   type DriverReality,
   type DriverToolVersion,
+  type PhysicalDriverDevice,
   type ObservedMark,
   type ObservedRunState,
   type PassthroughCommand,
   type PassthroughContext,
   type PhysicalInspection,
+  type PresentPhysical,
   PassthroughRefusedError,
   removeListedComponent,
   type DeviceClass,
@@ -41,6 +43,8 @@ import type {
   ScriptedObservedDevice,
   ScriptedProcessEntry,
 } from "./types.js";
+
+type VirtualDriverDevice = DriverDevice & { readonly physical: false };
 
 /** Minimal clock contract this driver needs -- kept local so it stays type-only-decoupled. */
 export interface FakeDriverClock {
@@ -425,31 +429,86 @@ export class OutOfProcessFakeDriver implements Driver {
   }
 
   async reclaim(
-    device: DriverDevice,
+    device: VirtualDriverDevice | PhysicalDriverDevice,
     options: { readonly clean: "standard" | "full" },
   ): Promise<{
     readonly state: "ready" | "shutdown";
-    readonly strategy: "erase" | "snapshot" | "wipe";
+    readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
+    readonly missingApps?: readonly string[];
   }> {
     const script = await this.#beforeCall("reclaim", [device, options]);
+    if (device.physical) return this.#reclaimPhysical(device, script);
     const state = script.reclaimResult ?? "ready";
     const strategy = script.reclaimStrategy ?? "erase";
     this.#devices.set(device.deviceId, state);
     return { state, strategy };
   }
 
-  reclaimStrategy(_options: {
-    readonly clean: "standard" | "full";
-  }): "erase" | "snapshot" | "wipe" {
-    return "erase";
+  /**
+   * Uninstalls, one logged `uninstall` per app, every installed app the enrolment list does not
+   * name, and writes the result back to the script so the next listing shows what is left. A
+   * listed enrolment app that is not installed is reported, not restored.
+   */
+  async #reclaimPhysical(
+    device: PhysicalDriverDevice,
+    script: FakeDriverPlatformScript,
+  ): Promise<{
+    readonly state: "ready";
+    readonly strategy: "uninstall";
+    readonly missingApps: readonly string[];
+  }> {
+    const scripted = script.physicalDevices?.find((candidate) =>
+      candidate.ids.includes(device.deviceId),
+    );
+    const installed = scripted?.installedApps ?? scripted?.apps ?? [];
+    const enrolled = new Set(device.enrolledApps);
+    const doomed = installed.filter((app) => !enrolled.has(app));
+    for (const app of doomed) {
+      await this.#appendLog("uninstall", [device.deviceId, app]);
+    }
+    if (doomed.length > 0) await this.#writeInstalledApps(device.deviceId, installed, doomed);
+    const remaining = new Set(installed);
+    return {
+      missingApps: device.enrolledApps.filter((app) => !remaining.has(app)),
+      state: "ready",
+      strategy: "uninstall",
+    };
   }
 
-  async shutdown(device: DriverDevice): Promise<void> {
+  async #writeInstalledApps(
+    deviceId: string,
+    installed: readonly string[],
+    removed: readonly string[],
+  ): Promise<void> {
+    if (this.#scriptPath === undefined) return;
+    const parsed = JSON.parse(await readFile(this.#scriptPath, "utf8")) as FakeDriverScript;
+    const platformScript = parsed[this.platform];
+    if (platformScript === undefined) return;
+    const physicalDevices = (platformScript.physicalDevices ?? []).map((candidate) =>
+      candidate.ids.includes(deviceId)
+        ? { ...candidate, installedApps: installed.filter((app) => !removed.includes(app)) }
+        : candidate,
+    );
+    const next: FakeDriverScript = {
+      ...parsed,
+      [this.platform]: { ...platformScript, physicalDevices },
+    };
+    await writeFile(this.#scriptPath, JSON.stringify(next, null, 2), "utf8");
+  }
+
+  reclaimStrategy(
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+    _options: { readonly clean: "standard" | "full" },
+  ): "erase" | "snapshot" | "wipe" | "uninstall" {
+    return device.physical ? "uninstall" : "erase";
+  }
+
+  async shutdown(device: VirtualDriverDevice): Promise<void> {
     await this.#beforeCall("shutdown", [device]);
     this.#devices.set(device.deviceId, "shutdown");
   }
 
-  async destroy(device: DriverDevice): Promise<void> {
+  async destroy(device: VirtualDriverDevice): Promise<void> {
     await this.#beforeCall("destroy", [device]);
     this.#devices.delete(device.deviceId);
   }
@@ -473,6 +532,16 @@ export class OutOfProcessFakeDriver implements Driver {
       })),
       processes: [],
     };
+  }
+
+  async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
+    const script = await this.#beforeCall("listPresentPhysical", [enrolledIds]);
+    return enrolledIds.map((driverDeviceId) => {
+      const scripted = script.physicalDevices?.find((candidate) =>
+        candidate.ids.includes(driverDeviceId),
+      );
+      return { driverDeviceId, present: scripted !== undefined && scripted.present !== false };
+    });
   }
 
   async inspectPhysical(id: string): Promise<PhysicalInspection> {
@@ -524,7 +593,14 @@ export class OutOfProcessFakeDriver implements Driver {
   }
 
   /** Synchronous like `estimate`, and cached the same way: the last script read wins. */
-  leaseEnvironment(): Readonly<Record<string, string>> {
+  leaseEnvironment(
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+  ): Readonly<Record<string, string>> {
+    if (device.physical && this.#lastKnownLeaseEnvironment === undefined) {
+      return this.platform === "ios"
+        ? { SIMLOCK_DEVICE_UDID: device.deviceId }
+        : { ANDROID_ADB_SERVER_PORT: "5037", ANDROID_SERIAL: device.deviceId };
+    }
     // Defaults to the recognisable fakes rather than `{}`: a grant that carried nothing would
     // make "the environment reached the CLI" and "there was never anything to carry" look
     // identical at the far end. A script that sets `leaseEnvironment` still wins.

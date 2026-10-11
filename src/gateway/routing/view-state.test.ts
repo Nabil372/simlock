@@ -45,6 +45,24 @@ describe("viewLoadKey", () => {
     for (const other of changed) expect(viewLoadKey(other)).not.toBe(base);
   });
 
+  it("gives two views that differ only in physicalQueueDepth different keys", () => {
+    const withPhysical = (depth: number) =>
+      view({ physicalQueueDepth: depth } as Partial<WorkerView>);
+    const starting = {
+      connection: "connected",
+      drained: false,
+      health: "starting",
+      id: "wrk_a",
+      lastSeenAt: 1_000,
+      physicalQueueDepth: 2,
+    } as WorkerView;
+
+    expect(viewLoadKey(withPhysical(1))).not.toBe(viewLoadKey(withPhysical(0)));
+    expect(viewLoadKey(starting)).toBe(
+      '{"devices":[],"health":"starting","leases":[],"physicalQueueDepth":2}',
+    );
+  });
+
   it("gives a starting view, which has no devices, leases or capacity, a key of its own", () => {
     const starting: WorkerView = {
       connection: "connected",
