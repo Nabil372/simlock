@@ -53,7 +53,7 @@ function repo(): Repo {
   mkdirSync(bin);
   writeFileSync(
     join(bin, "pnpm"),
-    `#!/bin/sh\necho "$@" >> "${log}"\nmkdir -p .stryker-tmp/report\necho '${REPORT}' > .stryker-tmp/report/mutation.json\n`,
+    `#!/bin/sh\necho "$@" >> "${log}"\nif [ -n "$CRASH" ]; then echo "$CRASH" >&2; exit 1; fi\nmkdir -p .stryker-tmp/report\necho '${REPORT}' > .stryker-tmp/report/mutation.json\n`,
   );
   chmodSync(join(bin, "pnpm"), 0o755);
   const git = (...args: string[]) =>
@@ -76,11 +76,11 @@ function repo(): Repo {
   return { dir, log, bin, git, commit };
 }
 
-function mutate(r: Repo, cwd = r.dir) {
+function mutate(r: Repo, cwd = r.dir, crash = "") {
   const run = spawnSync(process.execPath, [SCRIPT, "base"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, PATH: `${r.bin}:/usr/bin:/bin` },
+    env: { ...process.env, PATH: `${r.bin}:/usr/bin:/bin`, CRASH: crash },
   });
   return { code: run.status, output: run.stdout + run.stderr };
 }
@@ -101,7 +101,21 @@ describe("mutate.mjs", () => {
     ]);
     expect(output).toContain("2 mutants on 1 changed ranges; 1 alive.");
     expect(output).toContain("src/a.ts:2 Survived BooleanLiteral: false");
+    expect(output).toContain("Kill each one, or explain it in the PR body.");
     expect(code).toBe(1);
+  });
+
+  it("ends with Stryker's last error lines and exits 2, not 1, when Stryker fails without a report", () => {
+    const r = repo();
+
+    const { code, output } = mutate(r, r.dir, "TypeError: boom");
+
+    expect(output.trimEnd().split("\n").slice(-2)).toEqual([
+      "Stryker exited 1 without a report: no mutant was tested.",
+      "TypeError: boom",
+    ]);
+    expect(output).not.toContain("Kill each one");
+    expect(code).toBe(2);
   });
 
   it("reprints the last result without running Stryker when nothing under src/ changed since, even after a commit elsewhere", () => {
