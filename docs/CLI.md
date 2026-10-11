@@ -115,9 +115,9 @@ implement them:
   means for `USAGE` and `BAD_REQUEST`. Neither is retryable as written: the
   fix is a different command, or the same command against a different daemon.
   `UNSUPPORTED_IN_GATEWAY_MODE` in particular is permanent, not provisional:
-  `nuke`, `cleanup`, `doctor`, `driver.passthrough`, `component list` and
-  `component remove` stay per-worker operations rather than waiting on some
-  later fleet-wide version. `component install` without a worker flag answers
+  `nuke`, `cleanup`, `doctor`, `driver.passthrough`, `component list`,
+  `component remove`, `device add` and `device remove` stay per-worker
+  operations rather than waiting on some later fleet-wide version. `component install` without a worker flag answers
   it too; with `--worker` or `--all-workers` it installs on the workers you
   name.
 - `UNSUPPORTED_IN_WORKER_MODE` is the same refusal from the other side, and
@@ -1805,7 +1805,7 @@ add again gets a new record.
   emulator, including every one Simlock manages) or
   `enrolled-on-other-platform`. The message is the driver's own, and says
   what to do.
-- `DEVICE_BUSY` (exit 11): the device is `leased`, is being `reclaiming`, or
+- `DEVICE_BUSY` (exit 11): the device is `leased`, is `reclaiming`, or
   another `device add` or `device remove` holds it (`busy`).
 - `NO_DRIVER` (exit 12): this machine has no driver for the platform.
 
@@ -2159,7 +2159,7 @@ simlock daemon stop && simlock daemon start
 
 Several commands (`list`, `cleanup`, `nuke`, `events`, `config get`,
 `daemon stop`, `token create|list|revoke`,
-`worker list|drain|undrain|remove`, and cross-process `lease renew`
+`device add|remove`, `worker list|drain|undrain|remove`, and cross-process `lease renew`
 and `release`) need the daemon's `admin` role. The CLI resolves a credential
 to send at handshake, in order:
 

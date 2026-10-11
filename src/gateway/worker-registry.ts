@@ -45,7 +45,7 @@ export type WorkerViewSnapshot = Pick<
 
 /** A worker's device in the shape a grant carries it: what `GET /v1/leases/{id}` builds a lease
  * payload from. Kept beside a view, never on it, because a view is what `status.get` and
- * `worker.list` show every agent, and `driverDeviceId` is only the lease holder's to see. */
+ * `worker.list` show every agent, and a virtual device's `driverDeviceId` is only the lease holder's to see. */
 export type WorkerGrantedDevice = z.infer<typeof grantedDeviceSchema>;
 
 /** What one refresh over the uplink commits: the view's fields, and the same devices in the

@@ -1954,12 +1954,7 @@ const DEVICE_USAGE =
   "Usage: simlock device add --platform <ios|android> <id> [--json]\n" +
   "       simlock device remove <id> [--json]\n";
 
-/**
- * ADR 0022 §2: `device add` and `device remove` render the daemon's `device.add` and
- * `device.remove` as one line, or with `--json` as the operation's output. Argument parsing and
- * rendering only: what can be enrolled, and why not, is the platform driver's answer. `remove`
- * asks for nothing: it changes nothing on the device (safety rule 5).
- */
+// `device remove` asks for no confirmation: it changes nothing on the device (safety rule 5).
 async function runDevice(
   argv: readonly string[],
   environment: CliEnvironment,
@@ -1991,7 +1986,6 @@ async function runDevice(
   }
 }
 
-/** `device add`'s arguments: one ID and `--platform`; `device remove`'s: one ID. */
 function parseDeviceArgs(
   command: "add" | "remove",
   argv: readonly string[],
@@ -2045,7 +2039,6 @@ function describeRemoved(result: { readonly driverDeviceId: string }): string {
   return `Removed ${result.driverDeviceId}. It is no longer enrolled; nothing on the device changed.`;
 }
 
-/** `Enrolled iPhone 15 Pro (iOS 18.4) as <ID>[ again], 12 user apps recorded.` */
 function describeEnrolled(result: {
   readonly appCount: number;
   readonly driverDeviceId: string;

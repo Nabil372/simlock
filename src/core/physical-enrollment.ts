@@ -4,10 +4,8 @@ import type { Driver, DriverRefusalReason } from "./driver.js";
 import type { PhysicalEnrollmentInput, RegistrySnapshot } from "./registry.js";
 import type { SerializedDecision } from "./serialized-decision.js";
 
-/** Every driver reason, and the one only the core can know. */
 export type DeviceNotEnrollableReason = DriverRefusalReason | "enrolled-on-other-platform";
 
-/** A device `device.add` will not enrol (ADR 0022 §2): the reason, in the driver's own words. */
 export class DeviceNotEnrollableError extends Error {
   constructor(
     readonly platform: Platform,
@@ -23,7 +21,6 @@ export class DeviceNotEnrollableError extends Error {
   }
 }
 
-/** The device is leased, being reclaimed or held by another enrollment. */
 export class DeviceBusyError extends Error {
   constructor(
     readonly id: string,
@@ -40,7 +37,6 @@ export class DeviceBusyError extends Error {
   }
 }
 
-/** `device.remove` of an ID with no enrolled device. */
 export class UnknownEnrolledDeviceError extends Error {
   constructor(readonly id: string) {
     super(`${id} is not an enrolled device`);
@@ -48,7 +44,6 @@ export class UnknownEnrolledDeviceError extends Error {
   }
 }
 
-/** A driver's `inspectPhysical` threw, or named another device than the one asked for. */
 class PhysicalInspectionError extends Error {
   constructor(message: string) {
     super(message);
@@ -68,7 +63,6 @@ export interface PhysicalEnrollmentOptions {
   readonly registry: PhysicalEnrollmentRegistry;
 }
 
-/** The four registry members enrollment uses; `Registry` is what the composition root passes. */
 export interface PhysicalEnrollmentRegistry {
   readonly snapshot: Pick<RegistrySnapshot, "devices" | "virtualDevices">;
   enrollPhysical(input: PhysicalEnrollmentInput): Promise<PhysicalDevice>;
@@ -76,11 +70,6 @@ export interface PhysicalEnrollmentRegistry {
   unenrollPhysical(deviceId: string): Promise<PhysicalDevice>;
 }
 
-/**
- * Enrols and unenrols physical devices (ADR 0022 §2). The driver reads a device and decides every
- * refusal; this class only relays it, finds the one record a canonical ID has, and keeps it
- * from changing under a lease, a reclaim or another enrollment. Never writes to a device.
- */
 export class PhysicalEnrollment {
   constructor(private readonly options: PhysicalEnrollmentOptions) {}
 
@@ -139,7 +128,6 @@ export class PhysicalEnrollment {
     });
   }
 
-  /** Simlock's own simulators and emulators are never enrolled, by either of their names. */
   #refuseVirtual(platform: Platform, id: string): void {
     const own = this.options.registry.snapshot.virtualDevices.find(
       (device) =>
@@ -163,7 +151,7 @@ export class PhysicalEnrollment {
   ): Promise<Omit<PhysicalEnrollmentInput, "platform">> {
     let inspection: Awaited<ReturnType<Driver["inspectPhysical"]>>;
     try {
-      inspection = await driver.inspectPhysical(id);
+      inspection = await driver.inspectPhysical(canonicalId ?? id);
     } catch (error: unknown) {
       throw new PhysicalInspectionError(
         `Reading ${id} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -187,7 +175,6 @@ export class PhysicalEnrollment {
     };
   }
 
-  /** The one non-deleted physical record a canonical ID has, if any. */
   #enrolled(canonicalId: string): PhysicalDevice | undefined {
     return this.options.registry.snapshot.devices.find(
       (device): device is PhysicalDevice =>
@@ -195,7 +182,6 @@ export class PhysicalEnrollment {
     );
   }
 
-  /** The one busy check `add` and `remove` share: what holds a device, by name. */
   #requireFree(device: PhysicalDevice): void {
     if (device.state === "leased") throw new DeviceBusyError(device.driverDeviceId, "leased");
     const held = this.options.claims.claim(device.id);

@@ -122,7 +122,6 @@ export interface DispatcherOptions {
    * Injected because `error-code.ts` imports this module. Unset or `undefined`: `INTERNAL`. */
   readonly errorCode?: (error: unknown) => string | undefined;
   readonly nuke?: Nuke;
-  /** Answers `device.add` and `device.remove`; optional for the tests that never enrol one. */
   readonly enrollment?: Pick<PhysicalEnrollment, "add" | "remove">;
   /**
    * Builds the scoped command behind `simlock simctl` / `simlock adb` (ADR 0001, decision 7).
@@ -821,11 +820,6 @@ export class Dispatcher {
     }
   };
 
-  /**
-   * ADR 0022 §2: enrols the physical device the driver reads for `id`. A refusal and a busy device
-   * carry their reason as details, so a transport can show them; every other failure is
-   * classified as it is thrown.
-   */
   #deviceAdd: Handler<"device.add"> = async (input) => {
     try {
       const { device, reenrolled } = await this.#requireEnrollment().add(input.platform, input.id);
@@ -947,7 +941,6 @@ function killQuietly(handle: StreamingProcessHandle, signal: NodeJS.Signals): vo
   }
 }
 
-/** The refusals of `device.add` and `device.remove` as the dispatcher's own, with their details. */
 function describeEnrollmentError(error: unknown): unknown {
   if (error instanceof DeviceNotEnrollableError) {
     return new DispatchError("DEVICE_NOT_ENROLLABLE", error.message, {

@@ -60,7 +60,6 @@ function enrolledEvents(harness: Harness) {
   return harness.eventBus.replay().filter((entry) => entry.event === "device.enrolled");
 }
 
-/** Leases the enrolled device and releases it into quarantine, as a failed purge would. */
 async function quarantine(harness: Harness, deviceId: string): Promise<void> {
   const lease = await harness.registry.createLease({
     deviceId,
@@ -73,7 +72,6 @@ async function quarantine(harness: Harness, deviceId: string): Promise<void> {
   await harness.registry.enterQuarantine(deviceId, 9_000);
 }
 
-/** Holds the n-th `inspectPhysical` call until `release` runs; the others answer at once. */
 function holdInspection(driver: FakeDriver, callNumber: number) {
   const original = driver.inspectPhysical.bind(driver);
   let release!: () => void;
@@ -133,6 +131,18 @@ describe("PhysicalEnrollment", () => {
       { appCount: 2, reenrolled: false },
       { appCount: 1, class: "tablet", reenrolled: true },
     ]);
+  });
+
+  it("reads the device under the claim by its canonical ID, whatever ID the operator typed", async () => {
+    const harness = await build();
+    await harness.core.enrollment.add("ios", UDID);
+
+    await harness.core.enrollment.add("ios", ALIAS);
+
+    const reads = harness.driver.calls
+      .filter((call) => call.operation === "inspectPhysical")
+      .map((call) => call.arguments[0]);
+    expect(reads).toEqual([UDID, ALIAS, UDID]);
   });
 
   it("leaves one non-deleted record and two device.enrolled for two adds of one new device at once, the second reenrolled", async () => {

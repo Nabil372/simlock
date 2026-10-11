@@ -128,7 +128,6 @@ export interface Core {
   readonly deviceLifecycle: ManagedDeviceLifecycle;
   readonly doctor: Doctor;
   readonly drivers: DriverCatalog;
-  /** `device add` and `device remove`: enrols and unenrols physical devices (ADR 0022 §2). */
   readonly enrollment: PhysicalEnrollment;
   readonly nuke: NukeService;
   readonly provisioner: DeviceProvisioner;

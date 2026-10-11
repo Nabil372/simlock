@@ -11,7 +11,6 @@
  */
 import type { DeviceClass, Platform } from "./schemas.js";
 
-/** Why a device cannot be enrolled (ADR 0022 §2); `DEVICE_NOT_ENROLLABLE`'s `reason`. */
 const DEVICE_NOT_ENROLLABLE_REASONS = [
   "not-connected",
   "network-only",
@@ -122,12 +121,7 @@ export interface ErrorDetailsMap {
     readonly reason: DeviceNotEnrollableReason;
     readonly canonicalId?: string;
   };
-  /**
-   * ADR 0022 §2: `device.add` or `device.remove` of a device something else holds: `leased`, a
-   * `reclaiming` device or one whose `reclaim` claim is held, or `busy` under another enrollment.
-   */
   DEVICE_BUSY: { readonly id: string; readonly reason: "leased" | "reclaiming" | "busy" };
-  /** `device.remove` of an ID with no enrolled device: no record, or a `deleted` one. */
   UNKNOWN_DEVICE: { readonly id: string };
   /** A `simlock <tool>` verb the owning driver will not proxy (ADR 0001, decision 7). Carries
    * the tool so a caller can say which wrapper refused without re-parsing the message. */

@@ -147,8 +147,9 @@ such as **All 12 workers**, takes you to the cards for the rest.
 
 Select a worker to open its page. It adds:
 
-- **Devices**: every device on the worker, with its state, platform, model,
-  runtime, mode (empty for a physical device, which has none) and image tag. A leased device shows how long ago its lease
+- **Devices**: every device on the worker, with its state, platform, type
+  (Physical or Virtual), model, runtime, mode and image tag (both `—` for a
+  physical device, which has neither). A leased device shows how long ago its lease
   was granted, and a device being provisioned or reclaimed on a connected
   worker how long that has taken so far. Other states show `—`: the daemon
   reports no time for them.

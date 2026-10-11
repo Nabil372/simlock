@@ -3,12 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { FakeDriverRefusalReason, ScriptedPhysicalDevice } from "./fake-driver/types.js";
 import { freeLoopbackPort, waitFor, withDaemon, type TestEnv } from "./helpers/index.js";
 
-/**
- * `simlock device add` and `device remove` (ADR 0022 §2, §6): an admin enrols and unenrols a
- * physical device on the host it is plugged into. Only the fake driver reads a device here; the
- * scripted devices below are what its `inspectPhysical` answers from.
- */
-
 const UDID = "00008110-001A2B3C4D5E";
 const ALIAS = "7A1C0E52-6B7D-4F1E-9C1A-2D3E4F5A6B7C";
 const APPS = Array.from({ length: 12 }, (_, index) => `com.example.app${String(index)}`);

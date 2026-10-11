@@ -206,8 +206,9 @@ agent / console ──token auth──>  │ HTTP frontend + unix socket        
   on HTTP — that is how agents reach it and what the uplink upgrades from — so
   `http.enabled: false` in gateway mode fails the start rather than being
   silently overridden. `nuke.run`, `cleanup.run`, `doctor.run`,
-  `driver.passthrough`, `component.install`, `component.list` and
-  `component.remove` answer `UNSUPPORTED_IN_GATEWAY_MODE` permanently: they act on one machine's devices
+  `driver.passthrough`, `component.install`, `component.list`,
+  `component.remove`, `device.add` and `device.remove` answer
+  `UNSUPPORTED_IN_GATEWAY_MODE` permanently: they act on one machine's devices
   or components, and stay per-worker. Installing through a gateway is its own
   gateway-only operation, `worker.install-component`, which names the
   workers (see "Through a gateway" under Components). The lease lifecycle
@@ -287,7 +288,8 @@ path (`simlock daemon stop`, then start the new daemon) exists at all.
 **Two roles**, `agent` and `admin`, declared in `src/contract/roles.ts`.
 Read-only and lease-lifecycle operations are `agent`; anything that reads or
 mutates state outside the caller's own leases (`list.get`, `cleanup.run`,
-`nuke.run`, `config.get`, `daemon.stop`, `events.*`, `token.*`) is `admin`.
+`nuke.run`, `config.get`, `daemon.stop`, `device.add`, `device.remove`,
+`events.*`, `token.*`) is `admin`.
 `doctor.run` is the one operation whose role is a function of its input
 rather than a fixed value: `fix: false` is agent-visible (read-only, but it
 shells out per device); `fix: true` is admin-only.
@@ -1509,7 +1511,8 @@ are:
   caller waiting on it (see "Release hands the purge off").
 - `CapacityCoordinator` owns provisioning and running reservations while the
   configured `CapacityStrategy` decides the limits. `DeviceOperationClaims` excludes
-  overlapping boot, eviction, cleanup, and nuke operations per device.
+  overlapping boot, eviction, cleanup, nuke, recovery, reclaim and enrollment
+  operations per device.
 - `CleanupReaper` evaluates pure rules and directly calls
   `CleanupActionExecutor`; the executor revalidates registry ownership,
   lease/state safety, and delegates the driver operation to

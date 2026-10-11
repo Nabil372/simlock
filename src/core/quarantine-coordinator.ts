@@ -41,7 +41,6 @@ export interface QuarantineRetryConfig {
 }
 
 export interface QuarantineCoordinatorOptions {
-  /** A retry holds the device's `reclaim` claim from its first driver call to its last write. */
   readonly claims: Pick<DeviceOperationClaims, "tryClaim">;
   readonly clock: Clock;
   readonly config: QuarantineRetryConfig;

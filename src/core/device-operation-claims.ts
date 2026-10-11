@@ -6,8 +6,7 @@
  * `reclaiming` devices) never mistakes it for one left over from a previous crash,
  * and so `simlock doctor` never reads a long-but-healthy erase as a stalled
  * transition. Every release takes one, since none of them wait for the purge.
- * See `LeaseReleaseCoordinator#reclaimInBackground`. `enrollment` is a physical device held from
- * `device add`'s second read to its write (ADR 0022 §2).
+ * See `LeaseReleaseCoordinator#reclaimInBackground`.
  */
 export type DeviceOperation =
   | "boot"

@@ -105,7 +105,6 @@ export interface RegisterDeviceInput {
   readonly provisionDuration: number;
 }
 
-/** What a driver's read of a physical device gives a record: everything `device.add` writes. */
 export interface PhysicalEnrollmentInput {
   readonly platform: Platform;
   readonly driverDeviceId: string;
@@ -628,10 +627,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return deleted;
   }
 
-  /**
-   * Writes a new physical device `ready` (ADR 0022 §2): the first enrollment of a canonical ID.
-   * `device.enrolled` follows the commit.
-   */
   async enrollPhysical(input: PhysicalEnrollmentInput): Promise<PhysicalDevice> {
     const now = this.options.clock.now();
     const record: PhysicalDevice = {
@@ -656,11 +651,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(record) as PhysicalDevice;
   }
 
-  /**
-   * Rewrites an enrolled physical device from a fresh read (ADR 0022 §2): model, OS version,
-   * class and app list replaced, `ready`, the quarantine fields cleared, the registry ID kept.
-   * Only a `ready` or `quarantined` record is rewritten.
-   */
   async reenrollPhysical(
     deviceId: string,
     input: PhysicalEnrollmentInput,
@@ -696,10 +686,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated) as PhysicalDevice;
   }
 
-  /**
-   * Writes an enrolled physical device `deleted` (ADR 0022 §2): it is forgotten, and nothing is
-   * done to the device. `device.deleted` follows the commit with `initiator: "operator"`.
-   */
   async unenrollPhysical(deviceId: string): Promise<PhysicalDevice> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (!device.physical || (device.state !== "ready" && device.state !== "quarantined")) {

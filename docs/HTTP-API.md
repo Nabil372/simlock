@@ -1449,9 +1449,10 @@ behind this is not reachable right now" is the same answer in all four cases,
 and a client with one retry rule for `transport` should not need a second one
 because the unreachable thing happened to be a worker.
 
-`UNSUPPORTED_IN_GATEWAY_MODE` comes from three routes in this version,
-`POST /v1/components/install` without `workers`, `GET /v1/components` and
-`DELETE /v1/components/{platform}/{version}` asked of a gateway — `nuke`,
+`UNSUPPORTED_IN_GATEWAY_MODE` comes from five routes in this version,
+`POST /v1/components/install` without `workers`, `GET /v1/components`,
+`DELETE /v1/components/{platform}/{version}`, `POST /v1/devices` and
+`DELETE /v1/devices/{id}` asked of a gateway — `nuke`,
 `cleanup`, and
 `doctor` are absent from the HTTP surface (see
 [Not implemented](#not-implemented)), and the status is fixed so adding

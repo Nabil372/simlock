@@ -475,10 +475,6 @@ export class OutOfProcessFakeDriver implements Driver {
     };
   }
 
-  /**
-   * Reads the scripted physical device `id` names, from the script as it is now. An ID no entry
-   * lists is `not-connected`, as a device that is not plugged in is.
-   */
   async inspectPhysical(id: string): Promise<PhysicalInspection> {
     const script = await this.#beforeCall("inspectPhysical", [id]);
     const device = script.physicalDevices?.find((candidate) => candidate.ids.includes(id));

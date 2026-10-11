@@ -622,7 +622,7 @@ export const leaseReleaseAll = defineOperation({
  * - a **worker** returns its own registry records -- the full `deviceRecordSchema`, which an
  *   operator inspecting one machine legitimately wants;
  * - a **gateway** returns the fleet, and cannot return that shape: it has never held a
- *   `driverDeviceId` or a driver's private `driverData`, and fabricating either would be a
+ *   virtual device's `driverDeviceId` or a driver's private `driverData`, and fabricating either would be a
  *   lie about a device it does not own. It answers the narrower `statusDeviceSchema` (plus
  *   `workerId`) instead -- the same devices `status.get` reports.
  *
@@ -991,9 +991,6 @@ export const componentRemove = defineOperation({
   }),
 });
 
-// ---- device.add, device.remove (ADR 0022 §2) -----------------------------------------------
-
-/** The longest ID `device.add` and `device.remove` take: an ID is a claim, bounded before use. */
 const ENROLLED_DEVICE_ID_MAX_LENGTH = 200;
 
 /** An ID as an operator types it: no whitespace or control character, and not an option. */
@@ -1012,12 +1009,6 @@ function isControlCharacter(character: string): boolean {
   return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
 }
 
-/**
- * Enrolls a physical device plugged into the host this daemon runs on, admin-only. The driver
- * reads the device; the record is written only if the driver says it can be enrolled. `id` in
- * the output is the registry ID, `driverDeviceId` the canonical one. `reenrolled` is true when
- * the device already had a record, which kept its registry ID and took a fresh read.
- */
 // fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
 export const deviceAdd = defineOperation({
   name: "device.add",
@@ -1036,10 +1027,6 @@ export const deviceAdd = defineOperation({
   }),
 });
 
-/**
- * Forgets an enrolled physical device, admin-only. `id` is the canonical ID. Nothing is sent
- * to the device.
- */
 // fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
 export const deviceRemove = defineOperation({
   name: "device.remove",

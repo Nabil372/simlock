@@ -220,7 +220,6 @@ export const statusDeviceSchema = z
     mode: deviceModeSchema.optional(),
     /** Present exactly when `physical` is `true`. */
     class: physicalClassSchema.optional(),
-    /** A physical device's canonical ID, the ID `device remove` takes; never set on a virtual one. */
     driverDeviceId: z.string().optional(),
     /**
      * ADR 0009 §6: whether the device's pool mode (its spec's mode, full when it names none) is the

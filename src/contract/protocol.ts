@@ -14,7 +14,7 @@ export interface ProtocolRange {
 const protocolRangeSchema = z.object({ min: z.number().int(), max: z.number().int() });
 
 /**
- * The range this contract's daemon speaks. Both ends are 23, and every move that got it there
+ * The range this contract's daemon speaks. Both ends are 24, and every move that got it there
  * was breaking with no shim kept behind them, which is exactly when ADR 0003 §6's honesty
  * rule says a range must *not* widen: ADR 0004 removed `lease.heartbeat` and `mode` from the
  * wire (taking it to 4), and ADR 0005 adds `device.exec` and its `output` push family, a

@@ -66,7 +66,6 @@ const ROLE_MATRIX: ReadonlyArray<{
   },
   // ADR 0010 §8: removal is destructive, so admin-only.
   { name: "component.remove", input: { platform: "ios", version: "26.4" }, role: "admin" },
-  // ADR 0022 §2: enrolling and unenrolling a physical device is an operator's decision.
   { name: "device.add", input: { id: "00008110-001A2B3C4D5E", platform: "ios" }, role: "admin" },
   { name: "device.remove", input: { id: "00008110-001A2B3C4D5E" }, role: "admin" },
 ];

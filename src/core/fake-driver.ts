@@ -43,7 +43,6 @@ export type FakeDriverOperation =
   | "shutdown"
   | "destroy"
   | "listManaged"
-  /** Logged with the ID the operator typed. */
   | "inspectPhysical"
   | "listCatalog"
   | "listComponents"
@@ -55,10 +54,6 @@ export type FakeDriverOperation =
 
 export type DriverEstimateOperation = "provision" | "boot" | "reclaim";
 
-/**
- * One physical device the fake can read. `ids` lists every ID it answers to: the first is its
- * canonical ID, the rest are aliases. A `refusal` refuses every one of them.
- */
 export interface FakePhysicalDevice {
   readonly ids: readonly string[];
   readonly model?: string;
@@ -152,7 +147,6 @@ export interface FakeDriverOptions {
   readonly legacyDevices?: Readonly<Record<string, LegacyDevice>>;
   readonly reclaimResult?: "ready" | "shutdown";
   readonly reclaimStrategy?: "erase" | "snapshot" | "wipe";
-  /** The physical devices `inspectPhysical` reads; an ID none lists is `not-connected`. */
   readonly physicalDevices?: readonly FakePhysicalDevice[];
 }
 
@@ -213,7 +207,6 @@ export class FakeDriver implements Driver {
   /** Bumped on every `makeReady` boot -- mirrors a real driver reassigning a port per boot. */
   readonly #bootCounts = new Map<string, number>();
   #managedReality: DriverReality | undefined;
-  /** What `setPhysicalDevices` replaced, or the option when it never ran. */
   #physicalDevices: readonly FakePhysicalDevice[] | undefined;
   readonly #scriptedPhysicalDevices: FakeDriverOptions["physicalDevices"];
 
@@ -548,7 +541,6 @@ export class FakeDriver implements Driver {
     };
   }
 
-  /** Replaces the scripted physical devices; the next `inspectPhysical` reads the new ones. */
   setPhysicalDevices(devices: readonly FakePhysicalDevice[]): void {
     this.#physicalDevices = devices;
   }
@@ -754,7 +746,6 @@ function compareVersions(left: string, right: string): number {
   return left.localeCompare(right);
 }
 
-/** What the fake reports for an enrollable scripted device: its canonical ID is its first ID. */
 function readPhysical(device: FakePhysicalDevice, id: string): PhysicalInspection {
   return {
     apps: [...(device.apps ?? [])],
