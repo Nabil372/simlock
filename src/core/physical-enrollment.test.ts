@@ -302,7 +302,7 @@ describe("PhysicalEnrollment", () => {
     },
   );
 
-  it("answers INTERNAL and writes nothing when the first inspection throws", async () => {
+  it("rejects with a PhysicalInspectionError, not a refusal, and writes nothing when the first inspection throws", async () => {
     const harness = await build();
     harness.driver.failOn("inspectPhysical", 1, new Error("usbmuxd went away"));
 
@@ -314,7 +314,7 @@ describe("PhysicalEnrollment", () => {
     expect(enrolledEvents(harness)).toEqual([]);
   });
 
-  it("answers INTERNAL and writes nothing when the second inspection names another canonical ID, and a remove right after it succeeds", async () => {
+  it("rejects with a PhysicalInspectionError and writes nothing when the second inspection names another canonical ID, and a remove right after it succeeds", async () => {
     const harness = await build();
     await harness.core.enrollment.add("ios", UDID);
     const before = JSON.stringify(live(harness));
@@ -422,7 +422,7 @@ describe("PhysicalEnrollment", () => {
     expect(live(harness)).toHaveLength(1);
   });
 
-  it("words a busy device as leased, reclaiming or being enrolled or removed", async () => {
+  it("words a busy device as leased, reclaiming or busy with another operation", async () => {
     const harness = await build();
     const { device } = await harness.core.enrollment.add("ios", UDID);
     const claim = harness.core.claims.tryClaim(device.id, "reclaim");
@@ -432,7 +432,7 @@ describe("PhysicalEnrollment", () => {
     claim?.release();
     const enrolling = harness.core.claims.tryClaim(device.id, "enrollment");
     await expect(harness.core.enrollment.remove(UDID)).rejects.toThrow(
-      `${UDID} is being enrolled or removed: try again in a moment`,
+      `${UDID} is busy with another operation: try again in a moment`,
     );
     enrolling?.release();
     await harness.registry.createLease({

@@ -158,37 +158,16 @@ function withHttp(config: Config, http: Config["http"] | undefined): Config {
 async function buildDispatcher(
   overrides: {
     readonly downloadsPolicy?: Config["downloads"]["policy"];
-    /** Extra fake driver options, such as `knownModels` for a catalog that lists a model. */
     readonly driverOptions?: Partial<FakeDriverOptions>;
     readonly awaitReady?: () => Promise<void>;
-    /** Overrides the `catalog` dependency -- used only to force `#parseOutput`'s failure path
-     * (see "Dispatcher: #parseOutput") with a fake that returns a payload violating the
-     * contract's output schema, something no real `CatalogReader` implementation would do. */
     readonly catalog?: CatalogReader;
-    /** ADR §3: `nuke.run` is admin-only and destructive (`safety.md` rules 1/5). `false` by
-     * default -- matching `DispatcherOptions.nuke`'s own undefined default, so most tests don't
-     * pay for wiring one -- since a real `Nuke` needs this function's own `engine`/`registry`,
-     * it is built here (rather than passed in) when a test opts in. */
     readonly includeNuke?: boolean;
-    /** Wires `device.add` and `device.remove` to the engine's real `PhysicalEnrollment`; off by
-     * default, like the option it feeds. */
     readonly includeEnrollment?: boolean;
-    /** Gives the fake driver a `simlock <tool>` wrapper so `driver.passthrough` has something
-     * to route to; off by default so no other test's catalog output changes shape. */
     readonly passthroughTool?: string;
-    /** Narrows the lease TTL knobs (ADR 0004), for the cap and default-width rules. */
     readonly lease?: Partial<Config["lease"]>;
-    /** Wires `device.exec`'s runner (ADR 0005 §19a); absent by default, like the option it
-     * feeds, so no other test pays for a scripted process. */
     readonly processRunner?: ProcessRunner;
-    /** Narrows `exec.timeoutMs` so the timeout path can be driven with a short clock advance
-     * rather than ten minutes of one. */
     readonly exec?: Partial<Config["exec"]>;
-    /** Collects the `PassthroughContext` each resolution was given, so a test can assert what
-     * the driver was told about its caller (ADR 0005 §19c's "no terminal"). */
     readonly passthroughContextSink?: unknown[];
-    /** Shares one clock with the test, for a flow that has to schedule against the dispatcher's
-     * own timers. */
     readonly clock?: FakeClock;
     /** Replaces the fake driver's own `passthrough` (which unconditionally prepends
      * `--set /root`) with a caller-supplied resolver -- for the one suite that needs a
@@ -3346,7 +3325,7 @@ describe("Dispatcher: device.add and device.remove", () => {
       platform: "ios",
       reenrolled: false,
     });
-    expect(removed).toEqual({ driverDeviceId: UDID, id: UDID });
+    expect(removed).toEqual({ driverDeviceId: UDID, id: registry.snapshot.devices[0]?.id });
     expect(registry.snapshot.devices[0]?.state).toBe("deleted");
   });
 
@@ -3451,7 +3430,6 @@ describe("Dispatcher: component.remove", () => {
     return driver.calls.filter((call) => call.operation === operation).length;
   }
 
-  /** A dispatcher over a real engine and installer, with iOS 27.0 installed by Simlock. */
   async function withSimlockInstall() {
     const built = await buildDispatcher({
       driverOptions: { componentSizes: { "27.0": 7_000_000_000 }, knownModels: ["iPhone 17 Pro"] },

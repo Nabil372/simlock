@@ -202,12 +202,6 @@ describe("DaemonServer", () => {
     },
   );
 
-  // Every protocol bump so far shipped without a back-compat shim, so rejecting an older
-  // client outright is a deliberate product decision, not just arithmetic on the current
-  // constant. Protocol 3 (ADR 0003) turned the rejection into a range check; 4 (ADR 0004)
-  // removed `lease.heartbeat` and `mode` behind that same no-shim rule; 5 (ADR 0005) adds
-  // `device.exec` and a `mode` field on `status.get` the same way. A v1 client has no overlap
-  // with `PROTOCOL_VERSION_RANGE` and is still rejected outright.
   it("rejects a protocol v1 client outright rather than serving it a wire it cannot speak", async () => {
     const harness = await createHarness();
     const legacy = await createClient(harness.socketPath);
@@ -638,7 +632,6 @@ describe("DaemonServer", () => {
       payload: { component: "27.0", outcome: "installed", platform: "ios", version: "27.0" },
     });
     expect(client.frames().filter((frame) => frame.push === "component-progress")).toEqual([
-      // The install's start, with no fraction: the schema accepts it as a push.
       {
         payload: { progress: { stage: "downloading" }, requestId: "install-frame" },
         push: "component-progress",
@@ -647,7 +640,6 @@ describe("DaemonServer", () => {
         payload: { progress: { fraction: 0.5, stage: "downloading" }, requestId: "install-frame" },
         push: "component-progress",
       },
-      // The install succeeded: its final report, before the reply.
       {
         payload: { progress: { fraction: 1, stage: "downloading" }, requestId: "install-frame" },
         push: "component-progress",
@@ -677,15 +669,11 @@ describe("DaemonServer", () => {
     });
     expect(removed).toMatchObject({
       ok: true,
-      payload: { driverDeviceId: "UDID-1", id: "UDID-1" },
+      payload: { driverDeviceId: "UDID-1", id: "dev_1" },
     });
   });
 
   it("routes two commands on one connection by frame id, and pushes to no other connection", async () => {
-    // ADR 0005 §19a keys `output` on the request's frame id for the same reason `progress` is
-    // keyed on it: one connection may have several calls in flight. And a push is a *reply* to
-    // one call, not a broadcast -- a second connection, even one owned by the same principal,
-    // has no business seeing another's command output.
     const clock = new FakeClock(1_000);
     const driver = passthroughDriver(clock);
     const harness = await createHarness({
@@ -2921,25 +2909,12 @@ async function createHarness(
     readonly beginStop?: () => void;
     readonly stateFilesystem?: MemoryFilesystem;
     readonly stopAuxiliary?: () => Promise<void>;
-    /** ADR 0003 §5's per-start admin secret (`AdminSecretManager`). Undefined by default, same
-     * as `DaemonServer`'s own default -- most of this suite doesn't exercise the credential
-     * handshake at all. A test that needs to observe `persist()`/`remove()` calls (or their
-     * absence -- see the "loses the start race" test) injects a spy here. */
     readonly adminSecret?: AdminSecretManager;
-    /** ADR 0003 §5's seam (see `session.ts`): defaults every session in this harness to
-     * "admin" -- this suite predates roles and exercises every operation freely, the same
-     * access a pre-ADR-0003 connection always had. Tests that specifically exercise role
-     * enforcement (ADR §3) override this to get an "agent" (or mixed) session instead. */
     readonly resolveRole?: SessionRoleResolver;
-    /** Overrides the `downloads` config block for tests that exercise the download policy. */
     readonly downloads?: Partial<Config["downloads"]>;
-    /** Wires `device.exec`'s runner (ADR 0005 §19a); absent by default like the option itself. */
     readonly processRunner?: ProcessRunner;
-    /** Replaces the real socket host, for a test that has to control a frame's write. */
     readonly host?: ConnectionHost;
-    /** Overrides the protocol range this daemon advertises, to stand in for an older worker. */
     readonly protocolVersion?: ProtocolRange;
-    /** Wires `device.add` and `device.remove` to the engine's enrollment; absent by default. */
     readonly includeEnrollment?: boolean;
   } = {},
 ) {

@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import type { FakeDriverRefusalReason, ScriptedPhysicalDevice } from "./fake-driver/types.js";
@@ -287,13 +290,19 @@ describe("simlock device add", () => {
   );
 
   it("of an ID no scripted device lists answers DEVICE_NOT_ENROLLABLE not-connected", async () => {
-    const env = await startDaemon({ ios: { physicalDevices: [IPHONE] } });
+    const daemon = await httpDaemon({ ios: { physicalDevices: [IPHONE] } });
 
-    const result = await env.cli(["device", "add", "--platform", "ios", "NOT-PLUGGED-IN"]);
+    const result = await daemon.env.cli(["device", "add", "--platform", "ios", "NOT-PLUGGED-IN"]);
+    const http = await postDevice(daemon, { id: "NOT-PLUGGED-IN", platform: "ios" });
 
     expect(result.code, result.stderr).toBe(12);
     expect(result.error?.code).toBe("DEVICE_NOT_ENROLLABLE");
-    expect(await rows(env)).toEqual([]);
+    expect(http.body.error).toMatchObject({
+      code: "DEVICE_NOT_ENROLLABLE",
+      id: "NOT-PLUGGED-IN",
+      reason: "not-connected",
+    });
+    expect(await rows(daemon.env)).toEqual([]);
   });
 
   it("naming a Simlock simulator's driverDeviceId, or an emulator's driverDeviceId and, separately, its address, answers virtual-device and the driver log has no inspectPhysical call", async () => {
@@ -546,7 +555,7 @@ describe("device add over HTTP", () => {
 
     const accepted = await remove(operator);
     expect(accepted.status).toBe(200);
-    expect(await accepted.json()).toEqual({ driverDeviceId: UDID, id: UDID });
+    expect(await accepted.json()).toEqual({ driverDeviceId: UDID, id: enrolled.id });
     expect((await rows(env)).find((row) => row.id === enrolled.id)?.state).toBe("deleted");
   });
 });
@@ -622,5 +631,11 @@ describe("android enrolment", () => {
     expect(result.stdout).toBe(
       "Enrolled Pixel 9 (Android 15) as R58M123ABC, 1 user app recorded.\n",
     );
+    const state = JSON.parse(await readFile(join(env.home, "state.json"), "utf8")) as {
+      physicalDevices: { driverDeviceId: string; enrolledApps: string[] }[];
+    };
+    expect(state.physicalDevices.map((record) => record.enrolledApps)).toEqual([
+      ["com.example.mail"],
+    ]);
   });
 });

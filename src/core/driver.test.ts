@@ -6,6 +6,7 @@ import {
   DiskSpaceGuard,
   type Driver,
   type DriverDevice,
+  type DriverRefusalReason,
   InsufficientDiskSpaceError,
   type PhysicalInspection,
   sameReceipt,
@@ -214,28 +215,37 @@ describe("the virtual-only driver and lifecycle calls (ADR 0022 §4, §5)", () =
 });
 
 describe("PhysicalInspection (ADR 0022 §5)", () => {
-  /** Never run: a refusal naming the core's own reason must not compile. */
-  function refusalReasons(): void {
-    const refused: PhysicalInspection = {
-      enrollable: false,
-      message: "not plugged in",
-      reason: "not-connected",
-    };
-    const refusedAsVirtual: PhysicalInspection = {
-      enrollable: false,
-      message: "a simulator",
-      reason: "virtual-device",
-    };
+  function otherPlatformDoesNotCompile(): void {
     const otherPlatform: PhysicalInspection = {
       enrollable: false,
       message: "enrolled as iOS",
       // @ts-expect-error only the core can know a device is enrolled on the other platform
       reason: "enrolled-on-other-platform",
     };
-    void [refused, refusedAsVirtual, otherPlatform];
+    void otherPlatform;
   }
 
   it("lets a driver refuse with every reason but enrolled-on-other-platform", () => {
-    expect(refusalReasons).toBeTypeOf("function");
+    const reasons: Record<DriverRefusalReason, true> = {
+      "developer-mode-off": true,
+      locked: true,
+      "network-only": true,
+      "not-connected": true,
+      "os-too-old": true,
+      unreadable: true,
+      "unsupported-kind": true,
+      untrusted: true,
+      "virtual-device": true,
+    };
+
+    const refusals = (Object.keys(reasons) as DriverRefusalReason[]).map(
+      (reason): PhysicalInspection => ({ enrollable: false, message: `refused ${reason}`, reason }),
+    );
+
+    expect(refusals).toHaveLength(9);
+    expect(refusals.map((refusal) => !refusal.enrollable && refusal.reason)).not.toContain(
+      "enrolled-on-other-platform",
+    );
+    expect(otherPlatformDoesNotCompile).toBeTypeOf("function");
   });
 });

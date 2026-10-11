@@ -4139,13 +4139,12 @@ describe("createLeasing after a quarantine retry (ADR 0022 §2)", () => {
     harness.clock.advance(config().warmPool.quarantine.retryBackoffMs);
     await flush();
 
-    const grant = await waiting;
-    expect(grant.device.id).toBe(first.device.id);
+    expect(await settledOrPending(waiting)).toMatchObject({ device: { id: first.device.id } });
     expect(driver.calls.filter((call) => call.operation === "makeReady")).toHaveLength(bootsBefore);
     expect(driver.calls.filter((call) => call.operation === "provision")).toHaveLength(1);
   });
 
-  it("reports a warm target of one for the quarantined simulator's spec as ready 1 in the pass the retry's device.quarantine-recovered starts", async () => {
+  it("reports a warm target of one for the quarantined simulator's spec as ready 1 once the retry has emitted device.quarantine-recovered", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" });
     driver.failOn("reclaim", 1, new DriverCrashError("purge exploded"));
@@ -4166,6 +4165,12 @@ describe("createLeasing after a quarantine retry (ADR 0022 §2)", () => {
     await flush();
     await harness.engine.settle();
 
+    expect(
+      harness.bus
+        .replay()
+        .filter((event) => event.event === "device.quarantine-recovered")
+        .map((event) => (event.payload as { deviceId: string }).deviceId),
+    ).toEqual([first.device.id]);
     expect(harness.registry.snapshot.devices[0]?.state).toBe("ready");
     expect(harness.engine.core.warmPoolReader.figures().targets).toMatchObject([
       { count: 1, ready: 1 },

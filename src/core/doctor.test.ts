@@ -1315,7 +1315,7 @@ describe("Doctor", () => {
     });
   });
 
-  it("reports no live-drift finding for a quarantined simulator while its retry holds its claim, and registry-device-missing once the fake no longer lists it", async () => {
+  it("reports no live-drift finding for a quarantined simulator while its retry runs, and registry-device-missing once the fake no longer lists it", async () => {
     const clock = new FakeClock(10_000);
     const eventBus = new EventBus(clock);
     const registry = await Registry.load({

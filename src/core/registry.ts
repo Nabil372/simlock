@@ -12,6 +12,7 @@ import {
   type DeviceRecord,
   type DeviceState,
   type DeviceTransitionUpdate,
+  IllegalTransition,
   isSettled,
   type LeaseGrant,
   type LeaseIdentity,
@@ -123,7 +124,6 @@ export interface CreateLeaseInput {
   readonly deviceId: string;
   readonly requesterId: string;
   readonly ownerId: string;
-  /** The width this lease is granted with; stored on the record, see `LeaseRecord.ttlMs`. */
   readonly ttlMs: number;
   readonly ttlDeadline: number;
   /**
@@ -299,7 +299,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     deviceId: string,
     to: DeviceState,
     event?: RegistryDeviceEvent,
-    /** Fields a driver call resolved alongside this transition -- currently a fresh `makeReady` address. */
     update?: DeviceTransitionUpdate,
   ): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
@@ -321,12 +320,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated);
   }
 
-  /**
-   * Commits `reclaiming -> shutdown` for a device whose driver shutdown ran without a purge, so
-   * no `device.reclaimed` fact fits: an unleased reclaim interrupted by daemon shutdown and found
-   * at startup, or a spent fresh device's lease-end shutdown before its delete. The caller emits
-   * whatever fact its own path owns.
-   */
   async completeReclaimWithoutPurge(deviceId: string): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (device.state !== "reclaiming") {
@@ -448,11 +441,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated);
   }
 
-  /**
-   * Commits `quarantined -> deleted` once the driver `destroy` has already run: a spent fresh
-   * device whose retried delete succeeded (initiator `lease-end`), or any device quarantine gave
-   * up on (initiator `quarantine-coordinator`).
-   */
   // fallow-ignore-next-line unused-class-member -- called through QuarantineCoordinator's registry port.
   async deleteQuarantined(deviceId: string, initiator: string): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
@@ -476,7 +464,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated as DeviceRecord);
   }
 
-  /** Flags a device whose observed boot state disagrees with the committed registry state. */
   async markForeignStateDetected(deviceId: string, at: number): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     // Doctor re-reports persistent drift on every reaper tick; keep the first-detected
@@ -491,7 +478,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated);
   }
 
-  /** Flags a device whose provenance marks no longer prove Simlock owns it. */
   async markForeignProvenanceDetected(deviceId: string, at: number): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (device.foreignProvenanceDetectedAt !== undefined) {
@@ -552,7 +538,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated);
   }
 
-  /** Records externally verified disappearance; no driver verb is invoked. */
   async markDeviceMissing(deviceId: string, initiator: string): Promise<DeviceRecord> {
     const { device } = this.#requireDeviceRecord(deviceId);
     if (this.#leases.some((lease) => lease.deviceId === deviceId)) {
@@ -666,8 +651,9 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
       deferredReclaimLeaseId: _deferred,
       ...kept
     } = device;
+    const settled = device.state === "quarantined" ? transition(kept, "ready") : kept;
     const updated: PhysicalDevice = {
-      ...kept,
+      ...settled,
       enrolledApps: [...input.apps],
       readyAt: this.options.clock.now(),
       spec: {
@@ -677,7 +663,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
         physical: true,
         platform: device.spec.platform,
       },
-      state: "ready",
     };
     const devices = [...this.#devices];
     devices[index] = updated;
@@ -688,16 +673,22 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
 
   async unenrollPhysical(deviceId: string): Promise<PhysicalDevice> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
-    if (!device.physical || (device.state !== "ready" && device.state !== "quarantined")) {
-      throw new RegistryEventError(`Cannot unenrol device: ${deviceId}`);
-    }
+    if (!device.physical) throw new RegistryEventError(`Cannot unenrol device: ${deviceId}`);
     const {
       quarantineAttempts: _quarantineAttempts,
       quarantineNextRetryAt: _quarantineNextRetryAt,
       quarantinedAt: _quarantinedAt,
       ...kept
     } = device;
-    const updated = transition(kept, "deleted");
+    let updated: PhysicalDevice;
+    try {
+      updated = transition(kept, "deleted");
+    } catch (error) {
+      if (error instanceof IllegalTransition) {
+        throw new RegistryEventError(`Cannot unenrol device: ${deviceId}`);
+      }
+      throw error;
+    }
     const devices = [...this.#devices];
     devices[index] = updated;
     await this.#commit(devices, this.#leases);

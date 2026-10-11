@@ -107,7 +107,7 @@ modules with.
 
 | Component | Where | Owns | Does not |
 |---|---|---|---|
-| `Driver` interface | `src/core/driver.ts` | The verbs the core speaks: `resolveSpec`, `provision`, `makeReady`, `reclaim`, `shutdown`, `destroy`, `estimate`, `listManaged`, `listCatalog`, component install and removal, passthrough, lease environment. | Carry platform concepts: addresses and driver data are opaque to the core. |
+| `Driver` interface | `src/core/driver.ts` | The verbs the core speaks: `resolveSpec`, `provision`, `makeReady`, `reclaim`, `shutdown`, `destroy`, `estimate`, `inspectPhysical`, `listManaged`, `listCatalog`, component install and removal, passthrough, lease environment. | Carry platform concepts: addresses and driver data are opaque to the core. |
 | iOS driver | `src/drivers/ios/` | `IosSimctlDriver`: every `simctl` call scoped to the owned device set, erase as the reclaim, the slim pass inside `makeReady`, the label list, runtime install, prerequisites. | Decide the default mode or anything about leases. |
 | Android driver | `src/drivers/android/` | `AndroidDriver`: AVDs in the owned AVD home, Simlock's own adb server (`AdbServerSupervisor`, `AdbRegistrar`), the clean-baseline snapshot as the reclaim, device profiles, system-image install, prerequisites. | Same as iOS. |
 | Installer process | `src/drivers/installer-process.ts` | Running a platform's installer command with streamed progress. | Decide whether to install. |

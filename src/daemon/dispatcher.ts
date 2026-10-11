@@ -112,9 +112,7 @@ export interface DispatcherOptions {
   readonly components: Pick<ComponentInstaller, "install" | "inProgress" | "list" | "remove">;
   readonly config: Config;
   readonly doctor?: Doctor;
-  /** Answers `events.replay`: the ring, or the event file for a `sinceTs`. */
   readonly eventHistory: Pick<EventHistory, "replay">;
-  /** Answers whether a device's pool is the one a request naming no mode draws from. */
   readonly deviceModes: DeviceModeReader;
   readonly leases: LeaseCommands;
   readonly logger?: Logger;
@@ -291,20 +289,14 @@ export class Dispatcher {
         "worker.install-component",
         "worker.install-component installs on a gateway's workers, and this daemon is not a gateway; install on this host without naming workers",
       ),
-      // "daemon.stop" deliberately absent -- see the class comment; `DaemonServer` never calls
-      // `dispatch()` for a frame type this map has no entry for.
     };
   }
 
-  /** Ends this dispatcher's bus subscriptions. `DaemonServer` calls it when the daemon stops. */
   dispose(): void {
     for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
     this.#viewCatalog = undefined;
   }
 
-  /** ADR 0003 §2's pipeline, run by the shared `runDispatch` (see `./dispatch.js`) over this
-   * dispatcher's own handlers, lease lookups, and startup gate. The ordering and the checks
-   * are the contract's; only the three inputs below are this implementation's. */
   dispatch<Op extends OperationName>(
     operation: Op,
     rawInput: unknown,
@@ -841,7 +833,7 @@ export class Dispatcher {
   #deviceRemove: Handler<"device.remove"> = async (input) => {
     try {
       const device = await this.#requireEnrollment().remove(input.id);
-      return { driverDeviceId: device.driverDeviceId, id: device.driverDeviceId };
+      return { driverDeviceId: device.driverDeviceId, id: device.id };
     } catch (error: unknown) {
       throw describeEnrollmentError(error);
     }
@@ -855,9 +847,6 @@ export class Dispatcher {
   }
 
   /**
-   * ADR §11: the daemon is the only owner of `tokens.json` -- `TokenStore.create` never
-   * persists the plaintext `secret`, only its hash, exactly as it did when the CLI called it
-   * directly.
    */
   #tokenCreate: Handler<"token.create"> = async (input) => {
     const { record, secret } = await this.#requireTokens().create(input.role, input.label);
@@ -962,7 +951,6 @@ function describeEnrollmentError(error: unknown): unknown {
   return error;
 }
 
-/** ADR 0012 §2: an operation that acts on a gateway's workers, asked of a worker. */
 function unsupportedOnWorker(
   operation: OperationName,
   message = `${operation} acts on a gateway's workers, and this daemon is not a gateway`,

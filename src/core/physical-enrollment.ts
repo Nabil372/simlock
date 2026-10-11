@@ -9,11 +9,9 @@ export type DeviceNotEnrollableReason = DriverRefusalReason | "enrolled-on-other
 export class DeviceNotEnrollableError extends Error {
   constructor(
     readonly platform: Platform,
-    /** The ID as the operator typed it. */
     readonly id: string,
     readonly reason: DeviceNotEnrollableReason,
     message: string,
-    /** Set when the core knows the device's canonical ID. */
     readonly canonicalId?: string,
   ) {
     super(message);
@@ -31,7 +29,7 @@ export class DeviceBusyError extends Error {
         ? `${id} is leased: release it first`
         : reason === "reclaiming"
           ? `${id} is being reclaimed: try again when it finishes`
-          : `${id} is being enrolled or removed: try again in a moment`,
+          : `${id} is busy with another operation: try again in a moment`,
     );
     this.name = "DeviceBusyError";
   }

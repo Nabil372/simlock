@@ -1080,7 +1080,7 @@ registry id and answers `reenrolled: true`.
   carries `id` (as sent), `platform`, `reason` and, when known,
   `canonicalId`.
 - `409 DEVICE_BUSY` — the device is leased, reclaiming or held by another
-  enrollment. The body carries `id` and `reason` (`leased`, `reclaiming` or
+  operation. The body carries `id` and `reason` (`leased`, `reclaiming` or
   `busy`).
 - `422 NO_DRIVER` — no driver for the platform.
 - `403 FORBIDDEN` — an `agent` token.
@@ -1096,11 +1096,13 @@ Role: `operator`. Forgets an enrolled phone or tablet, the same operation as
 `simlock device remove`. `{id}` is the canonical ID (`driverDeviceId`),
 URL-encoded. Nothing is sent to the device.
 
-→ `200 { "id": "00008110-001A2B3C4D5E", "driverDeviceId": "00008110-001A2B3C4D5E" }`
+→ `200 { "id": "dev_8f2a", "driverDeviceId": "00008110-001A2B3C4D5E" }`
+
+`id` is the registry id, as `POST /v1/devices` answers it.
 
 - `404 UNKNOWN_DEVICE` — no enrolled device has that ID.
 - `409 DEVICE_BUSY` — the device is leased, reclaiming or held by another
-  enrollment.
+  operation.
 - `403 FORBIDDEN` — an `agent` token.
 - `501 UNSUPPORTED_IN_GATEWAY_MODE` — the daemon is a gateway.
 

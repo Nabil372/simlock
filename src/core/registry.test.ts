@@ -2883,6 +2883,9 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
     await expect(registry.reenrollPhysical(device.id, input)).rejects.toThrow(RegistryEventError);
     await expect(registry.unenrollPhysical(device.id)).rejects.toThrow(RegistryEventError);
     await expect(registry.unenrollPhysical(virtual.id)).rejects.toThrow(RegistryEventError);
+    await expect(registry.reenrollPhysical(virtual.id, input)).rejects.toThrow(
+      `Cannot re-enrol device: ${virtual.id}`,
+    );
     await expect(registry.reenrollPhysical(device.id, input)).rejects.toThrow(
       `Cannot re-enrol device: ${device.id}`,
     );

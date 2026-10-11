@@ -802,30 +802,35 @@ describe("QuarantineCoordinator retry claim (ADR 0022 §2)", () => {
     },
   );
 
-  it.each([
-    ["recovers the device", {}, 1],
-    [
-      "deletes a spent fresh device",
-      { target: { lastLeaseEndedAt: 900, leaseIdentity: "fresh" } as const },
-      1,
-    ],
-  ] as const)(
-    "has freed the claim before it emits and before it wakes availability when a retry %s",
-    async (_case, options, wakes) => {
-      const harness = await stalled(options);
-      const claimedAt: boolean[] = [];
-      const sees = () => claimedAt.push(harness.claims.isClaimed(harness.target.id));
-      harness.bus.subscribe("device.quarantine-recovered", sees);
-      harness.notifyAvailability.mockImplementation(sees);
+  it("has freed the claim before it emits and before it wakes availability when a retry recovers the device", async () => {
+    const harness = await stalled({});
+    const claimedAt: boolean[] = [];
+    const sees = () => claimedAt.push(harness.claims.isClaimed(harness.target.id));
+    harness.bus.subscribe("device.quarantine-recovered", sees);
+    harness.notifyAvailability.mockImplementation(sees);
 
-      harness.clock.advance(retryConfig.retryBackoffMs);
-      await flush();
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
 
-      expect(harness.notifyAvailability).toHaveBeenCalledTimes(wakes);
-      expect(claimedAt.length).toBeGreaterThan(0);
-      expect(claimedAt.every((claimed) => !claimed)).toBe(true);
-    },
-  );
+    expect(harness.notifyAvailability).toHaveBeenCalledTimes(1);
+    expect(claimedAt).toEqual([false, false]);
+  });
+
+  it("has freed the claim before it wakes availability when a retry deletes a spent fresh device", async () => {
+    const harness = await stalled({ target: { lastLeaseEndedAt: 900, leaseIdentity: "fresh" } });
+    const claimedAt: boolean[] = [];
+    harness.notifyAvailability.mockImplementation(() =>
+      claimedAt.push(harness.claims.isClaimed(harness.target.id)),
+    );
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.registry.snapshot.virtualDevices.map((device) => device.state)).toEqual([
+      "deleted",
+    ]);
+    expect(claimedAt).toEqual([false]);
+  });
 
   it("has freed the claim before it emits and before it wakes availability when a retry gives up", async () => {
     const clock = new FakeClock(1_000);
