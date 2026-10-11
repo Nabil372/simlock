@@ -549,6 +549,106 @@ describe("PhysicalDeviceWatcher counting", () => {
     await tick(harness);
     expect(stateOf(harness, device)).toBe("absent");
   });
+
+  it("a read begun while a device was ready, that resolves not present after the device is re-enrolled, does not count: with health.stableObservations 2, one more not-present read leaves it ready", async () => {
+    const harness = await createHarness();
+    const device = await enrollIphone(harness, "UDID-A");
+    startWatcher(harness);
+    gone(harness, "UDID-A");
+    await tick(harness);
+    harness.driver.holdPresenceReads("UDID-A");
+    harness.clock.advance(PROBE_MS);
+    await flush();
+    expect(readsOf(harness.driver)).toHaveLength(2);
+    harness.driver.setPhysicalDevices([{ ids: ["UDID-A"], model: "iPhone 15 Pro" }]);
+    await harness.engine.core.enrollment.add("ios", "UDID-A");
+
+    harness.driver.releasePresenceReads();
+    await flush();
+    expect(stateOf(harness, device)).toBe("ready");
+    await tick(harness);
+    expect(stateOf(harness, device)).toBe("ready");
+
+    await tick(harness);
+    expect(stateOf(harness, device)).toBe("absent");
+  });
+
+  it("starting the watcher twice arms one timer: one health.probeIntervalMs later the platform has been read once", async () => {
+    const harness = await createHarness();
+    await enrollIphone(harness, "UDID-A");
+    startWatcher(harness);
+    startWatcher(harness);
+
+    await tick(harness);
+
+    expect(readsOf(harness.driver)).toHaveLength(1);
+  });
+
+  it("a watcher started after it was disposed reads nothing", async () => {
+    const harness = await createHarness();
+    await enrollIphone(harness, "UDID-A");
+    watcherOf(harness)?.dispose();
+    startWatcher(harness);
+
+    await tick(harness, 3);
+
+    expect(readsOf(harness.driver)).toEqual([]);
+  });
+
+  it("a read that rejects is logged once as a failed read by the watcher's module, and no device action is attempted", async () => {
+    const { logger, sink } = capturingLogger();
+    const harness = await createHarness({ logger });
+    await enrollIphone(harness, "UDID-A");
+    harness.driver.failOn("listPresentPhysical", 1, new Error("devicectl: timed out"));
+    startWatcher(harness);
+
+    await tick(harness);
+
+    const warnings = sink.records.filter((record) => record.level === "warn");
+    expect(readsOf(harness.driver)).toHaveLength(1);
+    expect(warnings).toMatchObject([
+      {
+        fields: { error: expect.anything(), platform: "ios" },
+        message: "physical presence read failed",
+        module: expect.stringMatching(/\.physical-device-watcher$/),
+      },
+    ]);
+  });
+
+  it("a tick that throws outside any device action is logged as an error and the next tick is armed", async () => {
+    const { logger, sink } = capturingLogger();
+    const harness = await createHarness({ logger });
+    const device = await enrollIphone(harness, "UDID-A");
+    gone(harness, "UDID-A");
+    const original = Object.getOwnPropertyDescriptor(Registry.prototype, "snapshot")?.get;
+    let thrown = false;
+    const spy = vi
+      .spyOn(harness.registry, "snapshot", "get")
+      .mockImplementation(function (this: Registry) {
+        if (!thrown && new Error().stack?.includes("physical-device-watcher.ts:") === true) {
+          thrown = true;
+          throw new Error("snapshot unavailable");
+        }
+        return original?.call(this) as never;
+      });
+    startWatcher(harness);
+
+    await tick(harness);
+    spy.mockRestore();
+
+    expect(thrown).toBe(true);
+    expect(sink.records.filter((record) => record.level === "error")).toMatchObject([
+      {
+        fields: { error: expect.anything() },
+        message: "physical device watcher tick failed",
+        module: expect.stringMatching(/\.physical-device-watcher$/),
+      },
+    ]);
+    await tick(harness);
+    expect(stateOf(harness, device)).toBe("ready");
+    await tick(harness);
+    expect(stateOf(harness, device)).toBe("absent");
+  });
 });
 
 describe("PhysicalDeviceWatcher acting on a device", () => {
@@ -704,6 +804,12 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
     expect(states.filter((state) => state === "absent")).toHaveLength(1);
     expect(states.filter((state) => state === "ready")).toHaveLength(1);
     expect(problems().length).toBeGreaterThan(problemsBefore);
+    const failed = [first, second].find((device) => stateOf(harness, device) === "ready");
+    expect(
+      problems().filter((record) => record.message === "physical device action failed"),
+    ).toMatchObject([
+      { fields: { deviceId: failed?.id, error: expect.anything() }, level: "warn" },
+    ]);
 
     await tick(harness);
     expect(stateOf(harness, first)).toBe("absent");
@@ -804,6 +910,125 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
     expect(harness.driver.calls.map((call) => call.operation)).toEqual([]);
     expect(writes).toHaveLength(0);
   });
+
+  it("a ready device that stays not present for health.stableObservations reads emits one device.absence-detected with previousState ready and the last read's reason", async () => {
+    const harness = await createHarness();
+    const device = await enrollIphone(harness, "UDID-A");
+    startWatcher(harness);
+    gone(harness, "UDID-A", "locked");
+
+    await tick(harness, 2);
+
+    expect(eventsOf(harness, "device.absence-detected")).toMatchObject([
+      { payload: { absentReason: "locked", deviceId: device.id, previousState: "ready" } },
+    ]);
+  });
+
+  it("a ready device read present without a miss does not wake the queue", async () => {
+    const harness = await createHarness();
+    await enrollIphone(harness, "UDID-A");
+    const kick = vi.spyOn(
+      harness.engine.leasing.corePorts.leaseMaintenance.acquisition as unknown as { kick(): void },
+      "kick",
+    );
+    startWatcher(harness);
+
+    await tick(harness, 2);
+
+    expect(readsOf(harness.driver)).toHaveLength(2);
+    expect(kick).not.toHaveBeenCalled();
+  });
+
+  it("a ready device read not present once and then present wakes the queue once, not again on the next present read", async () => {
+    const harness = await createHarness();
+    await enrollIphone(harness, "UDID-A");
+    const kick = vi.spyOn(
+      harness.engine.leasing.corePorts.leaseMaintenance.acquisition as unknown as { kick(): void },
+      "kick",
+    );
+    startWatcher(harness);
+    gone(harness, "UDID-A");
+    await tick(harness);
+    expect(kick).not.toHaveBeenCalled();
+
+    back(harness, "UDID-A");
+    await tick(harness);
+    expect(kick).toHaveBeenCalledTimes(1);
+
+    await tick(harness);
+    expect(kick).toHaveBeenCalledTimes(1);
+  });
+
+  it("a leased device read not present once and then present does not wake the queue", async () => {
+    const harness = await createHarness();
+    const device = await enrollIphone(harness, "UDID-A");
+    startWatcher(harness);
+    await harness.engine.request(physicalRequest, asking("agent"));
+    expect(stateOf(harness, device)).toBe("leased");
+    const kick = vi.spyOn(
+      harness.engine.leasing.corePorts.leaseMaintenance.acquisition as unknown as { kick(): void },
+      "kick",
+    );
+    gone(harness, "UDID-A");
+    await tick(harness);
+    back(harness, "UDID-A");
+
+    await tick(harness);
+
+    expect(stateOf(harness, device)).toBe("leased");
+    expect(kick).not.toHaveBeenCalled();
+  });
+
+  it("an absent device read present returns with the osVersion of the read, or with the one on its record when the read has none", async () => {
+    const withVersion = await absentHarness("not-present");
+    vi.spyOn(withVersion.harness.driver, "listPresentPhysical").mockResolvedValue(
+      answer([{ driverDeviceId: "UDID-A", osVersion: "18.5", present: true }]),
+    );
+    startWatcher(withVersion.harness);
+    await tick(withVersion.harness);
+    expect(eventsOf(withVersion.harness, "device.returned")).toMatchObject([
+      { payload: { deviceId: withVersion.device.id, osVersion: "18.5" } },
+    ]);
+
+    const withoutVersion = await absentHarness("not-present");
+    vi.spyOn(withoutVersion.harness.driver, "listPresentPhysical").mockResolvedValue(
+      answer([{ driverDeviceId: "UDID-A", present: true }]),
+    );
+    startWatcher(withoutVersion.harness);
+    await tick(withoutVersion.harness);
+    expect(eventsOf(withoutVersion.harness, "device.returned")).toMatchObject([
+      { payload: { deviceId: withoutVersion.device.id, osVersion: "18.4" } },
+    ]);
+  });
+
+  it("a tick whose watcher is disposed while it acts on one device acts on no later device of that tick", async () => {
+    const options = { health: { stableObservations: 1 } };
+    const first = await createHarness(options);
+    const missing = await enrollIphone(first, "UDID-A");
+    const returned = await enrollIphone(first, "UDID-B");
+    const harness = await reopen(
+      first,
+      (records) => markAbsent(records, "UDID-B", "not-present"),
+      options,
+    );
+    gone(harness, "UDID-A");
+    back(harness, "UDID-B");
+    const original = harness.filesystem.writeFileAtomic.bind(harness.filesystem);
+    vi.spyOn(harness.filesystem, "writeFileAtomic").mockImplementationOnce(
+      async (path, contents, writeOptions) => {
+        watcherOf(harness)?.dispose();
+        return original(path, contents, writeOptions);
+      },
+    );
+    startWatcher(harness);
+
+    await tick(harness);
+
+    expect(stateOf(harness, missing)).toBe("absent");
+    expect(stateOf(harness, returned)).toBe("absent");
+    expect(reclaimCalls(harness.driver)).toEqual([]);
+    expect(eventsOf(harness, "device.returned")).toEqual([]);
+  });
 });
 
 describe("PhysicalDeviceWatcher around restarts and doctor", () => {
@@ -874,6 +1099,32 @@ describe("PhysicalDeviceWatcher around restarts and doctor", () => {
         JSON.stringify(call.arguments).includes("UDID-B"),
       ),
     ).toEqual([]);
+  });
+
+  it("a device left reclaiming by a killed daemon that left reclaiming before the first tick, and entered it again in this process, is never reclaimed by the watcher", async () => {
+    const first = await createHarness();
+    const device = await enrollIphone(first, "UDID-A");
+    await first.registry.transitionDevice(device.id, "leased");
+    await first.registry.transitionDevice(device.id, "reclaiming");
+    const harness = await reopen(first, () => undefined);
+    back(harness, "UDID-A");
+    await harness.engine.convergeRunningCapacity();
+    await harness.registry.transitionDevice(device.id, "ready", {
+      event: "device.reclaimed",
+      payload: { deviceId: device.id, duration: 0, strategy: "uninstall" },
+    });
+    startWatcher(harness);
+    await tick(harness);
+    expect(readsOf(harness.driver)).toEqual([["UDID-A"]]);
+    expect(reclaimCalls(harness.driver)).toEqual([]);
+
+    await harness.registry.transitionDevice(device.id, "leased");
+    await harness.registry.transitionDevice(device.id, "reclaiming");
+    await tick(harness, 2);
+
+    expect(readsOf(harness.driver)).toHaveLength(3);
+    expect(stateOf(harness, device)).toBe("reclaiming");
+    expect(reclaimCalls(harness.driver)).toEqual([]);
   });
 
   it("a device left reclaiming by a killed daemon that doctor --fix quarantines before the watcher's tick stays quarantined, and the watcher runs no reclaim on it", async () => {
@@ -1002,5 +1253,21 @@ describe("PhysicalDeviceWatcher and nuke maintenance", () => {
     gate.resolve();
     expect(await isSettled(settling)).toBe(true);
     expect(stateOf(harness, device)).toBe("ready");
+  });
+
+  it("an absentReason rewrite held back by nuke maintenance is dropped when the watcher is disposed before maintenance ends", async () => {
+    const { device, harness } = await absentHarness("locked");
+    gone(harness, "UDID-A", "not-present");
+    startWatcher(harness);
+    const maintenance = harness.engine.leasing.corePorts.leaseMaintenance.leases;
+    await maintenance.beginMaintenance();
+    await tick(harness);
+    expect(readsOf(harness.driver)).toHaveLength(1);
+
+    watcherOf(harness)?.dispose();
+    await maintenance.endMaintenance();
+    await flush();
+
+    expect(absentReasonOf(harness, device)).toBe("locked");
   });
 });

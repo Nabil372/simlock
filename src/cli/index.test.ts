@@ -3703,6 +3703,34 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
     expect(lines).toContain("Device dev_gone: absent (not-present), physical phone");
   });
 
+  it("status prints a bare state for an absent device with no reason and for a device that is not absent", async () => {
+    const physical = (id: string, state: string, absentReason?: string) => ({
+      class: "phone",
+      id,
+      physical: true,
+      servesDefaultMode: false,
+      spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+      state,
+      ...(absentReason === undefined ? {} : { absentReason }),
+    });
+    const status = {
+      ...EMPTY_STATUS,
+      devices: [physical("dev_bare", "absent"), physical("dev_stray", "ready", "locked")],
+    } as unknown as StatusGetOutput;
+    const output = outputCapture();
+
+    await runCli(
+      ["status"],
+      output.environmentWith({
+        connectAdmin: async () => fakeClient({ getStatus: () => Promise.resolve(status) }),
+      }),
+    );
+
+    const lines = output.stdout.split("\n");
+    expect(lines).toContain("Device dev_bare: absent, physical phone");
+    expect(lines).toContain("Device dev_stray: ready, physical phone");
+  });
+
   it("simlock status marks a stalled device", async () => {
     const device = (id: string, extra: object) => ({
       physical: false,

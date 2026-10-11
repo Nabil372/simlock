@@ -5,6 +5,7 @@ import { FakeClock, FakeSystemStats, MemoryFilesystem } from "../ports/index.js"
 import { type FakePhysicalDevice } from "./fake-driver.js";
 import type { PhysicalDevice } from "./domain.js";
 import { createCore, loadConfig, Registry } from "./index.js";
+import { PhysicalEnrollment } from "./physical-enrollment.js";
 import { FakeDriver, testComponentWiring } from "./testing.js";
 
 const UDID = "00008110-001A2B3C4D5E";
@@ -437,6 +438,72 @@ describe("PhysicalEnrollment", () => {
     ]) {
       await expect(attempt()).rejects.toMatchObject({ name: "DeviceBusyError", reason: "busy" });
     }
+  });
+
+  it("re-enrolls an absent physical device to ready with the same registry ID, and removes it", async () => {
+    const harness = await build();
+    const { device } = await harness.core.enrollment.add("ios", UDID);
+    const lease = await harness.registry.createLease({
+      deviceId: device.id,
+      ownerId: "agent",
+      requesterId: "agent",
+      ttlDeadline: 61_000,
+      ttlMs: 60_000,
+    });
+    await harness.registry.endLeaseAndMarkDeviceAbsent(lease.id, "not-present", () => undefined);
+    expect(live(harness)[0]?.state).toBe("absent");
+
+    const again = await harness.core.enrollment.add("ios", UDID);
+
+    expect(again).toMatchObject({ reenrolled: true, device: { id: device.id, state: "ready" } });
+    await harness.registry.endLeaseAndMarkDeviceAbsent(
+      (
+        await harness.registry.createLease({
+          deviceId: device.id,
+          ownerId: "agent",
+          requesterId: "agent",
+          ttlDeadline: 61_000,
+          ttlMs: 60_000,
+        })
+      ).id,
+      "locked",
+      () => undefined,
+    );
+    expect(live(harness)[0]?.state).toBe("absent");
+
+    await harness.core.enrollment.remove(UDID);
+
+    expect(physicalRecords(harness)[0]).toMatchObject({ id: device.id, state: "deleted" });
+  });
+
+  it("enrolls and re-enrolls without a readiness callback, and calls a given one with the registry ID after an enrollment and after a re-enrollment", async () => {
+    const harness = await build();
+    const bare = new PhysicalEnrollment({
+      claims: harness.core.claims,
+      decisions: { run: (operation) => Promise.resolve().then(operation) },
+      drivers: { get: () => harness.driver },
+      registry: harness.registry,
+    });
+    const ready = vi.fn();
+    const watched = new PhysicalEnrollment({
+      claims: harness.core.claims,
+      decisions: { run: (operation) => Promise.resolve().then(operation) },
+      drivers: { get: () => harness.driver },
+      physicalDeviceReady: ready,
+      registry: harness.registry,
+    });
+
+    const first = await bare.add("ios", UDID);
+    const second = await bare.add("ios", UDID);
+    expect([first.reenrolled, second.reenrolled]).toEqual([false, true]);
+    await watched.add("ios", UDID);
+
+    expect(ready).toHaveBeenCalledExactlyOnceWith(first.device.id);
+    ready.mockClear();
+    await harness.core.enrollment.remove(UDID);
+    const created = await watched.add("ios", UDID);
+    expect(ready).toHaveBeenCalledExactlyOnceWith(created.device.id);
+    expect(created.reenrolled).toBe(false);
   });
 
   it("words a busy device as leased, reclaiming or busy with another operation", async () => {

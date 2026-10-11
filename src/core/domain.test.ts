@@ -347,6 +347,19 @@ describe("a physical device's state machine (ADR 0022 §2)", () => {
     expect(ready).not.toHaveProperty("mode");
   });
 
+  it("records the absent reason only on a move into absent, and leaves no reason key when none was given", () => {
+    const leased = { ...physicalDevice, state: "leased" as const };
+
+    expect(transition(leased, "absent", { absentReason: "locked" })).toMatchObject({
+      absentReason: "locked",
+      state: "absent",
+    });
+    expect(transition(leased, "absent")).not.toHaveProperty("absentReason");
+    expect(
+      transition({ ...physicalDevice, state: "reclaiming" }, "ready", { absentReason: "locked" }),
+    ).not.toHaveProperty("absentReason");
+  });
+
   it("drops a deferred reclaim on any exit from reclaiming, as a virtual device does", () => {
     const reclaiming = {
       ...physicalDevice,

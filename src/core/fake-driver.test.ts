@@ -168,6 +168,16 @@ describe("FakeDriver", () => {
     ]);
   });
 
+  it("forgets a scripted OS version when the device is scripted present again without one", async () => {
+    const driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
+    driver.setPhysicalPresence("A", true, { osVersion: "18.5" });
+    driver.setPhysicalPresence("A", true);
+
+    await expect(driver.listPresentPhysical(["A"])).resolves.toEqual([
+      { driverDeviceId: "A", osVersion: "1.0", present: true },
+    ]);
+  });
+
   it("implements the platform-agnostic Driver contract", () => {
     const driver: Driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
 

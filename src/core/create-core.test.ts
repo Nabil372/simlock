@@ -19,6 +19,7 @@ import {
   type PrerequisiteCheck,
   Registry,
 } from "./index.js";
+import { type FakePhysicalDevice } from "./fake-driver.js";
 import { ReclaimCoordinator } from "./reclaim-coordinator.js";
 import { FakeDriver, testComponentWiring } from "./testing.js";
 import { WarmPool } from "./warm-pool/index.js";
@@ -31,6 +32,7 @@ async function build(
     readonly driverRejections?: readonly DriverRejection[];
     readonly prerequisiteChecks?: readonly PrerequisiteCheck[];
     readonly warmTargets?: Config["warmPool"]["targets"];
+    readonly physicalDevices?: readonly FakePhysicalDevice[];
   } = {},
 ) {
   const clock = new FakeClock(1_000);
@@ -41,6 +43,7 @@ async function build(
     ...(options.reclaimLatencyMs === undefined
       ? {}
       : { latencyMs: { reclaim: options.reclaimLatencyMs } }),
+    ...(options.physicalDevices === undefined ? {} : { physicalDevices: options.physicalDevices }),
     platform: "ios",
   });
   const filesystem = new MemoryFilesystem();
@@ -152,6 +155,25 @@ describe("createCore", () => {
       name: "CorePortMissingError",
       message: 'A core service was called before connect() supplied the "notifyAvailability" port',
     });
+  });
+
+  it("enrolling a physical device before connect succeeds, and after connect tells the ready port its id", async () => {
+    const phone: FakePhysicalDevice = {
+      apps: [],
+      class: "phone",
+      ids: ["UDID-1"],
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+    };
+    const before = await build({ physicalDevices: [phone] });
+    await expect(before.core.enrollment.add("ios", "UDID-1")).resolves.toBeDefined();
+
+    const after = await build({ physicalDevices: [phone] });
+    const ready: string[] = [];
+    after.core.connect({ ...ports(), physicalDeviceReady: (id) => void ready.push(id) });
+    const result = await after.core.enrollment.add("ios", "UDID-1");
+
+    expect(ready).toEqual([(result as unknown as { created: { id: string } }).created.id]);
   });
 
   it("after connect, nuke fences acquisition, then release, releases every lease, and lifts both fences in reverse", async () => {

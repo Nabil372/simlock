@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { Driver, PresentPhysical } from "./driver.js";
-import { readPhysicalPresence } from "./physical-presence.js";
+import { readPhysicalPresence, readPhysicalPresenceDetail } from "./physical-presence.js";
 
 function driverAnswering(answer: readonly PresentPhysical[]) {
   return { listPresentPhysical: vi.fn(async () => answer) } satisfies Pick<
@@ -50,5 +50,32 @@ describe("readPhysicalPresence", () => {
     const driver = { listPresentPhysical: vi.fn().mockRejectedValue(failure) };
 
     await expect(readPhysicalPresence(driver, ["A"])).rejects.toBe(failure);
+  });
+});
+
+describe("readPhysicalPresenceDetail", () => {
+  it("answers a present device's OS version when the entry carries one, and no osVersion key when it does not", async () => {
+    const driver = driverAnswering([
+      { driverDeviceId: "A", osVersion: "18.5", present: true },
+      { driverDeviceId: "B", present: true },
+    ]);
+
+    const detail = await readPhysicalPresenceDetail(driver, ["A", "B"]);
+
+    expect(detail.get("A")).toStrictEqual({ osVersion: "18.5", present: true });
+    expect(detail.get("B")).toStrictEqual({ present: true });
+  });
+
+  it("answers the reason an entry gives for a device that is not present, and not-present when it gives none", async () => {
+    const driver = driverAnswering([
+      { driverDeviceId: "A", present: false, reason: "locked" },
+      { driverDeviceId: "B", present: false },
+    ]);
+
+    const detail = await readPhysicalPresenceDetail(driver, ["A", "B", "C"]);
+
+    expect(detail.get("A")).toStrictEqual({ present: false, reason: "locked" });
+    expect(detail.get("B")).toStrictEqual({ present: false, reason: "not-present" });
+    expect(detail.get("C")).toStrictEqual({ present: false, reason: "not-present" });
   });
 });

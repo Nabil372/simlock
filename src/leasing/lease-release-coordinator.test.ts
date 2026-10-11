@@ -589,4 +589,94 @@ describe("LeaseReleaseCoordinator", () => {
       expect(harness.registry.snapshot.leases).toHaveLength(1);
     });
   });
+
+  describe("physical devices", () => {
+    async function grantPhysical(harness: Awaited<ReturnType<typeof createHarness>>, id: string) {
+      const device = await harness.registry.enrollPhysical({
+        apps: [],
+        class: "phone",
+        driverDeviceId: id,
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        platform: "ios",
+      });
+      return harness.lifecycle.grant({
+        environment: {},
+        timing: noTiming,
+        requestId: `req_${id}`,
+        source: "warm",
+        deviceId: device.id,
+        requesterId: `agent_${id}`,
+        ownerId: `agent_${id}`,
+      });
+    }
+
+    it("endForAbsentDevice ends the named lease only and answers true, leaving another lease held", async () => {
+      const harness = await createHarness();
+      const first = await grantPhysical(harness, "UDID-A");
+      const second = await grantPhysical(harness, "UDID-B");
+
+      const ended = await harness.coordinator.endForAbsentDevice(first.lease.id, "not-present");
+
+      expect(ended).toBe(true);
+      expect(harness.registry.snapshot.leases.map((lease) => lease.id)).toEqual([second.lease.id]);
+      expect(harness.registry.snapshot.devices.find((d) => d.id === first.device.id)).toMatchObject(
+        { state: "absent", absentReason: "not-present" },
+      );
+    });
+
+    it("endForAbsentDevice answers false for a lease that is gone, and true only the first time for a held one", async () => {
+      const harness = await createHarness();
+      const held = await grantPhysical(harness, "UDID-A");
+
+      const gone = await harness.coordinator.endForAbsentDevice("lease_gone", "not-present");
+      const first = await harness.coordinator.endForAbsentDevice(held.lease.id, "locked");
+      const again = await harness.coordinator.endForAbsentDevice(held.lease.id, "locked");
+
+      expect([gone, first, again]).toEqual([false, true, false]);
+    });
+
+    it("endForAbsentDevice answers false when no lease exists at all", async () => {
+      const harness = await createHarness();
+
+      await expect(
+        harness.coordinator.endForAbsentDevice("lease_gone", "not-present"),
+      ).resolves.toBe(false);
+    });
+
+    it("reclaimReturned answers false and tracks nothing when the reclaim did not start", async () => {
+      const harness = await createHarness();
+      harness.reclaim.reclaimReturned = async () => undefined;
+
+      await expect(harness.coordinator.reclaimReturned("dev_1", "18.4")).resolves.toBe(false);
+      await expect(harness.coordinator.settleBackgroundReclaims()).resolves.toBeUndefined();
+    });
+
+    it("reclaimReturned answers true and keeps settleBackgroundReclaims waiting until the started reclaim settles", async () => {
+      const harness = await createHarness();
+      let finish!: () => void;
+      const settled = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const calls: unknown[][] = [];
+      harness.reclaim.reclaimReturned = (async (...args: unknown[]) => {
+        calls.push(args);
+        return { settled };
+      }) as unknown as typeof harness.reclaim.reclaimReturned;
+
+      const started = await harness.coordinator.reclaimReturned("dev_1", "18.4");
+      let drained = false;
+      void harness.coordinator.settleBackgroundReclaims().then(() => {
+        drained = true;
+      });
+      await flush();
+      expect(drained).toBe(false);
+      finish();
+      await flush();
+
+      expect(started).toBe(true);
+      expect(calls).toEqual([["dev_1", "18.4"]]);
+      expect(drained).toBe(true);
+    });
+  });
 });

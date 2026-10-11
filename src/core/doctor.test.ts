@@ -1315,7 +1315,7 @@ describe("Doctor", () => {
       );
     });
 
-    it("emits device.stalled-transition-detected for a stalled device", async () => {
+    it("emits device.stalled-transition-detected from the doctor, once, for a stalled device and not for other findings", async () => {
       const clock = new FakeClock(10_000);
       const eventBus = new EventBus(clock);
       const registry = await Registry.load({
@@ -1338,7 +1338,9 @@ describe("Doctor", () => {
       });
       clock.advance(9_001);
 
-      await new Doctor({
+      await driver.provision({ physical: false, model: "Phone", osVersion: "1", platform: "ios" });
+
+      const report = await new Doctor({
         decisions: new SerializedDecision(),
         clock,
         config: config(),
@@ -1347,12 +1349,15 @@ describe("Doctor", () => {
         registry,
       }).reconcile();
 
-      expect(eventBus.replay()).toContainEqual(
+      expect(report.findings.some((finding) => finding.kind !== "stalled-transition")).toBe(true);
+      expect(
+        eventBus.replay().filter((entry) => entry.event === "device.stalled-transition-detected"),
+      ).toEqual([
         expect.objectContaining({
-          event: "device.stalled-transition-detected",
+          module: "doctor",
           payload: expect.objectContaining({ deviceId: device.id, state: "provisioning" }),
         }),
-      );
+      ]);
     });
 
     it("--fix quarantines a stalled provisioning device through QuarantineCoordinator", async () => {

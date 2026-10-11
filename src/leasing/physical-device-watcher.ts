@@ -48,7 +48,7 @@ export class PhysicalDeviceWatcher {
 
   /** Not armed by the constructor: the daemon starts it once startup convergence has finished. */
   start(): void {
-    if (this.#disposed || this.#timer !== undefined) return;
+    if (this.#timer !== undefined) return;
     this.#arm();
   }
 
@@ -153,15 +153,11 @@ export class PhysicalDeviceWatcher {
   }
 
   #forget(enrolled: readonly PhysicalDevice[]): void {
-    const live = new Map(enrolled.map((device) => [device.id, device]));
-    for (const id of [...this.#counts.keys(), ...this.#generations.keys()]) {
-      if (!live.has(id)) {
-        this.#counts.delete(id);
-        this.#generations.delete(id);
-      }
-    }
+    const reclaiming = new Set(
+      enrolled.filter((device) => device.state === "reclaiming").map((device) => device.id),
+    );
     for (const id of this.#interrupted) {
-      if (live.get(id)?.state !== "reclaiming") this.#interrupted.delete(id);
+      if (!reclaiming.has(id)) this.#interrupted.delete(id);
     }
   }
 
@@ -193,10 +189,8 @@ export class PhysicalDeviceWatcher {
         device.id,
         read.osVersion ?? device.spec.osVersion,
       );
-    } else if (device.state === "reclaiming" && this.#interrupted.has(device.id)) {
-      if (await this.options.releaser.reclaimReturned(device.id)) {
-        this.#interrupted.delete(device.id);
-      }
+    } else if (this.#interrupted.has(device.id)) {
+      await this.options.releaser.reclaimReturned(device.id);
     }
   }
 
