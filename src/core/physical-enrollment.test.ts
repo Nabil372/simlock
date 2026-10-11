@@ -411,6 +411,9 @@ describe("PhysicalEnrollment", () => {
     });
     await second.enrollment.add("ios", UDID);
 
+    await expect(second.enrollment.add("android", UDID)).rejects.toThrow(
+      `${UDID} is enrolled as a ios device`,
+    );
     await expect(second.enrollment.add("android", UDID)).rejects.toMatchObject({
       canonicalId: UDID,
       name: "DeviceNotEnrollableError",
