@@ -709,7 +709,7 @@ export class Doctor {
   ): Promise<void> {
     switch (finding.kind) {
       case "registry-device-missing":
-        await this.#fixMissingDevice(finding.deviceId);
+        await this.options.decisions.run(() => this.#fixMissingDevice(finding.deviceId));
         break;
       case "orphan-device":
       case "orphan-process":
@@ -746,16 +746,14 @@ export class Doctor {
   }
 
   async #fixMissingDevice(deviceId: string): Promise<void> {
-    await this.options.decisions.run(async () => {
-      const snapshot = this.options.registry.snapshot;
-      if (snapshot.leases.some((lease) => lease.deviceId === deviceId)) {
-        return;
-      }
-      const device = snapshot.devices.find((candidate) => candidate.id === deviceId);
-      if (device !== undefined && device.state !== "deleted") {
-        await this.options.registry.markDeviceMissing(deviceId, "doctor");
-      }
-    });
+    const snapshot = this.options.registry.snapshot;
+    if (snapshot.leases.some((lease) => lease.deviceId === deviceId)) {
+      return;
+    }
+    const device = snapshot.devices.find((candidate) => candidate.id === deviceId);
+    if (device !== undefined && device.state !== "deleted") {
+      await this.options.registry.markDeviceMissing(deviceId, "doctor");
+    }
   }
 
   /**
@@ -792,7 +790,7 @@ export class Doctor {
       });
       return;
     }
-    await this.#fixMissingDevice(finding.deviceId);
+    await this.options.decisions.run(() => this.#fixMissingDevice(finding.deviceId));
   }
 
   async #fixForeignStateChange(
