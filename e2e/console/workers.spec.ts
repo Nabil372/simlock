@@ -38,6 +38,7 @@ interface Status {
     readonly id: string;
     readonly state: string;
     readonly mode: string;
+    readonly physical: boolean;
     readonly spec: {
       readonly platform: string;
       readonly model: string;
