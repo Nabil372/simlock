@@ -505,7 +505,7 @@ const device = await admin.addDevice({ platform: "ios", id: "00008110-001A2B3C4D
 //   model: "iPhone 15 Pro", osVersion: "18.4", class: "phone", appCount: 12,
 //   reenrolled: false }
 await admin.removeDevice({ id: device.driverDeviceId });
-// { id: "00008110-001A2B3C4D5E", driverDeviceId: "00008110-001A2B3C4D5E" }
+// { id: "dev_8f2a", driverDeviceId: "00008110-001A2B3C4D5E" }
 ```
 
 - `id` in `addDevice`'s result is the registry id; `driverDeviceId` is the

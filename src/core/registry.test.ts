@@ -2774,11 +2774,16 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
   });
 
   it("carries physical true and initiator operator from unenroll, after the commit", async () => {
-    const { deleted, modules, registry } = await load();
+    const { bus, deleted, modules, registry } = await load();
     const device = await registry.enrollPhysical(input);
+    const stateAtEmit: string[] = [];
+    bus.subscribe("device.deleted", () => {
+      stateAtEmit.push(registry.snapshot.devices[0]?.state ?? "none");
+    });
 
     await registry.unenrollPhysical(device.id);
 
+    expect(stateAtEmit).toEqual(["deleted"]);
     expect(deleted).toEqual([{ deviceId: device.id, initiator: "operator", physical: true }]);
     expect(modules).toEqual(["registry"]);
     expect(registry.snapshot.devices[0]).toMatchObject({ id: device.id, state: "deleted" });
@@ -2789,7 +2794,8 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
     const seen: unknown[] = [];
     const modules: string[] = [];
     bus.subscribe("device.enrolled", (envelope) => {
-      seen.push({ payload: envelope.payload, stored: registry.snapshot.devices.length });
+      const stored = registry.snapshot.devices[0] as { enrolledApps: string[] } | undefined;
+      seen.push({ payload: envelope.payload, stored: stored?.enrolledApps.length ?? 0 });
       modules.push(envelope.module);
     });
 
@@ -2812,7 +2818,7 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
       },
       {
         payload: expect.objectContaining({ appCount: 2, model: "iPhone 16", reenrolled: true }),
-        stored: 1,
+        stored: 2,
       },
     ]);
     expect(modules).toEqual(["registry", "registry"]);

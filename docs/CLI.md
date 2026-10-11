@@ -73,7 +73,7 @@ command starts it again) to bring the platform up.
 | 10 | `EXEC_TIMEOUT` | a `simctl`/`adb` command run through `device.exec` outlived `exec.timeoutMs` and was killed |
 | 10 | `DOWNLOAD_TIMEOUT` | a runtime download, including the time spent waiting for another download on the same platform, outlived `downloads.timeoutMs` |
 | 11 | `NO_CAPACITY` | capacity reached and `--no-wait` was set, or, through a gateway, no worker that takes requests can serve the request |
-| 11 | `DEVICE_BUSY` | `device add` or `device remove` of a device that is leased, being reclaimed or held by another operation, such as an enrolment or a quarantine retry; try again once that ends |
+| 11 | `DEVICE_BUSY` | `device add` or `device remove` of a device that is leased, being reclaimed or held by another operation, such as another `device add`; try again once that ends |
 | 11 | `COMPONENT_BUSY` | `component remove` while a component install or removal runs or waits on that platform; try again once it ends |
 | 12 | `NO_DRIVER` | no driver registered for the requested platform |
 | 12 | `RUNTIME_MISSING` | runtime not installed and no `--allow-download`, or no installed image of the `--image-tag` asked for |
@@ -911,10 +911,11 @@ install <apk>` resolve their path on the **worker's** filesystem, so the
 artifact has to be there already (a shared volume, a CI checkout on that
 machine).
 
-**Five commands refuse outright**, with `UNSUPPORTED_IN_GATEWAY_MODE` (exit
-2): `simlock nuke`, `simlock cleanup`, `simlock doctor`, `simlock device add`
-and `simlock device remove`. The first three act on one
-machine's devices as a whole, and the last two name a device plugged into one
+**Seven commands refuse outright**, with `UNSUPPORTED_IN_GATEWAY_MODE` (exit
+2): `simlock nuke`, `simlock cleanup`, `simlock doctor`, `simlock component
+list`, `simlock component remove`, `simlock device add` and `simlock device
+remove`. The first five act on one machine's devices or components as a
+whole, and the last two name a device plugged into one
 worker; in v1 all of them stay per-worker, direct operations — run them
 against that worker's own daemon. A fleet-wide
 destructive command from one endpoint is not something v1 offers.
@@ -1808,8 +1809,7 @@ add again gets a new record.
   `enrolled-on-other-platform`. The message is the driver's own, and says
   what to do.
 - `DEVICE_BUSY` (exit 11): the device is `leased`, is `reclaiming`, or
-  another operation holds it, such as a `device add` or a quarantine retry
-  (`busy`).
+  another operation holds it, such as another `device add` (`busy`).
 - `NO_DRIVER` (exit 12): this machine has no driver for the platform.
 
 `device remove` takes the canonical ID, which `simlock status --json` and

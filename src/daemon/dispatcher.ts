@@ -123,8 +123,7 @@ export interface DispatcherOptions {
   readonly enrollment?: Pick<PhysicalEnrollment, "add" | "remove">;
   /**
    * Builds the scoped command behind `simlock simctl` / `simlock adb` (ADR 0001, decision 7).
-   * Optional for the same reason as `nuke`/`doctor`: the many tests that never issue a
-   * passthrough should not have to fabricate a resolver.
+   * Optional so the many tests that never issue a passthrough need not fabricate a resolver.
    */
   readonly passthrough?: PassthroughResolver;
   /**
@@ -846,8 +845,6 @@ export class Dispatcher {
     return this.options.enrollment;
   }
 
-  /**
-   */
   #tokenCreate: Handler<"token.create"> = async (input) => {
     const { record, secret } = await this.#requireTokens().create(input.role, input.label);
     return { secret, token: record };

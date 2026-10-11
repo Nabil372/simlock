@@ -422,6 +422,23 @@ describe("PhysicalEnrollment", () => {
     expect(live(harness)).toHaveLength(1);
   });
 
+  it("answers DEVICE_BUSY busy to add and remove of a record in a state that is neither ready nor quarantined", async () => {
+    const harness = await build();
+    await harness.core.enrollment.add("ios", UDID);
+    const real = harness.registry.snapshot;
+    vi.spyOn(harness.registry, "snapshot", "get").mockReturnValue({
+      ...real,
+      devices: real.devices.map((device) => ({ ...device, state: "shutdown" }) as never),
+    });
+
+    for (const attempt of [
+      () => harness.core.enrollment.add("ios", UDID),
+      () => harness.core.enrollment.remove(UDID),
+    ]) {
+      await expect(attempt()).rejects.toMatchObject({ name: "DeviceBusyError", reason: "busy" });
+    }
+  });
+
   it("words a busy device as leased, reclaiming or busy with another operation", async () => {
     const harness = await build();
     const { device } = await harness.core.enrollment.add("ios", UDID);

@@ -181,7 +181,7 @@ export class QuarantineCoordinator {
     );
     if (device === undefined) return;
 
-    // Whoever claims first wins: a claim already held (an enrollment, a reclaim) makes the retry
+    // Whoever claims first wins: a claim already held (a recovery, a cleanup) makes the retry
     // wait one backoff, with its attempt count unchanged, and look again.
     const claim = this.options.claims.tryClaim(deviceId, "reclaim");
     if (claim === undefined) {
@@ -196,9 +196,10 @@ export class QuarantineCoordinator {
   }
 
   /**
-   * Every exit releases the claim right after the last write, before the facts and the wake-up
-   * that follow it: the planner never grants a claimed device, so a wake-up under the claim
-   * would pass over the device it was sent for (the order `LeaseReleaseCoordinator` uses).
+   * Every exit releases the claim right after the last write, before the coordinator's own facts
+   * and the wake-up that follow it: the planner never grants a claimed device, so a wake-up under
+   * the claim would pass over the device it was sent for. The registry's `device.deleted` fires
+   * inside that last write, still under the claim.
    */
   async #retryClaimed(device: VirtualDevice, claim: DeviceOperationClaim): Promise<void> {
     const attempts = (device.quarantineAttempts ?? 0) + 1;

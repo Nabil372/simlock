@@ -641,9 +641,7 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     input: PhysicalEnrollmentInput,
   ): Promise<PhysicalDevice> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
-    if (!device.physical || (device.state !== "ready" && device.state !== "quarantined")) {
-      throw new RegistryEventError(`Cannot re-enrol device: ${deviceId}`);
-    }
+    if (!device.physical) throw new RegistryEventError(`Cannot re-enrol device: ${deviceId}`);
     const {
       quarantineAttempts: _quarantineAttempts,
       quarantineNextRetryAt: _quarantineNextRetryAt,
@@ -651,7 +649,17 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
       deferredReclaimLeaseId: _deferred,
       ...kept
     } = device;
-    const settled = device.state === "quarantined" ? transition(kept, "ready") : kept;
+    let settled: PhysicalDevice = kept;
+    if (device.state !== "ready") {
+      try {
+        settled = transition(kept, "ready");
+      } catch (error) {
+        if (error instanceof IllegalTransition) {
+          throw new RegistryEventError(`Cannot re-enrol device: ${deviceId}`);
+        }
+        throw error;
+      }
+    }
     const updated: PhysicalDevice = {
       ...settled,
       enrolledApps: [...input.apps],

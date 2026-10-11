@@ -187,5 +187,8 @@ export class PhysicalEnrollment {
       throw new DeviceBusyError(device.driverDeviceId, "reclaiming");
     }
     if (held !== undefined) throw new DeviceBusyError(device.driverDeviceId, "busy");
+    if (device.state !== "ready" && device.state !== "quarantined") {
+      throw new DeviceBusyError(device.driverDeviceId, "busy");
+    }
   }
 }

@@ -832,7 +832,7 @@ describe("QuarantineCoordinator retry claim (ADR 0022 §2)", () => {
     expect(claimedAt).toEqual([false]);
   });
 
-  it("has freed the claim before it emits and before it wakes availability when a retry gives up", async () => {
+  it("has freed the claim before it emits device.quarantine-abandoned and before it wakes availability when a retry gives up", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios" });
     driver.failOn("reclaim", 1, new Error("still stuck"));
@@ -852,7 +852,7 @@ describe("QuarantineCoordinator retry claim (ADR 0022 §2)", () => {
     expect(claimedAt).toEqual([false, false]);
   });
 
-  it("has freed the claim before it emits when a retry gives up and cannot destroy the device", async () => {
+  it("has freed the claim before it emits device.quarantine-stranded when a retry gives up and cannot destroy the device", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios" });
     driver.failOn("reclaim", 1, new Error("still stuck"));
