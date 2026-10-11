@@ -683,11 +683,6 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     waiter: AcquisitionWaiter,
     absent: ReadonlySet<string>,
   ): Extract<AcquisitionPlan, { readonly kind: "grant-physical" }> | undefined {
-    if (waiter.state === "rejected" || waiter.state === "granted") return undefined;
-    if (this.#admissionClosed) {
-      this.#reject(waiter, new NukeCancelledError(), "killed");
-      return undefined;
-    }
     const request = physicalRequestOf(waiter.request);
     const enrolled = this.options.registry.snapshot.devices;
     if (
@@ -757,12 +752,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         const current = this.options.registry.snapshot.devices.find(
           (candidate) => candidate.id === device.id,
         );
-        if (
-          !present ||
-          !this.options.claims.isActive(claim) ||
-          current === undefined ||
-          current.state !== "ready"
-        ) {
+        if (!present || !this.options.claims.isActive(claim) || current?.state !== "ready") {
           absent.add(device.id);
           replan = true;
           return;
@@ -1171,7 +1161,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
       const next = this.options.queue.head as AcquisitionWaiter | undefined;
       if (next !== undefined && next.state === "queued") this.#track(this.#drive(next));
       for (const waiter of this.options.queue.pending() as readonly AcquisitionWaiter[]) {
-        if (lineOf(waiter.request) === "physical" && waiter.state === "queued") {
+        if (lineOf(waiter.request) === "physical") {
           this.#track(this.#drive(waiter));
         }
       }

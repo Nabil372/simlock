@@ -128,7 +128,7 @@ export class AcquisitionPlanner {
   planPhysical(input: PhysicalPlanInput): AcquisitionPlan {
     for (const device of input.snapshot.devices) {
       if (!device.physical || device.state !== "ready") continue;
-      if (input.absent.has(device.id) || this.claims.isClaimed(device.id)) continue;
+      if (input.absent.has(device.id)) continue;
       if (!fitsPhysical(device, input.request) || input.heldByOlder(device)) continue;
       const claim = this.claims.tryClaim(device.id, "grant", input.owner);
       if (claim !== undefined) return { claim, device, kind: "grant-physical" };

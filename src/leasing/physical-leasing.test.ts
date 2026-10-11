@@ -11,7 +11,14 @@ import {
 } from "../core/index.js";
 import { FakeDriver, testComponentWiring } from "../core/testing.js";
 import { EventBus, type EventMap } from "../bus/index.js";
-import { FakeClock, FakeSystemStats, MemoryFilesystem } from "../ports/index.js";
+import {
+  FakeClock,
+  FakeSystemStats,
+  JsonLinesLogger,
+  type Logger,
+  MemoryFilesystem,
+  MemoryLogSink,
+} from "../ports/index.js";
 import { NoCapacityError } from "./lease-acquisition-coordinator.js";
 import { createTestEngine } from "./testing.js";
 import { QueueTimeoutError, RequestCancelledError } from "./wait-queue.js";
@@ -22,6 +29,12 @@ const statePath = "/home/agent/.simlock/state.json";
 const physicalRequest = {
   model: "iPhone 15 Pro",
   physical: true,
+  platform: "ios",
+} as const satisfies DeviceRequest;
+
+const virtualRequest = {
+  model: "iPhone 16",
+  osVersion: "26.5",
   platform: "ios",
 } as const satisfies DeviceRequest;
 
@@ -94,7 +107,9 @@ function config(): Config {
   };
 }
 
-async function createHarness(options: { readonly reclaimEstimateMs?: number } = {}) {
+async function createHarness(
+  options: { readonly reclaimEstimateMs?: number; readonly logger?: Logger } = {},
+) {
   const clock = new FakeClock(1_000);
   const bus = new EventBus(clock);
   const driver = new FakeDriver({
@@ -113,17 +128,19 @@ async function createHarness(options: { readonly reclaimEstimateMs?: number } = 
     idGenerator: { generate: () => `${nextId++}` },
     statePath,
   });
+  const wiring = testComponentWiring({ clock, drivers: [driver], eventBus: bus, registry });
   const engine = createTestEngine({
-    ...testComponentWiring({ clock, drivers: [driver], eventBus: bus, registry }),
+    ...wiring,
     clock,
     config: config(),
     drivers: [driver],
     eventBus: bus,
     idGenerator: { generate: () => `request-${nextId++}` },
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
     registry,
     systemStats: new FakeSystemStats({ cpuCount: 8, totalRamBytes: 32 * gibibyte }),
   });
-  return { bus, clock, driver, engine, registry };
+  return { bus, clock, decisions: wiring.decisions, driver, engine, registry };
 }
 
 type Harness = Awaited<ReturnType<typeof createHarness>>;
@@ -199,6 +216,19 @@ async function waiterMidPresenceRead(options: { readonly timeoutMs?: number } = 
   harness.engine.leasing.corePorts.notifyAvailability();
   await flush();
   return { device, harness, promise };
+}
+
+async function queuedLines() {
+  const harness = await createHarness();
+  await enrollIphone(harness, "UDID-A");
+  await harness.engine.request(physicalRequest, asking("physical-holder"));
+  await harness.engine.request(virtualRequest, asking("virtual-holder"));
+  const marker = harness.bus.replay().length;
+  void harness.engine.request(physicalRequest, asking("physical-1"));
+  void harness.engine.request(physicalRequest, asking("physical-2"));
+  void harness.engine.request(virtualRequest, asking("virtual-1"));
+  await flush();
+  return { harness, marker };
 }
 
 describe("createLeasing with physical devices", () => {
@@ -443,5 +473,345 @@ describe("createLeasing with physical devices", () => {
     expect(eventsNamed(busy, "lease.declined")).toMatchObject([
       { payload: { fleetRequestId: "fleet_2", reason: "no-wait" } },
     ]);
+  });
+});
+
+describe("createLeasing with a physical and a virtual line", () => {
+  it("emits queue.changed with physical true for a physical waiter and with the depth alone for a virtual one", async () => {
+    const { harness, marker } = await queuedLines();
+
+    const changes = harness.bus
+      .replay()
+      .slice(marker)
+      .filter((event) => event.event === "queue.changed")
+      .map((event) => event.payload);
+
+    expect(changes).toEqual([
+      { depth: 1, physical: true },
+      { depth: 2, physical: true },
+      { depth: 1 },
+    ]);
+  });
+
+  it("numbers lease.queued within the line the request waits in", async () => {
+    const { harness, marker } = await queuedLines();
+
+    const positions = harness.bus
+      .replay()
+      .slice(marker)
+      .filter((event) => event.event === "lease.queued")
+      .map((event) => event.payload.queuePosition);
+
+    expect(positions).toEqual([1, 2, 1]);
+  });
+
+  it("reports the depth of each line apart through queueDepth and physicalQueueDepth", async () => {
+    const { harness } = await queuedLines();
+
+    expect([
+      harness.engine.queueDepth,
+      harness.engine.physicalQueueDepth,
+      harness.engine.leasing.queueDepth,
+      harness.engine.leasing.physicalQueueDepth,
+    ]).toEqual([1, 2, 1, 2]);
+  });
+
+  it("lists a waiting physical request with physical true and a waiting virtual one without it", async () => {
+    const { harness } = await queuedLines();
+
+    expect(harness.engine.waitingRequests().map((waiting) => waiting.spec)).toEqual([
+      { model: "iPhone 15 Pro", physical: true, platform: "ios" },
+      { model: "iPhone 15 Pro", physical: true, platform: "ios" },
+      { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+    ]);
+  });
+});
+
+async function enrollPhone(
+  harness: Harness,
+  driverDeviceId: string,
+  model: string,
+  osVersion = "18.4",
+  deviceClass: "phone" | "tablet" = "phone",
+): Promise<PhysicalDevice> {
+  const device = await harness.registry.enrollPhysical({
+    apps: [],
+    class: deviceClass,
+    driverDeviceId,
+    model,
+    osVersion,
+    platform: "ios",
+  });
+  harness.driver.setPhysicalPresence(driverDeviceId, true);
+  return device;
+}
+
+function warnings(sink: MemoryLogSink) {
+  return sink.records.filter((record) => record.level === "warn");
+}
+
+function capturingLogger(): { readonly logger: Logger; readonly sink: MemoryLogSink } {
+  const sink = new MemoryLogSink();
+  return { logger: new JsonLinesLogger({ clock: new FakeClock(1_000), sink }), sink };
+}
+
+describe("createLeasing: which physical device a request is granted", () => {
+  it("records a physical grant as lease.granted from a warm device", async () => {
+    const harness = await createHarness();
+    const device = await enrollIphone(harness, "UDID-A");
+
+    await harness.engine.request(physicalRequest, asking("agent"));
+
+    expect(eventsNamed(harness, "lease.granted")).toMatchObject([
+      { payload: { deviceId: device.id, requester: "agent", source: "warm" } },
+    ]);
+  });
+
+  it("grants the enrolled device whose model the request names, not the first enrolled one", async () => {
+    const harness = await createHarness();
+    await enrollPhone(harness, "UDID-A", "iPhone 15 Pro");
+    const second = await enrollPhone(harness, "UDID-B", "iPhone 14");
+
+    const result = await outcome(
+      harness.engine.request({ model: "iPhone 14", physical: true, platform: "ios" }, asking("a")),
+    );
+
+    expect(result).toMatchObject({ device: { id: second.id } });
+  });
+
+  it("refuses a physical request whose os version no enrolled device has, and grants it with the version one has", async () => {
+    const accepted = await createHarness();
+    const device = await enrollPhone(accepted, "UDID-A", "iPhone 15 Pro", "18.4");
+    const refused = await createHarness();
+    await enrollPhone(refused, "UDID-A", "iPhone 15 Pro", "18.4");
+
+    const granted = await outcome(
+      accepted.engine.request({ ...physicalRequest, osVersion: "18.4" }, asking("a")),
+    );
+    const result = await outcome(
+      refused.engine.request({ ...physicalRequest, osVersion: "17.0" }, asking("a")),
+    );
+
+    expect(granted).toMatchObject({ device: { id: device.id } });
+    expect(result).toBeInstanceOf(UnknownModelError);
+    expect(eventsNamed(refused, "lease.rejected")).toMatchObject([
+      { payload: { reason: "unresolvable-spec" } },
+    ]);
+  });
+
+  it("refuses a physical request for a class no enrolled device has, and grants one for the class a device has", async () => {
+    const accepted = await createHarness();
+    const device = await enrollPhone(accepted, "UDID-A", "iPhone 15 Pro");
+    const refused = await createHarness();
+    await enrollPhone(refused, "UDID-A", "iPhone 15 Pro");
+
+    const granted = await outcome(
+      accepted.engine.request({ class: "phone", physical: true, platform: "ios" }, asking("a")),
+    );
+    const result = await outcome(
+      refused.engine.request({ class: "tablet", physical: true, platform: "ios" }, asking("a")),
+    );
+
+    expect(granted).toMatchObject({ device: { id: device.id } });
+    expect(result).toBeInstanceOf(UnknownModelError);
+  });
+
+  it("names the class on the error of a class request and the model on the error of a model request", async () => {
+    const harness = await createHarness();
+    await enrollPhone(harness, "UDID-A", "iPhone 15 Pro");
+
+    const byClass = await outcome(
+      harness.engine.request({ class: "tablet", physical: true, platform: "ios" }, asking("a")),
+    );
+    const byModel = await outcome(
+      harness.engine.request(
+        { class: "tablet", model: "iPad Pro", physical: true, platform: "ios" },
+        asking("b"),
+      ),
+    );
+
+    expect(byClass).toMatchObject({ class: "tablet", model: undefined });
+    expect(byModel).toMatchObject({ class: undefined, model: "iPad Pro" });
+  });
+
+  it("refuses a physical request that only an unenrolled physical device matches, and grants it while the device is enrolled", async () => {
+    const enrolled = await createHarness();
+    const device = await enrollIphone(enrolled, "UDID-A");
+    const unenrolled = await createHarness();
+    const gone = await enrollIphone(unenrolled, "UDID-A");
+    await unenrolled.registry.unenrollPhysical(gone.id);
+
+    const granted = await outcome(enrolled.engine.request(physicalRequest, asking("a")));
+    const result = await outcome(unenrolled.engine.request(physicalRequest, asking("a")));
+
+    expect(granted).toMatchObject({ device: { id: device.id } });
+    expect(result).toBeInstanceOf(UnknownModelError);
+  });
+
+  it("refuses a physical request that only a virtual device matches", async () => {
+    const harness = await createHarness();
+    await harness.engine.request(virtualRequest, asking("virtual-holder"));
+
+    const result = await outcome(
+      harness.engine.request({ ...physicalRequest, model: "iPhone 16" }, asking("a")),
+    );
+
+    expect(result).toBeInstanceOf(UnknownModelError);
+  });
+
+  it("skips a ready physical device that another operation holds and grants the next one", async () => {
+    const harness = await createHarness();
+    const busy = await enrollPhone(harness, "UDID-A", "iPhone 15 Pro");
+    const free = await enrollPhone(harness, "UDID-B", "iPhone 14");
+    const hold = harness.engine.core.claims.tryClaim(busy.id, "cleanup");
+
+    const result = await outcome(
+      harness.engine.request({ class: "phone", physical: true, platform: "ios" }, asking("agent")),
+    );
+
+    expect(hold).toBeDefined();
+    expect(result).toMatchObject({ device: { id: free.id } });
+    expect(claimKind(harness, busy)).toBe("cleanup");
+  });
+
+  it("does not hold a ready physical device for an older virtual waiter that asks for the same model", async () => {
+    const harness = await createHarness();
+    const device = await enrollPhone(harness, "UDID-A", "iPhone 16", "26.5");
+    await harness.engine.request(virtualRequest, asking("virtual-holder"));
+    void harness.engine.request(virtualRequest, asking("virtual-waiter"));
+    await flush();
+
+    const result = await outcome(
+      harness.engine.request({ model: "iPhone 16", physical: true, platform: "ios" }, asking("a")),
+    );
+
+    expect(harness.engine.queueDepth).toBe(1);
+    expect(result).toMatchObject({ device: { id: device.id } });
+  });
+});
+
+function holdDecisions(harness: Harness): () => Promise<void> {
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  const running = harness.decisions.run(async () => gate);
+  return async () => {
+    open();
+    await running;
+  };
+}
+
+describe("createLeasing: waking the queue", () => {
+  it("drives only the virtual head, and not a virtual waiter behind it, when the queue is woken", async () => {
+    const harness = await createHarness({ reclaimEstimateMs: 34_000 });
+    await harness.engine.request(virtualRequest, asking("holder"));
+    const holding = harness.registry.snapshot.devices[0];
+    if (holding === undefined) throw new Error("no device");
+    await harness.registry.transitionDevice(holding.id, "reclaiming");
+    const behind: LeaseProgress[] = [];
+    const head: LeaseProgress[] = [];
+    void harness.engine.request(
+      virtualRequest,
+      asking("head", { onProgress: (update: LeaseProgress) => head.push(update) }),
+    );
+    void harness.engine.request(
+      virtualRequest,
+      asking("behind", { onProgress: (update: LeaseProgress) => behind.push(update) }),
+    );
+    await flush();
+    const headBefore = head.length;
+    const behindBefore = behind.length;
+
+    harness.engine.leasing.corePorts.notifyAvailability();
+    await flush();
+
+    expect(head.length).toBeGreaterThan(headBefore);
+    expect(behind).toHaveLength(behindBefore);
+  });
+});
+
+describe("createLeasing: a physical grant that goes wrong", () => {
+  it("times out a waiter whose deadline passes while its next plan waits, and releases the claim that plan took", async () => {
+    const harness = await createHarness();
+    await enrollPhone(harness, "UDID-A", "iPhone 15 Pro");
+    const spare = await enrollPhone(harness, "UDID-B", "iPhone 14");
+    harness.driver.setPhysicalPresence("UDID-A", false);
+    harness.driver.setPhysicalPresence("UDID-B", false);
+    const promise = harness.engine.request(
+      { class: "phone", physical: true, platform: "ios" },
+      asking("agent", { timeoutMs: 1_000 }),
+    );
+    await flush();
+    harness.driver.setPhysicalPresence("UDID-A", true);
+    harness.driver.holdPresenceReads("UDID-A");
+    harness.engine.leasing.corePorts.notifyAvailability();
+    await flush();
+    harness.driver.setPhysicalPresence("UDID-A", false);
+    const releaseFirst = holdDecisions(harness);
+    harness.driver.releasePresenceReads();
+    await flush();
+    const releaseSecond = holdDecisions(harness);
+    await releaseFirst();
+    await flush();
+    harness.clock.advance(1_000);
+
+    await releaseSecond();
+    const result = await outcome(promise);
+
+    expect(result).toBeInstanceOf(QueueTimeoutError);
+    expect(harness.engine.core.claims.isClaimed(spare.id)).toBe(false);
+    expect(presenceReads(harness)).toEqual([["UDID-A"], ["UDID-B"], ["UDID-A"]]);
+  });
+
+  it("does not read the presence of a device again for a queued waiter when an older waiter finds it absent", async () => {
+    const harness = await createHarness();
+    await enrollIphone(harness, "UDID-A");
+    harness.driver.holdPresenceReads("UDID-A");
+    const older = harness.engine.request(physicalRequest, asking("older"));
+    await flush();
+    const newer = harness.engine.request(physicalRequest, asking("newer"));
+    await flush();
+    harness.driver.setPhysicalPresence("UDID-A", false);
+
+    harness.driver.releasePresenceReads();
+
+    expect(await outcome(older)).toBe("pending");
+    expect(await outcome(newer)).toBe("pending");
+    expect(presenceReads(harness)).toEqual([["UDID-A"]]);
+  });
+
+  it("logs a failed presence read as a presence warning and does not grant the device", async () => {
+    const { logger, sink } = capturingLogger();
+    const harness = await createHarness({ logger });
+    const device = await enrollIphone(harness, "UDID-A");
+    harness.driver.failOn("listPresentPhysical", 1, new Error("adb: device offline"));
+
+    await outcome(harness.engine.request(physicalRequest, asking("agent", { noWait: true })));
+
+    expect(warnings(sink)).toMatchObject([
+      {
+        fields: { deviceId: device.id, requesterId: "agent", step: "presence" },
+        message: "reading a physical device's presence failed",
+      },
+    ]);
+  });
+
+  it("logs a failed lease write as a grant warning and puts the waiter back in the queue", async () => {
+    const { logger, sink } = capturingLogger();
+    const harness = await createHarness({ logger });
+    const device = await enrollIphone(harness, "UDID-A");
+    vi.spyOn(harness.registry, "createLease").mockRejectedValueOnce(new Error("disk full"));
+
+    const result = await outcome(harness.engine.request(physicalRequest, asking("agent")));
+
+    expect(result).toBe("pending");
+    expect(warnings(sink)).toMatchObject([
+      {
+        fields: { deviceId: device.id, requesterId: "agent", step: "grant" },
+        message: "granting a physical device failed",
+      },
+    ]);
+    expect(harness.engine.physicalQueueDepth).toBe(1);
   });
 });

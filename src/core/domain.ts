@@ -168,7 +168,7 @@ export interface FittableSpec {
  * platform is equal, the model is equal or `classOf` says the device's model is the requested
  * class, the OS satisfies the constraint, and the image tag is equal or both absent. It does not
  * read the mode. `sameSpec` stays what names pool identity everywhere else. A physical spec fits
- * no requirement: every requirement is virtual until a request can ask for a physical device.
+ * no requirement here: a physical request is matched by `fitsPhysical` and never reaches this.
  */
 export function fits(
   requirement: DeviceRequirement,
