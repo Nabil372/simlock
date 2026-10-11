@@ -185,7 +185,7 @@ describe("DaemonServer", () => {
     [20, "cannot send lease.request's leaseId or read a lease's idChosenByRequester"],
     [21, "cannot send lease.request's fleetRequestId"],
   ])(
-    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 23, to a client on protocol %i, which %s",
+    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 24, to a client on protocol %i, which %s",
     async (version) => {
       const harness = await createHarness();
       const previous = await createClient(harness.socketPath);
@@ -195,7 +195,7 @@ describe("DaemonServer", () => {
       ).resolves.toMatchObject({
         error: {
           code: "PROTOCOL_VERSION_UNSUPPORTED",
-          details: { client: { min: version, max: version }, daemon: { min: 23, max: 23 } },
+          details: { client: { min: version, max: version }, daemon: { min: 24, max: 24 } },
         },
         ok: false,
       });

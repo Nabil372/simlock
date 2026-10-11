@@ -425,7 +425,7 @@ describe("ReclaimCoordinator", () => {
       ).toEqual([
         {
           event: "device.deleted",
-          payload: { deviceId: harness.target.id, initiator: "lease-end" },
+          payload: { deviceId: harness.target.id, initiator: "lease-end", physical: false },
         },
       ]);
       expect(harness.quarantined).toEqual([]);

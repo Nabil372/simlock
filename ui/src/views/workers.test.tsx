@@ -99,7 +99,7 @@ describe("the workers views", () => {
     expect(shown).toContain("dev_ready ready —");
   });
 
-  it("a physical device is a row of the worker's Devices table with an empty Mode cell, and counts in the Workers view's device total", () => {
+  it("a physical device is a row of the worker's Devices table typed Physical with a dash for Mode and Image tag, and counts in the Workers view's device total", () => {
     const physical = {
       class: "phone" as const,
       id: "dev_p",
@@ -119,7 +119,9 @@ describe("the workers views", () => {
 
     expect(text(html)).toContain("dev_p ready");
     expect(html).toContain('<td data-label="Model">iPhone 15 Pro</td>');
-    expect(html).toMatch(/<td data-label="Mode"[^>]*><\/td>/);
+    expect(html).toContain('<td data-label="Type">Physical</td>');
+    expect(html).toContain('<td data-label="Mode">—</td>');
+    expect(html).toContain('<td data-label="Image tag" class="mono">—</td>');
     expect(workersStats([view]).find((stat) => stat.label === "Devices")?.caption).toBe(
       "running of 1",
     );

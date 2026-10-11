@@ -1137,12 +1137,12 @@ describe("GatewayService", () => {
     await harness.service.stop();
   });
 
-  it("marks a worker one protocol version behind the gateway incompatible (ADR 0022 §1: its devices carry no `physical`, which the gateway schema requires)", async () => {
+  it("marks a worker one protocol version behind the gateway incompatible (ADR 0022 §2: it does not know `device.add` or `device.remove`, and reports no `driverDeviceId`)", async () => {
     const previous = {
       min: PROTOCOL_VERSION_RANGE.max - 1,
       max: PROTOCOL_VERSION_RANGE.max - 1,
     };
-    expect(PROTOCOL_VERSION_RANGE.max).toBe(23);
+    expect(PROTOCOL_VERSION_RANGE.max).toBe(24);
     expect(negotiateProtocolVersion(PROTOCOL_VERSION_RANGE, previous)).toBeUndefined();
     const harness = fleet();
     await harness.service.start();
