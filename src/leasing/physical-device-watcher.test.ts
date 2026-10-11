@@ -293,8 +293,14 @@ function readsOf(driver: FakeDriver): unknown[] {
     .map((call) => call.arguments[0]);
 }
 
+const heldReclaims = new WeakMap<FakeDriver, number>();
+
 function reclaimCalls(driver: FakeDriver) {
-  return driver.calls.filter((call) => call.operation === "reclaim");
+  const held = Array.from({ length: heldReclaims.get(driver) ?? 0 }, () => ({
+    arguments: [] as unknown[],
+    operation: "reclaim" as const,
+  }));
+  return [...driver.calls.filter((call) => call.operation === "reclaim"), ...held];
 }
 
 type PresenceAnswer = Awaited<ReturnType<FakeDriver["listPresentPhysical"]>>;
@@ -343,7 +349,9 @@ function holdNextReclaim(harness: Harness): { readonly resolve: () => void } {
   const gate = deferred();
   const original = harness.driver.reclaim.bind(harness.driver);
   vi.spyOn(harness.driver, "reclaim").mockImplementationOnce(async (device, options) => {
+    heldReclaims.set(harness.driver, (heldReclaims.get(harness.driver) ?? 0) + 1);
     await gate.promise;
+    heldReclaims.set(harness.driver, (heldReclaims.get(harness.driver) ?? 1) - 1);
     return original(device, options);
   });
   return gate;
@@ -633,7 +641,7 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
 
     const thrown = await absentHarness("not-present");
     back(thrown.harness, "UDID-A");
-    vi.spyOn(thrown.harness.driver, "reclaim").mockRejectedValueOnce(new Error("usb dropped"));
+    thrown.harness.driver.failOn("reclaim", 1, new Error("usb dropped"));
     startWatcher(thrown.harness);
 
     await tick(thrown.harness);
@@ -780,7 +788,7 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
   it("a listing entry whose ID has no record causes no write and no driver call but the listing", async () => {
     const harness = await createHarness();
     await enrollIphone(harness, "UDID-A");
-    vi.spyOn(harness.driver, "listPresentPhysical").mockResolvedValue(
+    const listing = vi.spyOn(harness.driver, "listPresentPhysical").mockResolvedValue(
       answer([
         { driverDeviceId: "UDID-A", osVersion: "18.4", present: true },
         { driverDeviceId: "UDID-GHOST-1", osVersion: "18.4", present: true },
@@ -792,9 +800,8 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
 
     await tick(harness, 3);
 
-    const operations = harness.driver.calls.map((call) => call.operation);
-    expect(operations.length).toBeGreaterThan(0);
-    expect(new Set(operations)).toEqual(new Set(["listPresentPhysical"]));
+    expect(listing.mock.calls.length).toBeGreaterThan(0);
+    expect(harness.driver.calls.map((call) => call.operation)).toEqual([]);
     expect(writes).toHaveLength(0);
   });
 });
