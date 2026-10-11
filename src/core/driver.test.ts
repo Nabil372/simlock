@@ -285,6 +285,21 @@ describe("toDriverDevice", () => {
     });
   });
 
+  it("gives an empty address for a record that has none", () => {
+    const record: VirtualDevice = {
+      createdAt: 1_000,
+      driverData: {},
+      driverDeviceId: "driver_1",
+      id: "dev_1",
+      mode: "full",
+      physical: false,
+      spec: { model: "iPhone 16", osVersion: "26.5", physical: false, platform: "ios" },
+      state: "provisioning",
+    };
+
+    expect(toDriverDevice(record).address).toBe("");
+  });
+
   it("gives a virtual record's address, deviceId, driverData and physical: false", () => {
     const record: VirtualDevice = {
       ...recordFields,

@@ -1639,6 +1639,7 @@ describe("AndroidDriver", () => {
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).not.toMatch(/driver data/i);
+    expect((failure as Error).message).toBe("a physical device cannot be reclaimed yet");
     expect(runner.calls).toHaveLength(callsBefore);
   });
 

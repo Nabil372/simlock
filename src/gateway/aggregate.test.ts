@@ -57,6 +57,16 @@ describe("aggregateStatus", () => {
     expect(status.workers).toEqual([]);
   });
 
+  it("carries physicalQueueDepth only when the options name one", () => {
+    const base = { health: "running", host: GATEWAY_HOST, queueDepth: 0 } as const;
+
+    expect(aggregateStatus([], { ...base, physicalQueueDepth: 2 })).toHaveProperty(
+      "physicalQueueDepth",
+      2,
+    );
+    expect(aggregateStatus([], base)).not.toHaveProperty("physicalQueueDepth");
+  });
+
   it("carries an empty warm pool block of its own, and each worker's block under its worker entry as the view holds it", () => {
     const block = { enabled: true, reserveRunning: { android: 0, ios: 1 }, targets: [] };
     const status = aggregateStatus(

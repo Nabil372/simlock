@@ -129,6 +129,14 @@ describe("the Waiting view", () => {
     expect(text(html)).toContain("agent-v iOS iPhone 16 — queued 1 1 min 15 s");
   });
 
+  it("heads the place column as a numeric Place in queue column", () => {
+    const html = renderToStaticMarkup(
+      <WaitingTable requests={[request()]} workers={[]} now={NOW} />,
+    );
+
+    expect(html).toContain('<th scope="col" class="num">Place in queue</th>');
+  });
+
   it("says so when nothing is waiting", () => {
     const html = renderToStaticMarkup(<WaitingTable requests={[]} workers={[]} now={NOW} />);
 

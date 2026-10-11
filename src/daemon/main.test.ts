@@ -559,6 +559,36 @@ describe("startDaemon wires core and leasing together", () => {
     });
   });
 
+  it("grants a waiting physical request once device.add enrolls a second device of the model", async () => {
+    const clock = new FakeClock(1_000);
+    const phone = { apps: [], class: "phone", model: "iPhone 15 Pro", osVersion: "18.4" } as const;
+    const driver = new FakeDriver({
+      clock,
+      physicalDevices: [
+        { ...phone, ids: ["UDID-A"] },
+        { ...phone, ids: ["UDID-B"] },
+      ],
+      platform: "ios",
+    });
+    driver.setPhysicalPresence("UDID-A", true);
+    driver.setPhysicalPresence("UDID-B", true);
+    const { daemon } = await start({ clock, drivers: [driver] });
+    const physical = { model: "iPhone 15 Pro", physical: true, platform: "ios" } as const;
+    await daemon.dispatch("device.add", { id: "UDID-A", platform: "ios" }, admin);
+    await daemon.dispatch("lease.request", { ...physical, requesterId: "agent-1" }, agent);
+    const waiting = daemon.dispatch(
+      "lease.request",
+      { ...physical, requesterId: "agent-2" },
+      agent,
+    ) as Promise<Grant>;
+    await settleRealTime();
+
+    await daemon.dispatch("device.add", { id: "UDID-B", platform: "ios" }, admin);
+
+    const outcome = await Promise.race([waiting, settleRealTime().then(() => "still waiting")]);
+    expect(outcome).toMatchObject({ device: { physical: true } });
+  });
+
   it("announces the capacity figures and then the queue depth once startup is done", async () => {
     const { directory } = await start();
 

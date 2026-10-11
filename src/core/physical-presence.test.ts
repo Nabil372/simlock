@@ -25,6 +25,17 @@ describe("readPhysicalPresence", () => {
     expect([...presence.keys()].sort()).toEqual(["A", "B", "C"]);
   });
 
+  it("leaves out an entry for an ID it was not asked about", () => {
+    const driver = driverAnswering([
+      { driverDeviceId: "A", present: true },
+      { driverDeviceId: "Z", present: true },
+    ]);
+
+    return expect(
+      readPhysicalPresence(driver, ["A"]).then((presence) => [...presence]),
+    ).resolves.toEqual([["A", true]]);
+  });
+
   it("asks the driver only for the IDs it is given", async () => {
     const driver = driverAnswering([{ driverDeviceId: "A", present: true }]);
 

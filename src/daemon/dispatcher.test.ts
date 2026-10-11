@@ -1281,6 +1281,43 @@ describe("Dispatcher: device mode on every surface", () => {
     expect(status.capacity?.ios).toMatchObject({ running: 1, warm: 0, used: 1 });
   });
 
+  it("lease.request grants a physical device with physical true and its class on the device", async () => {
+    const { dispatcher, driver, engine } = await buildDispatcher({
+      state: {
+        devices: [],
+        leases: [],
+        physicalDevices: [
+          {
+            createdAt: 1,
+            driverData: {},
+            driverDeviceId: "00008110-001A2B3C4D5E",
+            enrolledApps: [],
+            id: "dev_phys",
+            physical: true,
+            spec: {
+              class: "tablet",
+              model: "iPad Pro",
+              osVersion: "18.4",
+              physical: true,
+              platform: "ios",
+            },
+            state: "ready",
+          },
+        ],
+      },
+    });
+    await engine.convergeRunningCapacity();
+    driver.setPhysicalPresence("00008110-001A2B3C4D5E", true);
+
+    const grant = await dispatcher.dispatch(
+      "lease.request",
+      { model: "iPad Pro", physical: true, platform: "ios" },
+      session(),
+    );
+
+    expect(grant.device).toMatchObject({ class: "tablet", id: "dev_phys", physical: true });
+  });
+
   it("status.get and list.get show a physical record with physical, its class and no mode or enrolledApps, and count nothing of it in the capacity figures", async () => {
     const { dispatcher, engine } = await buildDispatcher({
       state: {

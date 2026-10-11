@@ -476,6 +476,51 @@ describe("noPhysicalMatch", () => {
     }
   });
 
+  it("words the whole message from the request: a model, else its class or phone, then an exact OS, or a range as the requested range", () => {
+    const message = (request: Parameters<typeof noPhysicalMatch>[0]) =>
+      noPhysicalMatch(request).message;
+
+    expect(message({ platform: "android" })).toBe(
+      "no enrolled physical device can match android class phone",
+    );
+    expect(message({ class: "tablet", platform: "android" })).toBe(
+      "no enrolled physical device can match android class tablet",
+    );
+    expect(message({ model: "Pixel 8", platform: "android" })).toBe(
+      "no enrolled physical device can match android model Pixel 8",
+    );
+    expect(
+      message({ class: "tablet", model: "Pixel 8", osVersion: "34", platform: "android" }),
+    ).toBe("no enrolled physical device can match android model Pixel 8 os 34");
+    expect(message({ osVersion: "18.4.1", platform: "ios" })).toBe(
+      "no enrolled physical device can match ios class phone os 18.4.1",
+    );
+    expect(message({ osVersion: ">=18 <19", platform: "ios" })).toBe(
+      "no enrolled physical device can match ios class phone os in the requested range",
+    );
+    expect(message({ osVersion: "18.4", platform: "ios" })).toBe(
+      'no enrolled physical device can match ios class phone os 18.4; --os is exact, for any 18.4.x write --os ">=18.4 <18.5"',
+    );
+    expect(message({ osVersion: "18.10", platform: "ios" })).toBe(
+      'no enrolled physical device can match ios class phone os 18.10; --os is exact, for any 18.10.x write --os ">=18.10 <18.11"',
+    );
+  });
+
+  it("leaves out of its details every field the request did not set, rather than setting it undefined", () => {
+    expect(noPhysicalMatch({ osVersion: "18", platform: "ios" }).details).toStrictEqual({
+      osVersion: "18",
+      platform: "ios",
+    });
+    expect(noPhysicalMatch({ model: "Pixel 8", platform: "android" }).details).toStrictEqual({
+      model: "Pixel 8",
+      platform: "android",
+    });
+    expect(noPhysicalMatch({ class: "tablet", platform: "ios" }).details).toStrictEqual({
+      class: "tablet",
+      platform: "ios",
+    });
+  });
+
   it("carries the request's platform, model, class and OS in its details, each only when the request set it", () => {
     expect(
       noPhysicalMatch({ class: "tablet", model: "iPad Pro", osVersion: "18", platform: "ios" })

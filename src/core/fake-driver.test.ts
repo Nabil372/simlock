@@ -104,6 +104,43 @@ describe("FakeDriver", () => {
     expect(driver.reclaimStrategy(physical, { clean: "standard" })).toBe("uninstall");
   });
 
+  it("reclaims a physical device nobody scripted, reporting every enrolled app as missing", async () => {
+    const driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
+    const physical: PhysicalDriverDevice = {
+      address: "",
+      deviceId: "udid",
+      driverData: {},
+      enrolledApps: ["com.example.kept"],
+      physical: true,
+    };
+
+    await expect(driver.reclaim(physical, { clean: "standard" })).resolves.toEqual({
+      missingApps: ["com.example.kept"],
+      state: "ready",
+      strategy: "uninstall",
+    });
+  });
+
+  it("holds a presence read until released when any one of the IDs it asks about is held", async () => {
+    const driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
+    driver.setPhysicalPresence("A", true);
+    driver.holdPresenceReads("A");
+    let answer: readonly unknown[] | undefined;
+    const read = driver.listPresentPhysical(["B", "A"]).then((entries) => {
+      answer = entries;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(answer).toBeUndefined();
+
+    driver.releasePresenceReads();
+    await read;
+    expect(answer).toEqual([
+      { driverDeviceId: "B", present: false },
+      { driverDeviceId: "A", present: true },
+    ]);
+  });
+
   it("implements the platform-agnostic Driver contract", () => {
     const driver: Driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
 

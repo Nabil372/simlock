@@ -4551,6 +4551,64 @@ describe("FleetLeaseCoordinator routes a physical request to its workers in id o
     },
   );
 
+  it("in one pass, a worker picked for a physical request is offered the next virtual request that carries no physical field", async () => {
+    const { clock, coordinator, directory, workers } = harness();
+    const client = new ScriptedWorkerClient();
+    directory.add("wrk_a", client);
+    client.requestLeaseQueue.push(
+      { error: noCapacityError(), kind: "error" },
+      { kind: "hang" },
+      { kind: "hang" },
+    );
+    connectWorker(workers, "wrk_a", { capacity: saturatedIos() });
+    const virtual = { model: "iPhone 17", osVersion: "26.0", platform: "ios" as const };
+
+    await start(
+      coordinator,
+      physicalRequest({ model: "iPhone 17", osVersion: "26.0" }),
+      requestOptions({ ownerId: "agent-1", requesterId: "agent-1" }),
+    );
+    await start(
+      coordinator,
+      virtual,
+      requestOptions({ ownerId: "agent-2", requesterId: "agent-2" }),
+    );
+    const before = leaseRequests(client).length;
+    clock.advance(1_000);
+    workers.refresh("wrk_a", { capacity: roomierIos() });
+    await tick();
+
+    expect(leaseRequests(client).slice(before).sort()).toEqual([
+      `lease.request:${GATEWAY_PREFIX}agent-1`,
+      `lease.request:${GATEWAY_PREFIX}agent-2`,
+    ]);
+  });
+
+  it("queued physical requests count on their own line: queue.changed names the line and lease.queued reports the position within it", async () => {
+    const { coordinator, directory, eventBus, workers } = harness();
+    const client = new ScriptedWorkerClient();
+    directory.add("wrk_a", client);
+    connectWorker(workers, "wrk_a", { capacity: saturatedIos() });
+    const changed: unknown[] = [];
+    const queued: unknown[] = [];
+    eventBus.subscribe("queue.changed", (envelope) => changed.push(envelope.payload));
+    eventBus.subscribe("lease.queued", (envelope) => queued.push(envelope.payload));
+    const owner = (name: string) => requestOptions({ ownerId: name, requesterId: name });
+
+    await start(coordinator, physicalRequest(), owner("agent-1"));
+    await start(coordinator, physicalRequest(), owner("agent-2"));
+    await start(coordinator, { ...REQUEST, physical: false }, owner("agent-3"));
+
+    expect(changed).toStrictEqual([
+      { depth: 1, physical: true },
+      { depth: 2, physical: true },
+      { depth: 1 },
+    ]);
+    expect(queued.map((payload) => (payload as { queuePosition: number }).queuePosition)).toEqual([
+      1, 2, 1,
+    ]);
+  });
+
   it("in one pass, a second physical request is not sent to the worker picked for the first", async () => {
     const { clock, coordinator, directory, workers } = harness();
     const client = new ScriptedWorkerClient();

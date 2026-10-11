@@ -230,6 +230,51 @@ describe("ReclaimCoordinator", () => {
     ]);
   });
 
+  it("asks the driver for the strategy of a standard clean before it reclaims", async () => {
+    const harness = await createHarness();
+    const strategy = vi.spyOn(harness.driver, "reclaimStrategy");
+
+    await harness.coordinator.reclaim(released(harness.reclaiming));
+
+    expect(strategy.mock.calls.map((call) => call[1])).toEqual([{ clean: "standard" }]);
+  });
+
+  it("emits device.reclaimed for a virtual device without a missingApps field", async () => {
+    const harness = await createHarness();
+
+    await harness.coordinator.reclaim(released(harness.reclaiming));
+
+    const payload = harness.bus.replay()[0]?.payload as object;
+    expect("missingApps" in payload).toBe(false);
+  });
+
+  it("reclaims a physical device through the driver even when its record carries a spent fresh identity", async () => {
+    const physical = {
+      createdAt: 1,
+      driverData: {},
+      driverDeviceId: "00008110-001A2B3C4D5E",
+      enrolledApps: [],
+      id: "dev_physical",
+      lastLeaseEndedAt: 1_000,
+      leaseIdentity: "fresh",
+      physical: true,
+      spec: {
+        class: "phone",
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        physical: true,
+        platform: "ios",
+      },
+      state: "reclaiming",
+    } as unknown as PhysicalDevice;
+    const harness = await createHarness({ devices: [physical] });
+
+    await harness.coordinator.reclaim({ ...released(harness.reclaiming), device: physical });
+
+    expect(harness.driver.calls.map((call) => call.operation)).toEqual(["provision", "reclaim"]);
+    expect(harness.registry.deviceById("dev_physical")?.state).toBe("ready");
+  });
+
   it("commits shutdown, emits device.reclaimed and kicks acquisition when the driver returns shutdown", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "shutdown" });

@@ -277,6 +277,23 @@ describe("QuarantineCoordinator", () => {
     expect(harness.notifyAvailability).toHaveBeenCalledOnce();
   });
 
+  it("emits device.quarantine-recovered for a virtual device without a missingApps field", async () => {
+    const harness = await createHarness();
+    await harness.coordinator.enter({
+      attemptedStrategy: "wipe",
+      deviceId: harness.target.id,
+      duration: 0,
+      error: "boom",
+      leaseId: "lease-1",
+    });
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    const payload = eventsOf(harness.bus)[2]?.payload as object;
+    expect("missingApps" in payload).toBe(false);
+  });
+
   it("grows the backoff after each failed retry, capped at maxRetryBackoffMs, then gives up and destroys", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios" });
@@ -678,6 +695,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
     // `decisionRuns` counts this device's own retry, which the shared clock's timer count does not.
     const decisions = new SerializedDecision();
     const decisionRuns = vi.spyOn(decisions, "run");
+    const notifyAvailability = vi.fn();
     const coordinator = new QuarantineCoordinator({
       claims: new DeviceOperationClaims(),
       clock,
@@ -685,11 +703,20 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
       decisions,
       drivers: new DriverCatalog([driver]),
       eventBus: bus,
-      notifyAvailability: vi.fn(),
+      notifyAvailability,
       registry,
     });
     const driverCalls = vi.spyOn(driver, "reclaim");
-    return { bus, clock, coordinator, decisionRuns, driver, driverCalls, registry };
+    return {
+      bus,
+      clock,
+      coordinator,
+      decisionRuns,
+      driver,
+      driverCalls,
+      notifyAvailability,
+      registry,
+    };
   }
 
   it("commits quarantined for a stalled physical device and arms a retry that reclaims it when nextRetryAt falls due", async () => {
@@ -724,6 +751,50 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
     await flush();
 
     expect(harness.driverCalls).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a physical device on a successful retry with the uninstall strategy and its missing apps", async () => {
+    const harness = await physicalHarness("quarantined");
+
+    harness.coordinator.restore();
+    harness.clock.advance(500);
+    await flush();
+
+    const recovered = eventsOf(harness.bus).find(
+      (event) => event.event === "device.quarantine-recovered",
+    );
+    expect(recovered?.payload).toMatchObject({
+      attempts: 1,
+      deviceId: "dev_physical",
+      missingApps: [],
+      strategy: "uninstall",
+    });
+  });
+
+  it("unenrols a physical device whose retries run out, and never destroys it", async () => {
+    const harness = await physicalHarness("quarantined");
+    harness.driver.failOn("reclaim", 1, new Error("still stuck"));
+    harness.driver.failOn("reclaim", 2, new Error("still stuck"));
+
+    harness.coordinator.restore();
+    harness.clock.advance(500);
+    await flush();
+    harness.clock.advance(2_000);
+    await flush();
+
+    expect(harness.driver.calls.map((call) => call.operation)).not.toContain("destroy");
+    const events = eventsOf(harness.bus);
+    expect(events.map((event) => event.event)).toEqual([
+      "device.deleted",
+      "device.quarantine-abandoned",
+    ]);
+    expect(events[0]?.payload).toMatchObject({
+      deviceId: "dev_physical",
+      initiator: "quarantine",
+      physical: true,
+    });
+    expect(events[1]?.payload).toEqual({ attempts: 2, deviceId: "dev_physical" });
+    expect(harness.notifyAvailability).toHaveBeenCalledOnce();
   });
 
   it("arms a timer for a quarantined physical device when it restores, and reclaims it when quarantineNextRetryAt falls due", async () => {

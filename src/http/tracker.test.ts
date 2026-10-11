@@ -37,6 +37,7 @@ async function createTracked(
     readonly ttlMs?: number;
     readonly mode?: "slim" | "full";
     readonly imageTag?: string;
+    readonly physical?: boolean;
   } = body,
 ): Promise<{ readonly view: TrackedRequestView; readonly callIndex: number }> {
   const outcomePromise = tracker.submit(identity, requestBody);
@@ -398,6 +399,18 @@ describe("LeaseRequestTracker.submit with an image tag", () => {
     const { dispatcher: dispatcher2, tracker: tracker2 } = buildTracker();
     await createTracked(tracker2, dispatcher2);
     expect(dispatcher2.calls[0]?.input).not.toHaveProperty("imageTag");
+  });
+});
+
+describe("LeaseRequestTracker.submit with a physical request", () => {
+  it("passes physical through onto the dispatch input, and omits it when the body names none", async () => {
+    const { dispatcher, tracker } = buildTracker();
+    await createTracked(tracker, dispatcher, { ...body, physical: true });
+    expect(dispatcher.calls[0]?.input).toMatchObject({ physical: true });
+
+    const { dispatcher: dispatcher2, tracker: tracker2 } = buildTracker();
+    await createTracked(tracker2, dispatcher2);
+    expect(Object.keys(dispatcher2.calls[0]?.input ?? {})).not.toContain("physical");
   });
 });
 

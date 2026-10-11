@@ -144,7 +144,7 @@ Unauthenticated liveness for tunnels/load balancers. → `200 {"ok":true}`.
 
 Role: `agent`. The same view `simlock status --json` reads: a `daemon` block,
 managed/running capacity per platform, active leases, managed devices (each
-with its device mode, `mode`: `"slim"` or `"full"`), queue depth, and the warm
+with its device mode, `mode`: `"slim"` or `"full"`), queue depth (`queueDepth` counts the virtual line; `physicalQueueDepth` the physical one), and the warm
 pool: `warmPool` carries `enabled`, `reserveRunning` (`ios`, `android`) and
 `targets`, each with `platform`, `model`, `osVersion` (the one the target resolved
 to, or the one it names when it did not resolve; absent when it names none and

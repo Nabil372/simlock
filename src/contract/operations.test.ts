@@ -1283,6 +1283,18 @@ describe("lease.request physical (ADR 0022)", () => {
     expect(message).toContain(`\`${field}\``);
   });
 
+  it.each([
+    ["mode", { mode: "slim" }],
+    ["imageTag", { imageTag: "x" }],
+    ["allowDownload", { allowDownload: true }],
+  ])("a physical request with %s reports the issue at that field's path", (field, extra) => {
+    const result = input.safeParse({ ...extra, physical: true, platform: "ios" });
+
+    expect(result.success ? [] : result.error.issues.map((issue) => issue.path)).toStrictEqual([
+      [field],
+    ]);
+  });
+
   it("a physical request with allowDownload false passes", () => {
     const result = input.safeParse({ allowDownload: false, physical: true, platform: "ios" });
 
