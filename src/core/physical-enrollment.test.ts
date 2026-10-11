@@ -18,31 +18,6 @@ const IPHONE: FakePhysicalDevice = {
   osVersion: "18.4",
 };
 
-/**
- * What leasing connects: an enrollment change wakes the queue, so a request waiting for a device
- * is granted a newly enrolled one and one whose last match was unenrolled ends.
- */
-function connectPorts(core: ReturnType<typeof createCore>, notifyAvailability: () => void): void {
-  core.connect({
-    leaseExpirer: { expire: async () => {} },
-    leaseMaintenance: {
-      acquisition: { beginMaintenance: async () => {}, endMaintenance: async () => {} },
-      leases: {
-        beginMaintenance: async () => {},
-        endMaintenance: async () => {},
-        releaseAllDuringMaintenance: async () => [],
-      },
-    },
-    notifyAvailability,
-    warmPoolDemand: {
-      defaultMode: () => "full",
-      maintenanceActive: false,
-      resolve: async () => ({ message: "no driver", refusal: "no-driver" }),
-      waitingDemand: () => [],
-    },
-  });
-}
-
 async function build(physicalDevices: readonly FakePhysicalDevice[] = [IPHONE]) {
   const clock = new FakeClock(1_000);
   const eventBus = new EventBus(clock);
@@ -66,9 +41,7 @@ async function build(physicalDevices: readonly FakePhysicalDevice[] = [IPHONE]) 
     systemStats,
     ...testComponentWiring({ clock, drivers: [driver], eventBus, registry }),
   });
-  const notifyAvailability = vi.fn();
-  connectPorts(core, notifyAvailability);
-  return { clock, core, driver, eventBus, notifyAvailability, registry };
+  return { clock, core, driver, eventBus, registry };
 }
 
 type Harness = Awaited<ReturnType<typeof build>>;
@@ -119,24 +92,6 @@ function holdInspection(driver: FakeDriver, callNumber: number) {
 }
 
 describe("PhysicalEnrollment", () => {
-  it("wakes the queue once after a new device is enrolled, once after one is enrolled again, and once after one is removed, and not after a refused add", async () => {
-    const harness = await build();
-
-    await harness.core.enrollment.add("ios", UDID);
-    expect(harness.notifyAvailability).toHaveBeenCalledTimes(1);
-
-    await harness.core.enrollment.add("ios", UDID);
-    expect(harness.notifyAvailability).toHaveBeenCalledTimes(2);
-
-    await harness.core.enrollment.remove(UDID);
-    expect(harness.notifyAvailability).toHaveBeenCalledTimes(3);
-
-    await expect(harness.core.enrollment.remove(UDID)).rejects.toMatchObject({
-      name: "UnknownEnrolledDeviceError",
-    });
-    expect(harness.notifyAvailability).toHaveBeenCalledTimes(3);
-  });
-
   it("records the apps the driver lists as the record's enrolledApps", async () => {
     const harness = await build();
 
@@ -454,7 +409,6 @@ describe("PhysicalEnrollment", () => {
         registry: harness.registry,
       }),
     });
-    connectPorts(second, () => {});
     await second.enrollment.add("ios", UDID);
 
     await expect(second.enrollment.add("android", UDID)).rejects.toThrow(

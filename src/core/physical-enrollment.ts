@@ -58,11 +58,6 @@ export interface PhysicalEnrollmentOptions {
   readonly claims: Pick<DeviceOperationClaims, "claim" | "tryClaim">;
   readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: { get(platform: Platform): Driver };
-  /**
-   * Called after every enrollment commit, so a request waiting for a device is granted one that
-   * has just been enrolled, and one whose last match was unenrolled ends (ADR 0022).
-   */
-  readonly notifyAvailability: () => void;
   readonly registry: PhysicalEnrollmentRegistry;
 }
 
@@ -101,7 +96,6 @@ export class PhysicalEnrollment {
       return { claim, existing };
     });
     if ("created" in claimed) {
-      this.options.notifyAvailability();
       return { device: claimed.created, reenrolled: false };
     }
 
@@ -119,20 +113,17 @@ export class PhysicalEnrollment {
       return { device, reenrolled: true };
     } finally {
       claim.release();
-      this.options.notifyAvailability();
     }
   }
 
   // fallow-ignore-next-line unused-class-member -- called through the dispatcher's enrollment port.
   async remove(id: string): Promise<PhysicalDevice> {
-    const removed = await this.options.decisions.run(() => {
+    return this.options.decisions.run(() => {
       const existing = this.#enrolled(id);
       if (existing === undefined) throw new UnknownEnrolledDeviceError(id);
       this.#requireFree(existing);
       return this.options.registry.unenrollPhysical(existing.id);
     });
-    this.options.notifyAvailability();
-    return removed;
   }
 
   #refuseVirtual(platform: Platform, id: string): void {

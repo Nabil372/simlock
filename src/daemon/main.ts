@@ -95,6 +95,7 @@ import { DaemonServer } from "./server.js";
 import { DaemonEndpointHost } from "./connection-host.js";
 import { AdminSecretManager } from "./admin-secret.js";
 import { describeLeaseRequestFailure } from "./error-code.js";
+import { wakingQueueAfter } from "./enrollment-wake.js";
 import { GatewayUplink } from "./gateway-uplink.js";
 import { createCredentialRoleResolver } from "./session.js";
 
@@ -436,7 +437,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     execEnv: process.env,
     queue: leasing,
     reaper,
-    enrollment: core.enrollment,
+    enrollment: wakingQueueAfter(core.enrollment, () => leasing.corePorts.notifyAvailability()),
     nuke,
     registry,
     // `status.get` and `list.get` flag a stalled device by the rule `doctor` reports, so they
