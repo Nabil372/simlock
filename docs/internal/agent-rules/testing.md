@@ -22,7 +22,10 @@ though the suite is green — being green is exactly the failure mode.
    equally against the correct and the broken implementation. An assertion
    on an exact count of things the test does not own (pending timers, calls,
    events) fails the day unrelated code adds one, and fails only under some
-   schedules: assert on what the title names.
+   schedules: assert on what the title names. A test that some input is refused
+   starts from an input that is accepted, asserts that, then changes one
+   thing: otherwise it stays green when the input is refused for another
+   reason.
 
 3. **Production code that can be deleted with a green suite is untested.**
    For a new code path, try deleting it and run the suite. If nothing goes
