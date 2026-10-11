@@ -20,6 +20,7 @@ import {
   CryptoTokenSecrets,
   FakeClock,
   FakeSystemStats,
+  IpcError,
   JsonLinesLogger,
   MemoryFilesystem,
   MemoryLogSink,
@@ -1021,6 +1022,32 @@ describe("DaemonServer", () => {
     await expect(holder.request("status.get", {})).resolves.toMatchObject({ ok: true });
     expect(holder.frames().filter((frame) => frame.push === "lease-lost")).toEqual([]);
     await holder.close();
+  });
+
+  it("drops a lease-lost push to a connection whose peer has hung up instead of leaving its failed write unhandled", async () => {
+    const connection = new BlockingConnection();
+    const harness = await createHarness({ host: new SingleConnectionHost(connection) });
+    await connection.request(
+      { clientVersion: "test", protocolVersion: DAEMON_PROTOCOL_VERSION },
+      "hello",
+    );
+    const grant = await connection.request(
+      { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+      "lease.request",
+    );
+    const unhandled: unknown[] = [];
+    const recordUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", recordUnhandled);
+    try {
+      connection.hangUp();
+      await harness.engine.release(leaseIdOf(grant), "explicit");
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(connection.frames.filter((frame) => frame.push === "lease-lost")).toHaveLength(1);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", recordUnhandled);
+    }
   });
 
   it("ignores lease-lost facts for leases with no currently connected holder without breaking the daemon", async () => {
@@ -3047,11 +3074,11 @@ class SingleConnectionHost implements ConnectionHost {
   async stop(): Promise<void> {}
 }
 
-/** One side of a connection whose writes complete only when this test says so. */
 class BlockingConnection implements IpcConnection {
   readonly closed = false;
   readonly frames: Record<string, unknown>[] = [];
   #blocked = false;
+  #hungUp = false;
   #pending: Array<() => void> = [];
   #dataListeners = new Set<(chunk: string) => void>();
 
@@ -3072,6 +3099,9 @@ class BlockingConnection implements IpcConnection {
     for (const line of contents.split("\n")) {
       if (line.trim() !== "") this.frames.push(JSON.parse(line) as Record<string, unknown>);
     }
+    if (this.#hungUp) {
+      throw new IpcError("unknown", "This socket has been ended by the other party", "EPIPE");
+    }
     if (!this.#blocked) return;
     await new Promise<void>((resolve) => this.#pending.push(resolve));
   }
@@ -3082,6 +3112,12 @@ class BlockingConnection implements IpcConnection {
     this.#blocked = true;
   }
 
+  /** From here on every write fails as a Node socket's does after its peer's FIN and before it is
+   * destroyed: `closed` is still false, and the write rejects with EPIPE. */
+  hangUp(): void {
+    this.#hungUp = true;
+  }
+
   releaseAll(): void {
     this.#blocked = false;
     const pending = this.#pending;
@@ -3089,7 +3125,6 @@ class BlockingConnection implements IpcConnection {
     for (const resolve of pending) resolve();
   }
 
-  /** Sends a request frame and waits for its reply, which arrives on `frames`. */
   async request(payload: unknown, type: string, id = type): Promise<ServerFrame> {
     for (const listener of this.#dataListeners) {
       listener(`${JSON.stringify({ id, payload, type })}\n`);
@@ -3099,7 +3134,6 @@ class BlockingConnection implements IpcConnection {
   }
 }
 
-/** A `FakeDriver` that claims the `simctl` wrapper, for the `device.exec` flows. */
 function passthroughDriver(clock: FakeClock): FakeDriver {
   return new FakeDriver({
     availableOsVersions: ["26.5"],
