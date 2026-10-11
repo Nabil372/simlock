@@ -76,11 +76,8 @@ export interface WorkerRegistryOptions {
    */
   readonly gatewayRequesterPrefix?: string;
   /**
-   * This gateway's own `lease.maxTtlMs` (ADR 0005 §15) -- what every view's reported
-   * `lease.maxTtlMs` is compared against on `refresh()` to warn when a worker's own cap is
-   * lower. Not optional: a real gateway always has this value (it is `config.lease.maxTtlMs`,
-   * which always defaults to something), and there is no safe placeholder to compare against
-   * in its absence.
+   * Not optional: a real gateway always has a `lease.maxTtlMs`, and there is no safe placeholder
+   * to compare a worker's cap against in its absence.
    */
   readonly leaseMaxTtlMs: number;
   readonly logger?: Logger;
@@ -111,17 +108,12 @@ function withoutReadFields(view: WorkerView): WorkerView {
 
 export class WorkerRegistry {
   readonly #workers = new Map<string, WorkerView>();
-  /** Each worker's devices in the grant shape (see `WorkerGrantedDevice`). Set by `refresh`,
-   * which writes nothing for a worker with no view, and deleted with the view by `#forget`. */
   readonly #grantedDevices = new Map<string, readonly WorkerGrantedDevice[]>();
-  /** The last catalog a refresh carried, per worker. A `starting` refresh leaves `catalog` off
-   * the view, but the gateway still knows what that worker listed when it last read it (ADR 0009
-   * §4: a reconnecting worker stays known while its new catalog is on the way), so `routingViews`
-   * hands routing this. Deleted with the view by `#forget`. */
+  /** A `starting` refresh leaves `catalog` off the view, but the gateway still knows what that
+   * worker listed when it last read it (ADR 0009 §4: a reconnecting worker stays known while its
+   * new catalog is on the way). */
   readonly #lastCatalog = new Map<string, NonNullable<WorkerView["catalog"]>>();
-  /** The last leases a refresh carried, per worker. The same gap as `#lastCatalog`: a `starting`
-   * refresh leaves `leases` off the view, which is "not known", not "none", so the retention
-   * sweep and `worker.disconnected` read these instead (ADR 0005 §6). Deleted by `#forget`. */
+  /** A `starting` refresh leaves `leases` off the view, which is "not known", not "none". */
   readonly #lastLeases = new Map<string, NonNullable<WorkerView["leases"]>>();
   /**
    * Drained worker ids, including ids with no view yet. Kept beside the views rather than only

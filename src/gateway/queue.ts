@@ -24,6 +24,7 @@ import {
 } from "../leasing/index.js";
 
 export type { LeaseProgress } from "../core/index.js";
+export { lineOf } from "../leasing/index.js";
 export type { LeaseRequestOptions } from "../leasing/index.js";
 export { RequestCancelledError, RequesterAlreadyLeasedError } from "../leasing/index.js";
 

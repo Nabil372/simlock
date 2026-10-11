@@ -71,6 +71,7 @@ import { type FleetLeaseEntry, type FleetLeaseIndex } from "./lease-index.js";
 import type { WorkerView } from "./worker-registry.js";
 import {
   FleetQueue,
+  lineOf,
   RequestCancelledError,
   RequesterAlreadyLeasedError,
   type FleetLeaseGrant,
@@ -770,7 +771,8 @@ export class FleetLeaseCoordinator {
     waiter: FleetWaiter,
     claims: { readonly physical: Set<string>; readonly virtual: Set<string> },
   ): boolean {
-    const claimedThisPass = waiter.request.physical === true ? claims.physical : claims.virtual;
+    const claimedThisPass =
+      lineOf(waiter.request) === "physical" ? claims.physical : claims.virtual;
     const refusals = this.#cannotServe.get(waiter);
     // A worker claimed this pass or one that answered `NO_CAPACITY` is busy, not unable, so it
     // stays in the table's view.
@@ -1169,7 +1171,7 @@ export class FleetLeaseCoordinator {
     if (this.#queue.enqueue(waiter) && !alreadyQueued) {
       this.#emit("lease.queued", {
         queuePosition:
-          waiter.request.physical === true ? this.#queue.physicalDepth : this.#queue.depth,
+          lineOf(waiter.request) === "physical" ? this.#queue.physicalDepth : this.#queue.depth,
         requestId: waiter.id,
       });
     }
@@ -1363,6 +1365,6 @@ function routable(waiter: FleetWaiter): RoutableRequest {
     ...(waiter.request.osVersion === undefined ? {} : { osVersion: waiter.request.osVersion }),
     ...(waiter.request.imageTag === undefined ? {} : { imageTag: waiter.request.imageTag }),
     ...(waiter.request.mode === undefined ? {} : { mode: waiter.request.mode }),
-    ...(waiter.request.physical === true ? { physical: true as const } : {}),
+    ...(lineOf(waiter.request) === "physical" ? { physical: true as const } : {}),
   };
 }

@@ -430,6 +430,27 @@ describe("createLeasing with physical devices", () => {
     expect(killed.harness.engine.core.claims.isClaimed(killed.device.id)).toBe(false);
   });
 
+  it("wakes the queue after a grant: a queued physical request that no wake reached since a second device became ready is granted it", async () => {
+    const harness = await createHarness();
+    const first = await enrollIphone(harness, "UDID-A");
+    const second = await enrollIphone(harness, "UDID-B");
+    await startReclaiming(harness, first);
+    await startReclaiming(harness, second);
+    harness.driver.holdPresenceReads("UDID-A");
+    const older = harness.engine.request(physicalRequest, asking("older"));
+    const newer = harness.engine.request(physicalRequest, asking("newer"));
+    await flush();
+    await finishReclaim(harness, first);
+    harness.engine.leasing.corePorts.notifyAvailability();
+    await flush();
+    await finishReclaim(harness, second);
+
+    harness.driver.releasePresenceReads();
+
+    expect(await outcome(older)).toMatchObject({ device: { id: first.id } });
+    expect(await outcome(newer)).toMatchObject({ device: { id: second.id } });
+  });
+
   it("grants the next queued physical request the device that a cancelled waiter held a grant claim on during its presence read", async () => {
     const harness = await createHarness();
     const device = await enrollIphone(harness, "UDID-A");
