@@ -64,6 +64,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -123,6 +124,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -178,7 +180,14 @@ describe("Doctor", () => {
       ],
       processes: [],
     });
-    const doctor = new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry });
+    const doctor = new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    });
 
     await doctor.reconcile();
     clock.advance(60_000);
@@ -239,6 +248,7 @@ describe("Doctor", () => {
       });
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -305,6 +315,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -365,6 +376,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -415,7 +427,14 @@ describe("Doctor", () => {
         },
       ],
     });
-    const doctor = new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry });
+    const doctor = new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    });
 
     await expect(doctor.reconcile({ fix: true })).resolves.toMatchObject({
       findings: expect.arrayContaining([
@@ -437,6 +456,90 @@ describe("Doctor", () => {
     expect(driver.calls.filter((call) => call.operation === "destroy")).toHaveLength(0);
     expect(driver.calls.filter((call) => call.operation === "shutdown")).toHaveLength(0);
   });
+
+  // Each case: what the driver shows for device `drifted`, a reconcile run first without holding
+  // (to leave the flag a later run would skip writing), the run whose first write is held, and
+  // what that run leaves on `drifted`.
+  it.each([
+    {
+      name: "--fix marking a missing device deleted",
+      observedDrifted: undefined,
+      before: undefined,
+      fix: true,
+      expected: { state: "deleted" },
+    },
+    {
+      name: "--fix shutting down a device observed stopped",
+      observedDrifted: observed("drifted", "stopped"),
+      before: { fix: false },
+      fix: true,
+      expected: { state: "shutdown" },
+    },
+    {
+      name: "a run flagging a device observed stopped",
+      observedDrifted: observed("drifted", "stopped"),
+      before: undefined,
+      fix: false,
+      expected: { foreignStateDetectedAt: 10_000, state: "ready" },
+    },
+    {
+      name: "a run flagging a device whose erasable mark is gone",
+      observedDrifted: {
+        ...observed("drifted", "running"),
+        mark: { durable: "tok", erasable: undefined, erasableReadable: true },
+      },
+      before: undefined,
+      fix: false,
+      expected: { foreignProvenanceDetectedAt: 10_000, state: "ready" },
+    },
+  ])(
+    "$name keeps its write, and another device's transition committed in the decision section while that write is in flight keeps its own",
+    async ({ before, expected, fix, observedDrifted }) => {
+      const clock = new FakeClock(10_000);
+      const eventBus = new EventBus(clock);
+      const filesystem = new HeldWritesFilesystem();
+      const registry = await Registry.load({
+        clock,
+        eventBus,
+        filesystem,
+        idGenerator: sequence(),
+        statePath: "/state.json",
+      });
+      const drifted = await readyDevice(registry, "drifted", "ios");
+      const warm = await shutdownDevice(registry, "warm", "ios");
+      const driver = new FakeDriver({ clock, platform: "ios" });
+      driver.setManagedReality({
+        devices: [observed("warm", "stopped"), ...(observedDrifted ? [observedDrifted] : [])],
+        processes: [],
+      });
+      const decisions = new SerializedDecision();
+      const doctor = new Doctor({
+        clock,
+        config: config(),
+        decisions,
+        drivers: [driver],
+        eventBus,
+        registry,
+      });
+      if (before !== undefined) await doctor.reconcile(before);
+
+      filesystem.holding = true;
+      const reconciling = doctor.reconcile({ fix });
+      await filesystem.held(1);
+      // What the warm pool does when it boots a device back: a transition in a decision section.
+      const booting = decisions.run(() =>
+        registry.transitionDevice(warm.id, "ready", {
+          event: "device.ready",
+          payload: { bootDuration: 0, deviceId: warm.id },
+        }),
+      );
+      await filesystem.releaseUntil(Promise.all([reconciling, booting]));
+
+      const record = (id: string) => registry.snapshot.devices.find((d) => d.id === id);
+      expect(record(drifted.id)).toMatchObject(expected);
+      expect(record(warm.id)?.state).toBe("ready");
+    },
+  );
 
   it("expires an overdue live lease through leasing when fixing", async () => {
     const clock = new FakeClock(10_000);
@@ -494,6 +597,7 @@ describe("Doctor", () => {
     });
 
     await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -545,6 +649,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [iosDriver, androidDriver],
@@ -603,6 +708,7 @@ describe("Doctor", () => {
     expect(claim).toBeDefined();
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       claims,
       clock,
       config: config(),
@@ -655,6 +761,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [iosDriver, androidDriver],
@@ -706,6 +813,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -764,6 +872,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -875,7 +984,14 @@ describe("Doctor", () => {
         ttlDeadline: 999_999,
       });
       await registry.beginRelease(lease.id);
-      const doctor = new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry });
+      const doctor = new Doctor({
+        decisions: new SerializedDecision(),
+        clock,
+        config: config(),
+        drivers: [driver],
+        eventBus,
+        registry,
+      });
       const stalls = async () =>
         (await doctor.reconcile()).findings.filter(
           (finding) => finding.kind === "stalled-transition",
@@ -936,6 +1052,7 @@ describe("Doctor", () => {
       clock.advance(9_001);
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -985,6 +1102,7 @@ describe("Doctor", () => {
       clock.advance(9_001);
 
       const claimed = await new Doctor({
+        decisions: new SerializedDecision(),
         claims,
         clock,
         config: config(),
@@ -1001,6 +1119,7 @@ describe("Doctor", () => {
       // stall once no live operation accounts for it.
       claim?.release();
       const unclaimed = await new Doctor({
+        decisions: new SerializedDecision(),
         claims,
         clock,
         config: config(),
@@ -1041,6 +1160,7 @@ describe("Doctor", () => {
       clock.advance(8_000);
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1082,6 +1202,7 @@ describe("Doctor", () => {
       clock.advance(6_001);
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1127,6 +1248,7 @@ describe("Doctor", () => {
       });
       await registry.beginRelease(lease.id);
       const doctor = new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1175,6 +1297,7 @@ describe("Doctor", () => {
       clock.advance(9_001);
 
       await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1242,6 +1365,7 @@ describe("Doctor", () => {
       clock.advance(9_001);
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1299,6 +1423,7 @@ describe("Doctor", () => {
       const quarantine = { enterFromStalledTransition: vi.fn() };
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1377,7 +1502,15 @@ describe("Doctor", () => {
     clock.advance(100);
     await vi.waitFor(() => expect(claims.isClaimed(device.id)).toBe(true));
     const reconcile = () =>
-      new Doctor({ claims, clock, config: config(), drivers: [driver], eventBus, registry })
+      new Doctor({
+        decisions: new SerializedDecision(),
+        claims,
+        clock,
+        config: config(),
+        drivers: [driver],
+        eventBus,
+        registry,
+      })
         .reconcile()
         .then((report) =>
           report.findings.filter(
@@ -1429,7 +1562,14 @@ describe("Doctor", () => {
       processes: [],
     });
 
-    await new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry }).reconcile({
+    await new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile({
       fix: true,
     });
 
@@ -1487,6 +1627,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -1533,6 +1674,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -1589,7 +1731,14 @@ describe("Doctor", () => {
       processes: [],
     });
 
-    await new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry }).reconcile({
+    await new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile({
       fix: true,
     });
 
@@ -1650,7 +1799,14 @@ describe("Doctor", () => {
         payload: { bootDuration: 0, deviceId: registered.id },
       });
       const driver = new FakeDriver({ clock, platform: "ios" });
-      const doctor = new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry });
+      const doctor = new Doctor({
+        decisions: new SerializedDecision(),
+        clock,
+        config: config(),
+        drivers: [driver],
+        eventBus,
+        registry,
+      });
       return { doctor, driver, registered };
     }
 
@@ -1696,6 +1852,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [],
@@ -1732,6 +1889,7 @@ describe("Doctor", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [],
@@ -1760,6 +1918,7 @@ describe("Doctor", () => {
       ]);
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1790,6 +1949,7 @@ describe("Doctor", () => {
       const driver = new FakeDriver({ clock, platform: "ios" });
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1825,6 +1985,7 @@ describe("Doctor", () => {
       });
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1852,6 +2013,7 @@ describe("Doctor", () => {
       ]);
 
       const report = await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1887,6 +2049,7 @@ describe("Doctor", () => {
       ]);
 
       await new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [driver],
@@ -1936,6 +2099,7 @@ describe("Doctor", () => {
       const eventBus = new EventBus(clock);
       const registry = await loadRegistry(clock, eventBus);
       const doctor = new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [
@@ -2046,6 +2210,7 @@ describe("Doctor", () => {
       const android = new FakeDriver({ clock, platform: "android" });
       const check = prerequisiteCheck("android", [EMULATOR]);
       const doctor = new Doctor({
+        decisions: new SerializedDecision(),
         clock,
         config: config(),
         drivers: [android],
@@ -2076,6 +2241,7 @@ describe("Doctor", () => {
       });
       const order: string[] = [];
       const doctor = new Doctor({
+        decisions: new SerializedDecision(),
         clock: new FakeClock(10_000),
         config: config(),
         drivers: [],
@@ -2135,6 +2301,7 @@ describe("Doctor with a platform it cannot observe", () => {
     const { eventBus, registry } = await readyIosDevice();
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock: new FakeClock(10_000),
       config: config(),
       drivers: [],
@@ -2154,6 +2321,7 @@ describe("Doctor with a platform it cannot observe", () => {
     const { eventBus, registry } = await readyIosDevice();
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock: new FakeClock(10_000),
       config: config(),
       drivers: [],
@@ -2176,7 +2344,14 @@ describe("Doctor with a platform it cannot observe", () => {
       devices: [observed("orphan-1", "running")],
       processes: [driverDevice("orphan-1")],
     });
-    const doctor = new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry });
+    const doctor = new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    });
 
     const reported = await doctor.reconcile({ fix: true });
     expect(reported.findings.map((finding) => finding.kind)).toEqual([
@@ -2205,7 +2380,14 @@ describe("Doctor with a platform it cannot observe", () => {
     const driver = new FakeDriver({ clock, platform: "ios" });
     driver.setManagedReality({ devices: [observed("orphan-1", "stopped")], processes: [] });
 
-    await new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry }).reconcile({
+    await new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile({
       purgeOrphans: true,
     });
 
@@ -2230,6 +2412,7 @@ describe("Doctor with a platform it cannot observe", () => {
     androidDriver.failOn("revalidateRoot", 1, new Error("Refusing the android device root"));
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [iosDriver, androidDriver],
@@ -2262,6 +2445,7 @@ describe("Doctor with a platform it cannot observe", () => {
     driver.failOn("destroy", 1, new Error("simctl delete failed"));
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -2285,6 +2469,7 @@ describe("Doctor with a platform it cannot observe", () => {
     const { clock, driver, eventBus, registry } = await legacyDeviceSetup();
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -2306,7 +2491,14 @@ describe("Doctor with a platform it cannot observe", () => {
   it("destroys a legacy device through its old path and then records it missing", async () => {
     const { clock, driver, eventBus, registry } = await legacyDeviceSetup();
 
-    await new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry }).reconcile({
+    await new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile({
       fix: true,
     });
 
@@ -2325,7 +2517,14 @@ describe("Doctor with a platform it cannot observe", () => {
       ttlDeadline: 90_000,
     });
 
-    await new Doctor({ clock, config: config(), drivers: [driver], eventBus, registry }).reconcile({
+    await new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+    }).reconcile({
       fix: true,
     });
 
@@ -2338,6 +2537,7 @@ describe("Doctor with a platform it cannot observe", () => {
     driver.failOn("findLegacy", 1, new Error("simctl list failed"));
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -2524,6 +2724,7 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
     const shutdown = vi.spyOn(driver, "shutdown");
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -2554,6 +2755,7 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
     const destroy = vi.spyOn(driver, "destroy");
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -2593,6 +2795,7 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
     });
 
     const report = await new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: config(),
       drivers: [driver],
@@ -2611,6 +2814,43 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
     expect(decisionRuns).toHaveBeenCalledTimes(runsAfterFix);
   });
 });
+
+/**
+ * Holds each state write once `holding` is on, until the test releases it, so a test can put a
+ * second commit inside the window between a commit's read and its write landing.
+ */
+class HeldWritesFilesystem extends MemoryFilesystem {
+  holding = false;
+  readonly #held: (() => void)[] = [];
+
+  override async writeFileAtomic(path: string, contents: string): Promise<void> {
+    if (this.holding) await new Promise<void>((resolve) => this.#held.push(resolve));
+    await super.writeFileAtomic(path, contents);
+  }
+
+  /** Resolves once `count` writes are held. */
+  async held(count: number): Promise<void> {
+    for (let turn = 0; this.#held.length < count; turn++) {
+      if (turn === 100) throw new Error(`Only ${String(this.#held.length)} writes were held`);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+
+  /** Releases held writes one at a time, oldest first, each after every pending step has run. */
+  async releaseUntil(done: Promise<unknown>): Promise<void> {
+    let settled = false;
+    const settle = () => {
+      settled = true;
+    };
+    done.then(settle, settle);
+    for (let turn = 0; !settled; turn++) {
+      if (turn === 100) throw new Error("The held writes never settled");
+      await new Promise((resolve) => setImmediate(resolve));
+      this.#held.shift()?.();
+    }
+    await done;
+  }
+}
 
 function sequence() {
   let next = 1;
@@ -2744,6 +2984,7 @@ describe("Doctor: warm pool targets", () => {
     const registry = await loadRegistry(clock, eventBus);
     const base = config();
     const doctor = new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: {
         ...base,
@@ -3065,6 +3306,7 @@ describe("Doctor: warm pool targets", () => {
     const registry = await loadRegistry(clock, eventBus);
     const base = config();
     const doctor = new Doctor({
+      decisions: new SerializedDecision(),
       clock,
       config: base,
       drivers: [driver],

@@ -28,6 +28,7 @@ import {
 import type { CapacityReader, LeaseExpirer, WarmPoolReader } from "./core-ports.js";
 import { reservedRunning, type WarmTargetFigures } from "./warm-pool/index.js";
 import type { Registry } from "./registry.js";
+import type { SerializedDecision } from "./serialized-decision.js";
 
 export type DoctorFinding =
   | {
@@ -149,6 +150,11 @@ export interface DoctorQuarantine {
 export interface DoctorOptions {
   readonly clock: Clock;
   readonly config: Config;
+  /**
+   * The decision section every registry write of this daemon is made in. A write made outside it
+   * can land on top of a concurrent one that read the registry before it, and undo it.
+   */
+  readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: readonly Driver[];
   readonly eventBus: EventBus;
   readonly leaseExpirer?: LeaseExpirer;
@@ -448,12 +454,13 @@ export class Doctor {
       );
       findings.push(...deviceFindings);
       if (deviceFindings.some((finding) => finding.kind === "foreign-state-change")) {
-        await this.options.registry.markForeignStateDetected(device.id, this.options.clock.now());
+        await this.options.decisions.run(() =>
+          this.options.registry.markForeignStateDetected(device.id, this.options.clock.now()),
+        );
       }
       if (deviceFindings.some((finding) => finding.kind === "foreign-provenance-change")) {
-        await this.options.registry.markForeignProvenanceDetected(
-          device.id,
-          this.options.clock.now(),
+        await this.options.decisions.run(() =>
+          this.options.registry.markForeignProvenanceDetected(device.id, this.options.clock.now()),
         );
       }
     }
@@ -714,7 +721,7 @@ export class Doctor {
         }
         break;
       case "foreign-state-change":
-        await this.#fixForeignStateChange(finding);
+        await this.options.decisions.run(() => this.#fixForeignStateChange(finding));
         break;
       case "foreign-provenance-change":
         // Report-only: re-marking destroys the evidence, and the device may be leased.
@@ -739,14 +746,16 @@ export class Doctor {
   }
 
   async #fixMissingDevice(deviceId: string): Promise<void> {
-    const snapshot = this.options.registry.snapshot;
-    if (snapshot.leases.some((lease) => lease.deviceId === deviceId)) {
-      return;
-    }
-    const device = snapshot.devices.find((candidate) => candidate.id === deviceId);
-    if (device !== undefined && device.state !== "deleted") {
-      await this.options.registry.markDeviceMissing(deviceId, "doctor");
-    }
+    await this.options.decisions.run(async () => {
+      const snapshot = this.options.registry.snapshot;
+      if (snapshot.leases.some((lease) => lease.deviceId === deviceId)) {
+        return;
+      }
+      const device = snapshot.devices.find((candidate) => candidate.id === deviceId);
+      if (device !== undefined && device.state !== "deleted") {
+        await this.options.registry.markDeviceMissing(deviceId, "doctor");
+      }
+    });
   }
 
   /**
