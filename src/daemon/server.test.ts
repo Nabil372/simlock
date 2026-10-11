@@ -655,6 +655,32 @@ describe("DaemonServer", () => {
     ]);
   });
 
+  it("answers device.add and device.remove over the socket from the daemon's enrollment", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({
+      clock,
+      physicalDevices: [
+        { apps: ["a"], ids: ["UDID-1"], model: "iPhone 15 Pro", osVersion: "18.4" },
+      ],
+      platform: "ios",
+    });
+    const harness = await createHarness({ clock, driver, includeEnrollment: true });
+    const client = await createClient(harness.socketPath);
+    await hello(client);
+
+    const added = await client.request("device.add", { id: "UDID-1", platform: "ios" }, "add-1");
+    const removed = await client.request("device.remove", { id: "UDID-1" }, "remove-1");
+
+    expect(added).toMatchObject({
+      ok: true,
+      payload: { appCount: 1, driverDeviceId: "UDID-1", platform: "ios", reenrolled: false },
+    });
+    expect(removed).toMatchObject({
+      ok: true,
+      payload: { driverDeviceId: "UDID-1", id: "UDID-1" },
+    });
+  });
+
   it("routes two commands on one connection by frame id, and pushes to no other connection", async () => {
     // ADR 0005 §19a keys `output` on the request's frame id for the same reason `progress` is
     // keyed on it: one connection may have several calls in flight. And a push is a *reply* to
@@ -2913,6 +2939,8 @@ async function createHarness(
     readonly host?: ConnectionHost;
     /** Overrides the protocol range this daemon advertises, to stand in for an older worker. */
     readonly protocolVersion?: ProtocolRange;
+    /** Wires `device.add` and `device.remove` to the engine's enrollment; absent by default. */
+    readonly includeEnrollment?: boolean;
   } = {},
 ) {
   const directory =
@@ -2978,6 +3006,7 @@ async function createHarness(
     warmPool: engine,
     deviceModes: engine,
     catalog: engine,
+    ...(options.includeEnrollment === true ? { enrollment: engine.core.enrollment } : {}),
     instanceId: "instance-test",
     clock,
     components: wiring.components,

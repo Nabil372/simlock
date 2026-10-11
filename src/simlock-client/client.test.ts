@@ -71,6 +71,12 @@ describe("connectSimlock: handshake", () => {
     await expect(client.runCleanup()).rejects.toMatchObject({
       code: "PROTOCOL_VERSION_UNSUPPORTED",
     });
+    await expect(client.addDevice({ id: "UDID-1", platform: "ios" })).rejects.toMatchObject({
+      code: "PROTOCOL_VERSION_UNSUPPORTED",
+    });
+    await expect(client.removeDevice({ id: "UDID-1" })).rejects.toMatchObject({
+      code: "PROTOCOL_VERSION_UNSUPPORTED",
+    });
     expect(connection.sent).toHaveLength(before);
 
     const stopPromise = client.stopDaemon();
@@ -218,6 +224,38 @@ describe("connectSimlock: handshake", () => {
     connection.reply(call.id, answer);
 
     await expect(callPromise).resolves.toEqual(answer);
+  });
+
+  it("enrolls a device from an admin client with device.add and removes it with device.remove, sending the input and returning the daemon's answer", async () => {
+    const connection = new ScriptedConnection();
+    const connectPromise = connectSimlockAdmin({ connection, credential: "operator-secret" });
+    await flushMicrotasks();
+    completeHello(connection, { role: "admin" });
+    const client = await connectPromise;
+    const enrolled = {
+      appCount: 2,
+      class: "phone",
+      driverDeviceId: "UDID-1",
+      id: "dev_1",
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      platform: "ios",
+      reenrolled: false,
+    };
+
+    const addPromise = client.addDevice({ id: "ALIAS", platform: "ios" });
+    await flushMicrotasks();
+    const addCall = connection.lastSentOf("device.add")!;
+    expect(addCall.payload).toEqual({ id: "ALIAS", platform: "ios" });
+    connection.reply(addCall.id, enrolled);
+    await expect(addPromise).resolves.toEqual(enrolled);
+
+    const removePromise = client.removeDevice({ id: "UDID-1" });
+    await flushMicrotasks();
+    const removeCall = connection.lastSentOf("device.remove")!;
+    expect(removeCall.payload).toEqual({ id: "UDID-1" });
+    connection.reply(removeCall.id, { driverDeviceId: "UDID-1", id: "UDID-1" });
+    await expect(removePromise).resolves.toEqual({ driverDeviceId: "UDID-1", id: "UDID-1" });
   });
 
   it("wraps a malformed daemon response instead of throwing a raw parse failure", async () => {

@@ -94,7 +94,7 @@ describe("the page of a worker that has finished starting", () => {
     expect(shown).not.toContain("appear once startup finishes");
   });
 
-  it("marks a simulator Virtual and an enrolled device Physical, and shows a dash for the physical device's mode and image tag", () => {
+  it("marks a simulator Virtual and an enrolled device Physical, and shows a dash for the physical device's mode and image tag and for a simulator with no image tag", () => {
     const shown = detail({
       ...RUNNING,
       devices: [
@@ -113,6 +113,14 @@ describe("the page of a worker that has finished starting", () => {
           state: "ready",
         },
         {
+          physical: false,
+          id: "dev_ios",
+          mode: "full",
+          servesDefaultMode: true,
+          spec: { model: "iPhone 16", osVersion: "26.5", physical: false, platform: "ios" },
+          state: "ready",
+        },
+        {
           class: "phone",
           driverDeviceId: "00008110-001A2B3C4D5E",
           id: "dev_phys",
@@ -125,6 +133,7 @@ describe("the page of a worker that has finished starting", () => {
     });
 
     expect(shown).toContain("Android Virtual Pixel 9 35 full google_apis");
+    expect(shown).toContain("iOS Virtual iPhone 16 26.5 full —");
     expect(shown).toContain("iOS Physical iPhone 15 Pro 18.4 — —");
   });
 

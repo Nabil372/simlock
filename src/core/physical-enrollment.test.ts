@@ -418,4 +418,153 @@ describe("PhysicalEnrollment", () => {
     });
     expect(live(harness)).toHaveLength(1);
   });
+
+  it("words a busy device as leased, reclaiming or being enrolled or removed", async () => {
+    const harness = await build();
+    const { device } = await harness.core.enrollment.add("ios", UDID);
+    const claim = harness.core.claims.tryClaim(device.id, "reclaim");
+    await expect(harness.core.enrollment.remove(UDID)).rejects.toThrow(
+      `${UDID} is being reclaimed: try again when it finishes`,
+    );
+    claim?.release();
+    const enrolling = harness.core.claims.tryClaim(device.id, "enrollment");
+    await expect(harness.core.enrollment.remove(UDID)).rejects.toThrow(
+      `${UDID} is being enrolled or removed: try again in a moment`,
+    );
+    enrolling?.release();
+    await harness.registry.createLease({
+      deviceId: device.id,
+      ownerId: "agent",
+      requesterId: "agent",
+      ttlDeadline: 61_000,
+      ttlMs: 60_000,
+    });
+    await expect(harness.core.enrollment.add("ios", UDID)).rejects.toThrow(
+      `${UDID} is leased: release it first`,
+    );
+  });
+
+  it("takes the enrollment claim of the device while its second inspection runs, and frees it after", async () => {
+    const harness = await build();
+    const { device } = await harness.core.enrollment.add("ios", UDID);
+    const held = holdInspection(harness.driver, 2);
+    const waiting = harness.core.enrollment.add("ios", UDID);
+    await vi.waitFor(() => expect(held.reached).toHaveBeenCalled());
+
+    expect(harness.core.claims.claim(device.id)?.kind).toBe("enrollment");
+    held.release();
+    await waiting;
+
+    expect(harness.core.claims.claim(device.id)).toBeUndefined();
+  });
+
+  it("answers UNKNOWN_DEVICE, naming the ID, to a remove of an ID with no record and of a deleted one", async () => {
+    const harness = await build();
+
+    await expect(harness.core.enrollment.remove(UDID)).rejects.toMatchObject({
+      id: UDID,
+      message: `${UDID} is not an enrolled device`,
+      name: "UnknownEnrolledDeviceError",
+    });
+    await harness.core.enrollment.add("ios", UDID);
+    await harness.core.enrollment.remove(UDID);
+    await expect(harness.core.enrollment.remove(UDID)).rejects.toMatchObject({
+      name: "UnknownEnrolledDeviceError",
+    });
+  });
+
+  it("writes a new record, not a re-enrollment, for a device whose earlier record is deleted", async () => {
+    const harness = await build();
+    const first = await harness.core.enrollment.add("ios", UDID);
+    await harness.core.enrollment.remove(UDID);
+
+    const again = await harness.core.enrollment.add("ios", ALIAS);
+
+    expect(again.reenrolled).toBe(false);
+    expect(again.device.id).not.toBe(first.device.id);
+    expect(live(harness)).toHaveLength(1);
+    expect(physicalRecords(harness)).toHaveLength(2);
+  });
+
+  it("names the device in its error when the second read names another device or a read fails", async () => {
+    const harness = await build();
+    await harness.core.enrollment.add("ios", UDID);
+    const original = harness.driver.inspectPhysical.bind(harness.driver);
+    let calls = 0;
+    vi.spyOn(harness.driver, "inspectPhysical").mockImplementation(async (id) => {
+      calls += 1;
+      const read = await original(id);
+      return calls === 1 || !read.enrollable ? read : { ...read, driverDeviceId: "SOMEONE-ELSE" };
+    });
+
+    await expect(harness.core.enrollment.add("ios", ALIAS)).rejects.toThrow(
+      `${UDID} was read again as SOMEONE-ELSE`,
+    );
+    vi.spyOn(harness.driver, "inspectPhysical").mockRejectedValue(new Error("usbmuxd went away"));
+    await expect(harness.core.enrollment.add("ios", ALIAS)).rejects.toThrow(
+      `Reading ${ALIAS} failed: usbmuxd went away`,
+    );
+    vi.spyOn(harness.driver, "inspectPhysical").mockRejectedValue("a bare string");
+    await expect(harness.core.enrollment.add("ios", ALIAS)).rejects.toThrow(
+      `Reading ${ALIAS} failed: a bare string`,
+    );
+  });
+
+  it("does not mistake a simulator with the canonical ID for the enrolled record, and remove forgets only the physical one", async () => {
+    const harness = await build();
+    const provisioned = await harness.driver.provision({
+      model: "iPhone 16",
+      osVersion: "1",
+      physical: false,
+      platform: "ios",
+    });
+    const registered = await harness.registry.registerDevice({
+      driverData: provisioned.driverData,
+      driverDeviceId: UDID,
+      provisionDuration: 0,
+      spec: { model: "iPhone 16", osVersion: "1", physical: false, platform: "ios" },
+    });
+    await harness.registry.transitionDevice(
+      registered.id,
+      "ready",
+      { event: "device.ready", payload: { bootDuration: 0, deviceId: registered.id } },
+      { address: "emulator-5554" },
+    );
+    await expect(harness.core.enrollment.add("ios", ALIAS)).resolves.toMatchObject({
+      reenrolled: false,
+    });
+    await expect(harness.core.enrollment.add("ios", UDID)).rejects.toMatchObject({
+      reason: "virtual-device",
+      message: `${UDID} is a simulator or emulator Simlock manages`,
+    });
+    await expect(harness.core.enrollment.remove(UDID)).resolves.toMatchObject({
+      physical: true,
+      state: "deleted",
+    });
+    expect(harness.registry.snapshot.virtualDevices[0]?.state).toBe("ready");
+  });
+
+  it("enrols a device whose ID a deleted simulator once had", async () => {
+    const harness = await build();
+    const provisioned = await harness.driver.provision({
+      model: "iPhone 16",
+      osVersion: "1",
+      physical: false,
+      platform: "ios",
+    });
+    const registered = await harness.registry.registerDevice({
+      driverData: provisioned.driverData,
+      driverDeviceId: UDID,
+      provisionDuration: 0,
+      spec: { model: "iPhone 16", osVersion: "1", physical: false, platform: "ios" },
+    });
+    await harness.registry.transitionDevice(registered.id, "deleted", {
+      event: "device.deleted",
+      payload: { deviceId: registered.id, initiator: "test" },
+    });
+
+    await expect(harness.core.enrollment.add("ios", UDID)).resolves.toMatchObject({
+      reenrolled: false,
+    });
+  });
 });

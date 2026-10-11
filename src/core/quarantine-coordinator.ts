@@ -296,7 +296,6 @@ export class QuarantineCoordinator {
     await this.options.decisions.run(() =>
       this.options.registry.recordQuarantineRetryFailure(device.id, attempts, nextRetryAt),
     );
-    claim.release();
     this.#arm(device.id, nextRetryAt);
   }
 

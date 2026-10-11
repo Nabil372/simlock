@@ -1293,4 +1293,65 @@ describe("device.add and device.remove ids (ADR 0022 §2)", () => {
     ).toBe(false);
     expect(OPERATIONS["device.remove"].input.safeParse({ id: "A", yes: true }).success).toBe(false);
   });
+
+  it.each([
+    ["a unit separator", "A\u001fB"],
+    ["a delete", "A\u007fB"],
+    ["a C1 control", "A\u0080B"],
+    ["the last C1 control", "A\u009fB"],
+    ["a no-break space", "A\u00a0B"],
+    ["a newline", "A\nB"],
+  ])("refuses an id with %s", (_case, id) => {
+    expect(OPERATIONS["device.remove"].input.safeParse({ id }).success).toBe(false);
+  });
+
+  it.each([
+    ["a letter beyond ASCII", "caf\u00e9"],
+    ["a dash inside", "A-B"],
+    ["a tilde and an inverted exclamation mark", "A~\u00a1B"],
+  ])("takes an id with %s", (_case, id) => {
+    expect(OPERATIONS["device.remove"].input.safeParse({ id }).success).toBe(true);
+  });
+
+  it("says why an id is refused", () => {
+    const messages = (id: string) =>
+      OPERATIONS["device.remove"].input
+        .safeParse({ id })
+        .error?.issues.map((issue) => issue.message);
+
+    expect(messages("A B")).toEqual(["must not contain whitespace or control characters"]);
+    expect(messages("-A")).toEqual(["must not start with -"]);
+  });
+
+  it("declares device.add and device.remove with their names, outputs and strict inputs", () => {
+    const output = {
+      appCount: 3,
+      class: "tablet",
+      driverDeviceId: "U",
+      id: "dev_1",
+      model: "iPad",
+      osVersion: "18",
+      platform: "ios",
+      reenrolled: true,
+    };
+
+    expect(OPERATIONS["device.add"].name).toBe("device.add");
+    expect(OPERATIONS["device.remove"].name).toBe("device.remove");
+    expect(OPERATIONS["device.add"].output.parse(output)).toEqual(output);
+    expect(OPERATIONS["device.add"].output.safeParse({ ...output, class: "watch" }).success).toBe(
+      false,
+    );
+    expect(OPERATIONS["device.add"].output.safeParse({ ...output, appCount: -1 }).success).toBe(
+      false,
+    );
+    expect(OPERATIONS["device.remove"].output.parse({ driverDeviceId: "U", id: "U" })).toEqual({
+      driverDeviceId: "U",
+      id: "U",
+    });
+    expect(OPERATIONS["device.add"].input.safeParse({ id: "A" }).success).toBe(false);
+    expect(OPERATIONS["device.add"].input.safeParse({ id: "A", platform: "windows" }).success).toBe(
+      false,
+    );
+    expect(OPERATIONS["device.remove"].input.safeParse({}).success).toBe(false);
+  });
 });

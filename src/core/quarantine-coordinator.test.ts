@@ -846,4 +846,34 @@ describe("QuarantineCoordinator retry claim (ADR 0022 §2)", () => {
     expect(eventsOf(harness.bus).at(-1)?.event).toBe("device.quarantine-abandoned");
     expect(claimedAt).toEqual([false, false]);
   });
+
+  it("has freed the claim before it emits when a retry gives up and cannot destroy the device", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({ clock, platform: "ios" });
+    driver.failOn("reclaim", 1, new Error("still stuck"));
+    driver.failOn("reclaim", 2, new Error("still stuck"));
+    driver.failOn("destroy", 1, new Error("cannot destroy"));
+    const harness = await stalled({ clock, driver });
+    const claimedAt: boolean[] = [];
+    harness.bus.subscribe("device.quarantine-stranded", () =>
+      claimedAt.push(harness.claims.isClaimed(harness.target.id)),
+    );
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+    harness.clock.advance(2_000);
+    await flush();
+
+    expect(claimedAt).toEqual([false]);
+  });
+
+  it("frees the claim when a registry write throws during the retry", async () => {
+    const harness = await stalled();
+    vi.spyOn(harness.registry, "recoverFromQuarantine").mockRejectedValue(new Error("disk full"));
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.claims.isClaimed(harness.target.id)).toBe(false);
+  });
 });

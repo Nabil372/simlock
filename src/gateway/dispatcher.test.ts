@@ -856,6 +856,37 @@ describe("GatewayDispatcher", () => {
     });
   });
 
+  describe("device.add and device.remove", () => {
+    it("answer UNSUPPORTED_IN_GATEWAY_MODE to an admin session, saying to run the command on the worker the device is plugged into", async () => {
+      const { dispatcher } = harness();
+
+      await expect(
+        dispatcher.dispatch(
+          "device.add",
+          { id: "00008110-001A2B3C4D5E", platform: "ios" },
+          session({ role: "admin" }),
+        ),
+      ).rejects.toMatchObject({
+        code: "UNSUPPORTED_IN_GATEWAY_MODE",
+        details: { operation: "device.add" },
+        message:
+          "device.add enrols a device plugged into one machine; run it on the worker the device is plugged into",
+      });
+      await expect(
+        dispatcher.dispatch(
+          "device.remove",
+          { id: "00008110-001A2B3C4D5E" },
+          session({ role: "admin" }),
+        ),
+      ).rejects.toMatchObject({
+        code: "UNSUPPORTED_IN_GATEWAY_MODE",
+        details: { operation: "device.remove" },
+        message:
+          "device.remove unenrols a device plugged into one machine; run it on the worker the device is plugged into",
+      });
+    });
+  });
+
   describe("lease lifecycle and device.exec (#118)", () => {
     it("forwards lease.request through the fleet coordinator and answers UNKNOWN_LEASE for renew/release/exec against an id it never issued", async () => {
       const { dispatcher } = harness();

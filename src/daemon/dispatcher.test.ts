@@ -170,6 +170,9 @@ async function buildDispatcher(
      * pay for wiring one -- since a real `Nuke` needs this function's own `engine`/`registry`,
      * it is built here (rather than passed in) when a test opts in. */
     readonly includeNuke?: boolean;
+    /** Wires `device.add` and `device.remove` to the engine's real `PhysicalEnrollment`; off by
+     * default, like the option it feeds. */
+    readonly includeEnrollment?: boolean;
     /** Gives the fake driver a `simlock <tool>` wrapper so `driver.passthrough` has something
      * to route to; off by default so no other test's catalog output changes shape. */
     readonly passthroughTool?: string;
@@ -321,6 +324,7 @@ async function buildDispatcher(
     instanceId: "instance-1",
     leases: engine,
     ...(overrides.includeNuke === true ? { nuke: new Nuke({ executor: engine, registry }) } : {}),
+    ...(overrides.includeEnrollment === true ? { enrollment: engine.core.enrollment } : {}),
     passthrough: resolvePassthroughOverride(engine, overrides.passthroughOverride),
     ...(overrides.processRunner === undefined ? {} : { processRunner: overrides.processRunner }),
     execEnv: { PATH: "/usr/bin" },
@@ -3299,6 +3303,145 @@ function testConfig(
     },
   };
 }
+
+describe("Dispatcher: device.add and device.remove", () => {
+  const admin = () => session({ principal: "tok_operator", role: "admin" });
+  const UDID = "00008110-001A2B3C4D5E";
+
+  async function withEnrollment() {
+    return buildDispatcher({
+      driverOptions: {
+        physicalDevices: [
+          {
+            apps: ["a", "b"],
+            class: "tablet",
+            ids: [UDID, "ALIAS"],
+            model: "iPad",
+            osVersion: "18.5",
+          },
+          { ids: ["LOCKED"], refusal: { message: "locked: unlock it", reason: "locked" } },
+        ],
+      },
+      includeEnrollment: true,
+    });
+  }
+
+  it("enrolls a device, answering with the registry ID, the canonical ID and what was read, and removes it by its canonical ID", async () => {
+    const { dispatcher, registry } = await withEnrollment();
+
+    const added = await dispatcher.dispatch(
+      "device.add",
+      { id: "ALIAS", platform: "ios" },
+      admin(),
+    );
+    const removed = await dispatcher.dispatch("device.remove", { id: UDID }, admin());
+
+    expect(added).toEqual({
+      appCount: 2,
+      class: "tablet",
+      driverDeviceId: UDID,
+      id: registry.snapshot.devices[0]?.id,
+      model: "iPad",
+      osVersion: "18.5",
+      platform: "ios",
+      reenrolled: false,
+    });
+    expect(removed).toEqual({ driverDeviceId: UDID, id: UDID });
+    expect(registry.snapshot.devices[0]?.state).toBe("deleted");
+  });
+
+  it("answers a refusal as DEVICE_NOT_ENROLLABLE with the ID as typed, the platform, the reason and the driver's message", async () => {
+    const { dispatcher } = await withEnrollment();
+
+    const refusal = dispatcher.dispatch("device.add", { id: "LOCKED", platform: "ios" }, admin());
+
+    await expect(refusal).rejects.toMatchObject({
+      code: "DEVICE_NOT_ENROLLABLE",
+      details: { id: "LOCKED", platform: "ios", reason: "locked" },
+      message: "locked: unlock it",
+    });
+    await expect(refusal).rejects.not.toHaveProperty("details.canonicalId");
+  });
+
+  it("carries the canonical ID of a refusal of the second read", async () => {
+    const { dispatcher, driver } = await withEnrollment();
+    await dispatcher.dispatch("device.add", { id: UDID, platform: "ios" }, admin());
+    const original = driver.inspectPhysical.bind(driver);
+    let calls = 0;
+    vi.spyOn(driver, "inspectPhysical").mockImplementation(async (id) => {
+      calls += 1;
+      return calls === 1
+        ? original(id)
+        : { enrollable: false, message: "locked: unlock it", reason: "locked" };
+    });
+
+    await expect(
+      dispatcher.dispatch("device.add", { id: "ALIAS", platform: "ios" }, admin()),
+    ).rejects.toMatchObject({
+      code: "DEVICE_NOT_ENROLLABLE",
+      details: { canonicalId: UDID, id: "ALIAS", platform: "ios", reason: "locked" },
+    });
+  });
+
+  it("answers a leased device as DEVICE_BUSY with its ID and reason, and an unknown one as UNKNOWN_DEVICE", async () => {
+    const { dispatcher, registry } = await withEnrollment();
+    const { id } = await dispatcher.dispatch("device.add", { id: UDID, platform: "ios" }, admin());
+    await registry.createLease({
+      deviceId: id,
+      ownerId: "agent",
+      requesterId: "agent",
+      ttlDeadline: 61_000,
+      ttlMs: 60_000,
+    });
+
+    await expect(dispatcher.dispatch("device.remove", { id: UDID }, admin())).rejects.toMatchObject(
+      {
+        code: "DEVICE_BUSY",
+        details: { id: UDID, reason: "leased" },
+        message: `${UDID} is leased: release it first`,
+      },
+    );
+    await expect(
+      dispatcher.dispatch("device.remove", { id: "NOPE" }, admin()),
+    ).rejects.toMatchObject({
+      code: "UNKNOWN_DEVICE",
+      details: { id: "NOPE" },
+      message: "NOPE is not an enrolled device",
+    });
+  });
+
+  it("passes a driver that throws on as the error it is, and answers INTERNAL on a daemon with no enrollment", async () => {
+    const { dispatcher, driver } = await withEnrollment();
+    driver.failOn("inspectPhysical", 1, new Error("usbmuxd went away"));
+    const without = await buildDispatcher();
+
+    const failure: unknown = await dispatcher
+      .dispatch("device.add", { id: UDID, platform: "ios" }, admin())
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      message: `Reading ${UDID} failed: usbmuxd went away`,
+      name: "PhysicalInspectionError",
+    });
+    await expect(
+      without.dispatcher.dispatch("device.add", { id: UDID, platform: "ios" }, admin()),
+    ).rejects.toMatchObject({ code: "INTERNAL", message: "Device enrollment is unavailable" });
+    await expect(
+      without.dispatcher.dispatch("device.remove", { id: UDID }, admin()),
+    ).rejects.toMatchObject({ code: "INTERNAL", message: "Device enrollment is unavailable" });
+  });
+
+  it("refuses an agent session with FORBIDDEN and never asks the driver", async () => {
+    const { dispatcher, driver } = await withEnrollment();
+
+    await expect(
+      dispatcher.dispatch("device.add", { id: UDID, platform: "ios" }, session()),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      dispatcher.dispatch("device.remove", { id: UDID }, session()),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(driver.calls.filter((call) => call.operation === "inspectPhysical")).toEqual([]);
+  });
+});
 
 describe("Dispatcher: component.remove", () => {
   const admin = (overrides: Partial<DispatchSession> = {}) =>

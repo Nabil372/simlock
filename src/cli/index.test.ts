@@ -1474,6 +1474,99 @@ describe("CLI: device add and device remove (ADR 0022 §2)", () => {
     expect(JSON.parse(json.stdout)).toMatchObject({ driverDeviceId: "SER-1", platform: "android" });
   });
 
+  it.each([
+    ["device", ["device"]],
+    ["device -h", ["device", "-h"]],
+    ["device add --help", ["device", "add", "--help"]],
+    ["device remove -h", ["device", "remove", "-h"]],
+  ])("prints the usage and contacts nobody for %s", async (_case, argv) => {
+    const result = await runDevice(argv);
+
+    expect(result.code).toBe(0);
+    expect(result.connected).toBe(false);
+    expect(result.stdout).toBe(
+      "Usage: simlock device add --platform <ios|android> <id> [--json]\n" +
+        "       simlock device remove <id> [--json]\n",
+    );
+  });
+
+  it("says what is wrong with a usage error, and refuses --platform on remove", async () => {
+    const messages = async (argv: string[]) => {
+      const result = await runDevice(argv);
+      expect(result.code).toBe(2);
+      return (JSON.parse(result.stderr) as { error: { message: string } }).error.message;
+    };
+
+    expect(await messages(["device", "enroll", "X"])).toContain("Unknown device command: enroll");
+    expect(await messages(["device", "add", "--platform", "ios"])).toContain(
+      "device add takes exactly one <id>",
+    );
+    expect(await messages(["device", "remove", "A", "B"])).toContain(
+      "device remove takes exactly one <id>",
+    );
+    expect(await messages(["device", "add", "--platform", "windows", "X"])).toContain(
+      "device add needs --platform ios or --platform android",
+    );
+    await messages(["device", "remove", "--platform", "ios", "X"]);
+  });
+
+  it("closes the connection after an enrollment and after a removal", async () => {
+    const closed: string[] = [];
+    for (const argv of [
+      ["device", "add", "--platform", "ios", "U"],
+      ["device", "remove", "U"],
+    ]) {
+      const output = outputCapture();
+      await runCli(
+        argv,
+        output.environmentWith({
+          connectAdmin: async () => ({
+            ...fakeClient(),
+            close: () => {
+              closed.push(argv[1] ?? "");
+              return Promise.resolve();
+            },
+          }),
+        }),
+      );
+    }
+
+    expect(closed).toEqual(["add", "remove"]);
+  });
+
+  it("says again for a re-enrollment, one user app in the singular, and the Android OS name", async () => {
+    const output = outputCapture();
+    await runCli(
+      ["device", "add", "--platform", "android", "SER-1"],
+      output.environmentWith({
+        connectAdmin: async () => ({
+          ...fakeClient(),
+          addDevice: () =>
+            Promise.resolve({
+              appCount: 1,
+              class: "tablet" as const,
+              driverDeviceId: "SER-1",
+              id: "dev_1",
+              model: "Pixel Tablet",
+              osVersion: "15",
+              platform: "android" as const,
+              reenrolled: true,
+            }),
+        }),
+      }),
+    );
+
+    expect(output.stdout).toBe(
+      "Enrolled Pixel Tablet (Android 15) as SER-1 again, 1 user app recorded.\n",
+    );
+  });
+
+  it("prints the operation's output for remove with --json", async () => {
+    const result = await runDevice(["device", "remove", "UDID-1", "--json"]);
+
+    expect(JSON.parse(result.stdout)).toEqual({ driverDeviceId: "UDID-1", id: "UDID-1" });
+  });
+
   it("prints one line for a removal, with no confirmation", async () => {
     const result = await runDevice(["device", "remove", "UDID-1"]);
 

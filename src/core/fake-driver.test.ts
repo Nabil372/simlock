@@ -240,4 +240,73 @@ describe("FakeDriver", () => {
     ).resolves.toMatchObject({ customModels: ["My Tablet"] });
     expect(await new FakeDriver(options).listCatalog()).not.toHaveProperty("customModels");
   });
+
+  it("reads a scripted physical device by any of its IDs, answering with the first as canonical and defaults for what is unset", async () => {
+    const driver = new FakeDriver({
+      clock: new FakeClock(),
+      physicalDevices: [
+        { apps: ["a"], class: "tablet", ids: ["UDID", "ALIAS"], model: "iPad", osVersion: "18.5" },
+        { ids: ["PLAIN"] },
+      ],
+      platform: "ios",
+    });
+
+    await expect(driver.inspectPhysical("ALIAS")).resolves.toEqual({
+      apps: ["a"],
+      class: "tablet",
+      driverDeviceId: "UDID",
+      enrollable: true,
+      model: "iPad",
+      osVersion: "18.5",
+    });
+    await expect(driver.inspectPhysical("PLAIN")).resolves.toEqual({
+      apps: [],
+      class: "phone",
+      driverDeviceId: "PLAIN",
+      enrollable: true,
+      model: "Fake Phone",
+      osVersion: "1.0",
+    });
+  });
+
+  it("refuses an ID no scripted device lists as not-connected, and a scripted refusal with its reason and message", async () => {
+    const driver = new FakeDriver({
+      clock: new FakeClock(),
+      physicalDevices: [
+        { ids: ["LOCKED"], refusal: { message: "locked: unlock it", reason: "locked" } },
+      ],
+      platform: "ios",
+    });
+
+    await expect(driver.inspectPhysical("NOPE")).resolves.toEqual({
+      enrollable: false,
+      message: "NOPE is not connected",
+      reason: "not-connected",
+    });
+    await expect(driver.inspectPhysical("LOCKED")).resolves.toEqual({
+      enrollable: false,
+      message: "locked: unlock it",
+      reason: "locked",
+    });
+    await expect(
+      new FakeDriver({ clock: new FakeClock(), platform: "ios" }).inspectPhysical("X"),
+    ).resolves.toMatchObject({ reason: "not-connected" });
+  });
+
+  it("reads the devices setPhysicalDevices replaced, not the ones its options named, and logs the call", async () => {
+    const driver = new FakeDriver({
+      clock: new FakeClock(),
+      physicalDevices: [{ ids: ["OLD"] }],
+      platform: "ios",
+    });
+
+    driver.setPhysicalDevices([{ ids: ["NEW"] }]);
+
+    await expect(driver.inspectPhysical("OLD")).resolves.toMatchObject({ enrollable: false });
+    await expect(driver.inspectPhysical("NEW")).resolves.toMatchObject({ enrollable: true });
+    expect(driver.calls.map((call) => [call.operation, call.arguments])).toEqual([
+      ["inspectPhysical", ["OLD"]],
+      ["inspectPhysical", ["NEW"]],
+    ]);
+  });
 });

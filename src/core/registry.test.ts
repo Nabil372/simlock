@@ -2699,8 +2699,12 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
       statePath,
     });
     const deleted: unknown[] = [];
-    bus.subscribe("device.deleted", (envelope) => deleted.push(envelope.payload));
-    return { bus, deleted, registry };
+    const modules: string[] = [];
+    bus.subscribe("device.deleted", (envelope) => {
+      deleted.push(envelope.payload);
+      modules.push(envelope.module);
+    });
+    return { bus, deleted, modules, registry };
   }
 
   async function readyVirtual(registry: Registry, driverDeviceId: string) {
@@ -2727,7 +2731,7 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
   } as const;
 
   it("carries physical false from deleteQuarantined, markDeviceMissing, endLeaseAndMarkDeviceMissing and a transitionDevice of a virtual record", async () => {
-    const { deleted, registry } = await load();
+    const { deleted, modules, registry } = await load();
     const quarantined = await readyVirtual(registry, "d1");
     const lease = await registry.createLease({
       deviceId: quarantined.id,
@@ -2766,24 +2770,28 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
       { deviceId: leased.id, initiator: "doctor", physical: false },
       { deviceId: plain.id, initiator: "idle", physical: false },
     ]);
+    expect(modules).toEqual(["registry", "registry", "registry", "registry"]);
   });
 
   it("carries physical true and initiator operator from unenroll, after the commit", async () => {
-    const { deleted, registry } = await load();
+    const { deleted, modules, registry } = await load();
     const device = await registry.enrollPhysical(input);
 
     await registry.unenrollPhysical(device.id);
 
     expect(deleted).toEqual([{ deviceId: device.id, initiator: "operator", physical: true }]);
+    expect(modules).toEqual(["registry"]);
     expect(registry.snapshot.devices[0]).toMatchObject({ id: device.id, state: "deleted" });
   });
 
   it("emits device.enrolled after the commit, reenrolled false for a new record and true for a rewrite", async () => {
     const { bus, registry } = await load();
     const seen: unknown[] = [];
-    bus.subscribe("device.enrolled", (envelope) =>
-      seen.push({ payload: envelope.payload, stored: registry.snapshot.devices.length }),
-    );
+    const modules: string[] = [];
+    bus.subscribe("device.enrolled", (envelope) => {
+      seen.push({ payload: envelope.payload, stored: registry.snapshot.devices.length });
+      modules.push(envelope.module);
+    });
 
     const device = await registry.enrollPhysical(input);
     await registry.reenrollPhysical(device.id, { ...input, apps: ["a", "b"], model: "iPhone 16" });
@@ -2807,6 +2815,57 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
         stored: 1,
       },
     ]);
+    expect(modules).toEqual(["registry", "registry"]);
+    expect(device.id).toBe("dev_r1");
+  });
+
+  it("writes the record a new enrollment makes: ready now, the driver's read, no apps beyond the list, and a rewrite keeps the ID and replaces the read", async () => {
+    const { registry } = await load();
+
+    const device = await registry.enrollPhysical(input);
+    const rewritten = await registry.reenrollPhysical(device.id, {
+      ...input,
+      apps: [],
+      class: "tablet",
+      osVersion: "18.5",
+    });
+
+    expect(device).toEqual({
+      createdAt: 1_000,
+      driverData: {},
+      driverDeviceId: input.driverDeviceId,
+      enrolledApps: ["com.example.one"],
+      id: "dev_r1",
+      physical: true,
+      readyAt: 1_000,
+      spec: {
+        class: "phone",
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        physical: true,
+        platform: "ios",
+      },
+      state: "ready",
+    });
+    expect(rewritten).toMatchObject({
+      enrolledApps: [],
+      id: "dev_r1",
+      spec: { class: "tablet", osVersion: "18.5", physical: true, platform: "ios" },
+    });
+  });
+
+  it("keeps every other record when it rewrites or forgets one", async () => {
+    const { registry } = await load();
+    const other = await registry.enrollPhysical({ ...input, driverDeviceId: "OTHER" });
+    const device = await registry.enrollPhysical(input);
+
+    await registry.reenrollPhysical(device.id, { ...input, model: "iPhone 16" });
+    await registry.unenrollPhysical(device.id);
+
+    expect(registry.snapshot.devices.map((record) => [record.id, record.state])).toEqual([
+      [other.id, "ready"],
+      [device.id, "deleted"],
+    ]);
   });
 
   it("refuses to re-enrol or unenrol a leased physical record, and a virtual one", async () => {
@@ -2824,5 +2883,11 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
     await expect(registry.reenrollPhysical(device.id, input)).rejects.toThrow(RegistryEventError);
     await expect(registry.unenrollPhysical(device.id)).rejects.toThrow(RegistryEventError);
     await expect(registry.unenrollPhysical(virtual.id)).rejects.toThrow(RegistryEventError);
+    await expect(registry.reenrollPhysical(device.id, input)).rejects.toThrow(
+      `Cannot re-enrol device: ${device.id}`,
+    );
+    await expect(registry.unenrollPhysical(device.id)).rejects.toThrow(
+      `Cannot unenrol device: ${device.id}`,
+    );
   });
 });

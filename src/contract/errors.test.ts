@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { ERROR_TABLE, fromWireError, isSimlockError } from "./errors.js";
+import {
+  CODES_WITH_DECLARED_DETAILS,
+  ERROR_TABLE,
+  fromWireError,
+  isSimlockError,
+} from "./errors.js";
 
 describe("SimlockError", () => {
   it("narrows details by code", () => {
@@ -55,5 +60,29 @@ describe("SimlockError", () => {
 
   it("isSimlockError rejects a plain Error", () => {
     expect(isSimlockError(new Error("boom"))).toBe(false);
+  });
+
+  it("answers the three enrollment codes as domain errors: not enrollable 12 and 422, busy 11 and 409, unknown 12 and 404, each with declared details", () => {
+    expect(ERROR_TABLE.DEVICE_NOT_ENROLLABLE).toEqual({
+      cliExitCode: 12,
+      code: "DEVICE_NOT_ENROLLABLE",
+      httpStatus: 422,
+      kind: "domain",
+    });
+    expect(ERROR_TABLE.DEVICE_BUSY).toEqual({
+      cliExitCode: 11,
+      code: "DEVICE_BUSY",
+      httpStatus: 409,
+      kind: "domain",
+    });
+    expect(ERROR_TABLE.UNKNOWN_DEVICE).toEqual({
+      cliExitCode: 12,
+      code: "UNKNOWN_DEVICE",
+      httpStatus: 404,
+      kind: "domain",
+    });
+    for (const code of ["DEVICE_NOT_ENROLLABLE", "DEVICE_BUSY", "UNKNOWN_DEVICE"] as const) {
+      expect(CODES_WITH_DECLARED_DETAILS.has(code)).toBe(true);
+    }
   });
 });
