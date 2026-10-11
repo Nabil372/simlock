@@ -666,6 +666,20 @@ describe("LeaseReleaseCoordinator", () => {
       await expect(harness.coordinator.settleBackgroundReclaims()).resolves.toBeUndefined();
     });
 
+    it("reclaimReturned called without a guard hands the reclaim a guard that lets it proceed", async () => {
+      const harness = await createHarness();
+      const calls: unknown[][] = [];
+      harness.reclaim.reclaimReturned = (async (...args: unknown[]) => {
+        calls.push(args);
+        return { settled: Promise.resolve() };
+      }) as unknown as typeof harness.reclaim.reclaimReturned;
+
+      await harness.coordinator.reclaimReturned("dev_1", "18.4");
+
+      const proceed = calls[0]?.[2] as () => boolean;
+      expect(proceed()).toBe(true);
+    });
+
     it("reclaimReturned answers true and keeps settleBackgroundReclaims waiting until the started reclaim settles", async () => {
       const harness = await createHarness();
       let finish!: () => void;

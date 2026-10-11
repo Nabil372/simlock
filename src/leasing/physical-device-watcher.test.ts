@@ -853,6 +853,26 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
     expect(await outcome(waiting)).toMatchObject({ device: { id: device.id } });
   });
 
+  it("a tick whose read resolves present after dispose does not wake the queue: a physical request waiting for the device stays pending", async () => {
+    const harness = await createHarness();
+    await enrollIphone(harness, "UDID-A");
+    gone(harness, "UDID-A");
+    const waiting = harness.engine.request(physicalRequest, asking("agent"));
+    expect(await outcome(waiting)).toBe("pending");
+    startWatcher(harness);
+    await tick(harness);
+    back(harness, "UDID-A");
+    harness.driver.holdPresenceReads("UDID-A");
+    harness.clock.advance(PROBE_MS);
+    await flush();
+    expect(readsOf(harness.driver)).toHaveLength(3);
+
+    watcherOf(harness)?.dispose();
+    harness.driver.releasePresenceReads();
+
+    expect(await outcome(waiting)).toBe("pending");
+  });
+
   it("a tick whose read resolves after dispose writes nothing and starts no reclaim, and leasing.settle() resolves only after that tick", async () => {
     const ready = await createHarness();
     const readyDevice = await enrollIphone(ready, "UDID-A");
@@ -1048,6 +1068,32 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
     expect(stateOf(harness, returned)).toBe("absent");
     expect(reclaimCalls(harness.driver)).toEqual([]);
     expect(eventsOf(harness, "device.returned")).toEqual([]);
+  });
+
+  it("a tick whose watcher is disposed while it acts on one device does not wake the queue for a later device of that tick", async () => {
+    const first = await createHarness();
+    const missing = await enrollIphone(first, "UDID-A");
+    const flickering = await enrollIphone(first, "UDID-B");
+    gone(first, "UDID-A");
+    gone(first, "UDID-B");
+    const waiting = first.engine.request(physicalRequest, asking("agent"));
+    expect(await outcome(waiting)).toBe("pending");
+    startWatcher(first);
+    await tick(first);
+    back(first, "UDID-B");
+    const original = first.filesystem.writeFileAtomic.bind(first.filesystem);
+    vi.spyOn(first.filesystem, "writeFileAtomic").mockImplementationOnce(
+      async (path, contents, writeOptions) => {
+        watcherOf(first)?.dispose();
+        return original(path, contents, writeOptions);
+      },
+    );
+
+    await tick(first);
+
+    expect(stateOf(first, missing)).toBe("absent");
+    expect(stateOf(first, flickering)).toBe("ready");
+    expect(await outcome(waiting)).toBe("pending");
   });
 });
 
