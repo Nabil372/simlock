@@ -38,10 +38,12 @@ class TestRegistry {
   }
 
   get snapshot(): {
+    readonly devices: readonly DeviceRecord[];
     readonly virtualDevices: readonly VirtualDevice[];
     readonly leases: readonly LeaseRecord[];
   } {
     return {
+      devices: this.#devices.map((device) => ({ ...device })),
       leases: this.leases,
       virtualDevices: this.#devices.flatMap((device) => (device.physical ? [] : [{ ...device }])),
     };

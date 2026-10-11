@@ -298,11 +298,12 @@ describe("a physical device's state machine (ADR 0022 §2)", () => {
     "allows nothing out of %s beyond its table: every other physical state, shutdown and provisioning throw",
     (from) => {
       const allowed: Record<PhysicalState, readonly string[]> = {
+        absent: ["reclaiming", "ready", "deleted"],
         deleted: [],
-        leased: ["reclaiming"],
+        leased: ["reclaiming", "absent"],
         quarantined: ["ready", "deleted"],
-        ready: ["leased", "deleted"],
-        reclaiming: ["ready", "quarantined"],
+        ready: ["leased", "absent", "deleted"],
+        reclaiming: ["ready", "quarantined", "absent"],
       };
       for (const to of [
         "ready",

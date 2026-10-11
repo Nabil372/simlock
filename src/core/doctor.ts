@@ -133,7 +133,7 @@ export interface DoctorReport {
 }
 
 export interface DoctorQuarantine {
-  enterFromStalledTransition(deviceId: string): Promise<void>;
+  enterFromStalledTransition(deviceId: string, findingState: DeviceState): Promise<void>;
 }
 
 export interface DoctorOptions {
@@ -242,6 +242,7 @@ export class Doctor {
     findings.push(...expiredLeaseFindings(snapshot.leases, this.options.clock.now()));
     findings.push(...(await this.#collectAdvisories()));
 
+    this.#emitStalledEvents(findings);
     if (fix) {
       await this.#applySafeFixes(findings, driversByPlatform);
     }
@@ -644,19 +645,27 @@ export class Doctor {
           "doctor",
         );
       }
-      if (finding.kind === "stalled-transition") {
-        this.options.eventBus.emit(
-          "device.stalled-transition-detected",
-          {
-            ageMs: finding.ageMs,
-            deviceId: finding.deviceId,
-            platform: finding.platform,
-            state: finding.state,
-            thresholdMs: finding.thresholdMs,
-          },
-          "doctor",
-        );
-      }
+    }
+  }
+
+  /**
+   * Announced as soon as the read finds it, before `--fix` acts: a stall is not a commit, and the
+   * fix re-reads the device under its claim, so a reclaim that starts in between is left alone.
+   */
+  #emitStalledEvents(findings: readonly DoctorFinding[]): void {
+    for (const finding of findings) {
+      if (finding.kind !== "stalled-transition") continue;
+      this.options.eventBus.emit(
+        "device.stalled-transition-detected",
+        {
+          ageMs: finding.ageMs,
+          deviceId: finding.deviceId,
+          platform: finding.platform,
+          state: finding.state,
+          thresholdMs: finding.thresholdMs,
+        },
+        "doctor",
+      );
     }
   }
 
@@ -813,7 +822,7 @@ export class Doctor {
     if (this.options.quarantine === undefined) {
       return;
     }
-    await this.options.quarantine.enterFromStalledTransition(finding.deviceId);
+    await this.options.quarantine.enterFromStalledTransition(finding.deviceId, finding.state);
   }
 }
 
@@ -1231,6 +1240,7 @@ function expectedRunState(state: DeviceState): "running" | "stopped" | undefined
     case "provisioning":
     case "reclaiming":
     case "quarantined":
+    case "absent":
     case "deleted":
       return undefined;
   }

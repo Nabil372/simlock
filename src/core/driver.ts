@@ -2,6 +2,7 @@ import type { EventMap } from "../bus/index.js";
 import type { Filesystem } from "../ports/index.js";
 import type { RootRejectionReason } from "./device-root.js";
 import type {
+  AbsentReason,
   DeviceClass,
   DeviceMode,
   DeviceRecord,
@@ -49,6 +50,10 @@ export function isPhysicalDriverDevice(device: DriverDevice): device is Physical
 export interface PresentPhysical {
   readonly driverDeviceId: string;
   readonly present: boolean;
+  /** What a present read reports of the device's OS version. */
+  readonly osVersion?: string;
+  /** Why a not-present read is not present; none means `not-present`. */
+  readonly reason?: AbsentReason;
 }
 
 export function toDriverDevice(device: VirtualDevice): VirtualDriverDevice;

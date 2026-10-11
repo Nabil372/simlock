@@ -58,6 +58,8 @@ export interface PhysicalEnrollmentOptions {
   readonly claims: Pick<DeviceOperationClaims, "claim" | "tryClaim">;
   readonly decisions: Pick<SerializedDecision, "run">;
   readonly drivers: { get(platform: Platform): Driver };
+  /** Called once a physical device has been committed `ready` by `device add`. */
+  readonly physicalDeviceReady?: (deviceId: string) => void;
   readonly registry: PhysicalEnrollmentRegistry;
 }
 
@@ -96,6 +98,7 @@ export class PhysicalEnrollment {
       return { claim, existing };
     });
     if ("created" in claimed) {
+      this.options.physicalDeviceReady?.(claimed.created.id);
       return { device: claimed.created, reenrolled: false };
     }
 
@@ -110,6 +113,7 @@ export class PhysicalEnrollment {
       const device = await this.options.decisions.run(() =>
         this.options.registry.reenrollPhysical(existing.id, { ...again, platform }),
       );
+      this.options.physicalDeviceReady?.(device.id);
       return { device, reenrolled: true };
     } finally {
       claim.release();
@@ -187,7 +191,7 @@ export class PhysicalEnrollment {
       throw new DeviceBusyError(device.driverDeviceId, "reclaiming");
     }
     if (held !== undefined) throw new DeviceBusyError(device.driverDeviceId, "busy");
-    if (device.state !== "ready" && device.state !== "quarantined") {
+    if (device.state !== "ready" && device.state !== "quarantined" && device.state !== "absent") {
       throw new DeviceBusyError(device.driverDeviceId, "busy");
     }
   }

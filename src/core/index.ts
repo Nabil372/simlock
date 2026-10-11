@@ -11,6 +11,7 @@ export {
   redactConfig,
 } from "./config.js";
 export {
+  type AbsentReason,
   DEVICE_CLASSES,
   type DeviceClass,
   type DeviceMode,
@@ -127,7 +128,11 @@ export {
   type PhysicalDevice,
   type PhysicalRequest,
 } from "./domain.js";
-export { readPhysicalPresence } from "./physical-presence.js";
+export {
+  type PhysicalRead,
+  readPhysicalPresence,
+  readPhysicalPresenceDetail,
+} from "./physical-presence.js";
 export {
   type DriverCatalogImage,
   type MissingPrerequisite,

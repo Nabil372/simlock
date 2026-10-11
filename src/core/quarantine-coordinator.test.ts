@@ -674,6 +674,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
     const clock = new FakeClock(1_000);
     const bus = new EventBus(clock);
     const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
+    driver.setPhysicalPresence(physicalRecord.driverDeviceId, true);
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
     await filesystem.writeFileAtomic(
@@ -963,6 +964,7 @@ describe("QuarantineCoordinator and enrollment of a quarantined physical device 
     const clock = new FakeClock(1_000);
     const eventBus = new EventBus(clock);
     const driver = new FakeDriver({ clock, physicalDevices: DEVICES, platform: "ios" });
+    for (const id of [FIRST, SECOND]) driver.setPhysicalPresence(id, true);
     const filesystem = new MemoryFilesystem();
     const systemStats = new FakeSystemStats({ cpuCount: 8, totalRamBytes: 32 * 1024 ** 3 });
     let next = 1;

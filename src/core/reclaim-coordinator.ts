@@ -1,15 +1,19 @@
 import type { EventBus } from "../bus/index.js";
 import type { Clock, Logger } from "../ports/index.js";
-import type { DeviceOperationClaims } from "./device-operation-claims.js";
+import type { DeviceOperationClaim, DeviceOperationClaims } from "./device-operation-claims.js";
 import {
+  type AbsentReason,
   assertVirtual,
   type DeviceRecord,
+  type DeviceTransitionUpdate,
   type LeaseRecord,
   mayBeGranted,
+  type PhysicalDevice,
   type Platform,
   type VirtualDevice,
 } from "./domain.js";
 import { type Driver, toDriverDevice } from "./driver.js";
+import { readPhysicalPresenceDetail } from "./physical-presence.js";
 import type { QuarantinePurgeFailure } from "./quarantine-coordinator.js";
 import type { ReleasedLease } from "./registry.js";
 import type { SerializedDecision } from "./serialized-decision.js";
@@ -21,13 +25,26 @@ export interface ReclaimDriverCatalog {
 
 export interface ReclaimRegistry {
   readonly snapshot: {
+    readonly devices: readonly DeviceRecord[];
     readonly virtualDevices: readonly VirtualDevice[];
     readonly leases: readonly LeaseRecord[];
   };
   transitionDevice(
     deviceId: string,
-    to: "ready" | "shutdown" | "deleted",
+    to: "ready" | "shutdown" | "deleted" | "reclaiming" | "absent",
     event:
+      | {
+          readonly event: "device.absence-detected";
+          readonly payload: {
+            readonly deviceId: string;
+            readonly previousState: "reclaiming";
+            readonly absentReason: AbsentReason;
+          };
+        }
+      | {
+          readonly event: "device.returned";
+          readonly payload: { readonly deviceId: string; readonly osVersion: string };
+        }
       | {
           readonly event: "device.reclaimed";
           readonly payload: {
@@ -41,6 +58,7 @@ export interface ReclaimRegistry {
           readonly event: "device.deleted";
           readonly payload: { readonly deviceId: string; readonly initiator: string };
         },
+    update?: DeviceTransitionUpdate,
   ): Promise<DeviceRecord>;
   completeReclaimWithoutPurge(deviceId: string): Promise<DeviceRecord>;
 }
@@ -57,6 +75,8 @@ export interface ReclaimCoordinatorOptions {
   readonly eventBus: Pick<EventBus, "emit">;
   readonly logger?: Logger | undefined;
   readonly notifyAvailability: () => void;
+  /** Called once a physical device's reclaim has committed it `ready`. */
+  readonly physicalDeviceReady?: (deviceId: string) => void;
   readonly quarantine: ReclaimQuarantine;
   readonly registry: ReclaimRegistry;
 }
@@ -83,7 +103,7 @@ export class ReclaimCoordinator {
     return this.#purge(released.device, released.lease.id);
   }
 
-  async #purge(device: DeviceRecord, leaseId: string): Promise<void> {
+  async #purge(device: DeviceRecord, leaseId?: string): Promise<void> {
     const driver = this.options.drivers.get(device.spec.platform);
     const startedAt = this.options.clock.now();
     const attemptedStrategy = driver.reclaimStrategy(toDriverDevice(device), { clean: "standard" });
@@ -91,6 +111,7 @@ export class ReclaimCoordinator {
     try {
       result = await driver.reclaim(toDriverDevice(device), { clean: "standard" });
     } catch (error: unknown) {
+      if (device.physical && (await this.#absentAfterFailure(device, error))) return;
       await this.#recoverPurgeFailure(device.id, leaseId, startedAt, attemptedStrategy, error);
       return;
     }
@@ -106,6 +127,7 @@ export class ReclaimCoordinator {
         },
       });
     });
+    if (device.physical && result.state === "ready") this.options.physicalDeviceReady?.(device.id);
     this.options.notifyAvailability();
   }
 
@@ -123,7 +145,10 @@ export class ReclaimCoordinator {
     if (device === undefined) return false;
 
     if (device.deferredReclaimLeaseId !== undefined && mayBeGranted(device)) {
-      return this.#wipeInBackground(device, device.deferredReclaimLeaseId);
+      const claim = this.options.claims.tryClaim(device.id, "reclaim");
+      if (claim === undefined) return false;
+      this.#wipeInBackground(device, claim, device.deferredReclaimLeaseId);
+      return true;
     }
 
     await this.options.drivers.get(device.spec.platform).shutdown(toDriverDevice(device));
@@ -148,14 +173,66 @@ export class ReclaimCoordinator {
   }
 
   /**
-   * Starts the wipe under a claim and leaves it running. A claim already held means another
-   * operation has the device, so there is nothing to recover. The claim is released, and a
-   * failure logged rather than thrown, once the wipe settles: no caller awaits it. A driver
-   * failure never gets that far, since `#purge` hands it to quarantine.
+   * Runs the reclaim of a physical device the watcher found back, or one a killed daemon left
+   * `reclaiming` (ADR 0022 §8), in the background under a `reclaim` claim taken here. With
+   * `osVersion` the device is `absent` and comes back: one decision checks that and commits
+   * `absent -> reclaiming` with the new OS version. Without it the device is already
+   * `reclaiming` and nothing is written. A claim held, or a device no longer in that state,
+   * means there is nothing to do: false. The returned promise settles once the reclaim has
+   * started; the reclaim itself is awaited by `settle`.
    */
-  #wipeInBackground(device: VirtualDevice, leaseId: string): boolean {
-    const claim = this.options.claims.tryClaim(device.id, "reclaim");
+  async reclaimReturned(deviceId: string, osVersion?: string): Promise<boolean> {
+    const known = this.#physicalDevice(deviceId);
+    if (known === undefined) return false;
+    const claim = this.options.claims.tryClaim(known.id, "reclaim");
     if (claim === undefined) return false;
+    let device: PhysicalDevice | undefined;
+    try {
+      device = await this.options.decisions.run(() => this.#beginReturned(known.id, osVersion));
+    } finally {
+      if (device === undefined) claim.release();
+    }
+    if (device === undefined) return false;
+    this.#wipeInBackground(device, claim);
+    return true;
+  }
+
+  /** The enrolled physical record a registry ID, or the canonical ID of its device, names. */
+  #physicalDevice(id: string): PhysicalDevice | undefined {
+    return this.options.registry.snapshot.devices.find(
+      (candidate): candidate is PhysicalDevice =>
+        candidate.physical && (candidate.id === id || candidate.driverDeviceId === id),
+    );
+  }
+
+  async #beginReturned(
+    deviceId: string,
+    osVersion: string | undefined,
+  ): Promise<PhysicalDevice | undefined> {
+    const current = this.#physicalDevice(deviceId);
+    if (current === undefined) return undefined;
+    if (osVersion === undefined) {
+      const leased = this.options.registry.snapshot.leases.some(
+        (lease) => lease.deviceId === current.id,
+      );
+      return current.state === "reclaiming" && !leased ? current : undefined;
+    }
+    if (current.state !== "absent") return undefined;
+    const returned = await this.options.registry.transitionDevice(
+      current.id,
+      "reclaiming",
+      { event: "device.returned", payload: { deviceId: current.id, osVersion } },
+      { osVersion },
+    );
+    return returned as PhysicalDevice;
+  }
+
+  /**
+   * Starts the wipe under a claim already held and leaves it running. The claim is released,
+   * and a failure logged rather than thrown, once the wipe settles: no caller awaits it. A
+   * driver failure never gets that far, since `#purge` hands it to quarantine.
+   */
+  #wipeInBackground(device: DeviceRecord, claim: DeviceOperationClaim, leaseId?: string): void {
     const wipe = this.#purge(device, leaseId)
       .catch((error: unknown) => {
         this.options.logger?.error("deferred wipe failed", {
@@ -170,7 +247,6 @@ export class ReclaimCoordinator {
       });
     this.#backgroundWipes.add(wipe);
     void wipe.finally(() => this.#backgroundWipes.delete(wipe));
-    return true;
   }
 
   /**
@@ -262,7 +338,7 @@ export class ReclaimCoordinator {
    */
   async #recoverPurgeFailure(
     deviceId: string,
-    leaseId: string,
+    leaseId: string | undefined,
     startedAt: number,
     attemptedStrategy: QuarantinePurgeFailure["attemptedStrategy"],
     error: unknown,
@@ -274,5 +350,44 @@ export class ReclaimCoordinator {
       error: stableError(error),
       leaseId,
     });
+  }
+
+  /**
+   * A physical reclaim that failed is read once more (task 2 quarantines every failure): a device
+   * that is not present, or whose read could not be made, is `absent` and not `quarantined`, since
+   * its reclaim runs again when it is back. A present device falls through to quarantine.
+   */
+  async #absentAfterFailure(device: PhysicalDevice, error: unknown): Promise<boolean> {
+    let absentReason: AbsentReason | undefined;
+    try {
+      const driver = this.options.drivers.get(device.spec.platform);
+      const reads = await readPhysicalPresenceDetail(driver, [device.driverDeviceId]);
+      const read = reads.get(device.driverDeviceId);
+      if (read?.present !== true) absentReason = read?.reason ?? "not-present";
+    } catch (readError: unknown) {
+      this.options.logger?.warn("presence read after a failed reclaim failed", {
+        deviceId: device.id,
+        error: stableError(readError),
+      });
+      absentReason = "not-present";
+    }
+    if (absentReason === undefined) return false;
+    const reason = absentReason;
+    this.options.logger?.error("reclaim of a device that is not present failed", {
+      deviceId: device.id,
+      error: stableError(error),
+    });
+    await this.options.decisions.run(async () => {
+      await this.options.registry.transitionDevice(
+        device.id,
+        "absent",
+        {
+          event: "device.absence-detected",
+          payload: { absentReason: reason, deviceId: device.id, previousState: "reclaiming" },
+        },
+        { absentReason: reason },
+      );
+    });
+    return true;
   }
 }

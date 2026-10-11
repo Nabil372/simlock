@@ -3035,7 +3035,7 @@ describe("Registry: absent physical devices (ADR 0022 §2, §8)", () => {
       state: "absent",
     });
     expect(order).toEqual(["announce", "device.absence-detected"]);
-    expect(payloads[1]).toEqual({
+    expect(payloads[0]).toEqual({
       absentReason: "locked",
       deviceId: "dev_physical",
       previousState: "leased",

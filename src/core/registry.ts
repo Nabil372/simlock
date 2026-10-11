@@ -6,6 +6,7 @@ import {
   DEFAULT_LEASE_TTL_MS,
 } from "./config.js";
 import {
+  type AbsentReason,
   DEVICE_CLASSES,
   type DeviceClass,
   type DeviceMode,
@@ -140,6 +141,11 @@ export type RegistryDeviceEvent =
   | { readonly event: "device.ready"; readonly payload: EventMap["device.ready"] }
   | { readonly event: "device.reclaimed"; readonly payload: EventMap["device.reclaimed"] }
   | { readonly event: "device.shutdown"; readonly payload: EventMap["device.shutdown"] }
+  | {
+      readonly event: "device.absence-detected";
+      readonly payload: EventMap["device.absence-detected"];
+    }
+  | { readonly event: "device.returned"; readonly payload: EventMap["device.returned"] }
   | {
       readonly event: "device.deleted";
       /** `physical` is the record's own: the registry adds it when it emits. */
@@ -388,6 +394,9 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     const now = this.options.clock.now();
     if (to === "ready") return transition(device, to, { ...update, readyAt: now });
     if (to === "shutdown") return transition(device, to, { ...update, shutdownAt: now });
+    if (to === "reclaiming" && device.physical) {
+      return transition(device, to, { ...update, reclaimingSince: now });
+    }
     return transition(device, to, update);
   }
 
@@ -572,6 +581,58 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
       "registry",
     );
     return ended;
+  }
+
+  /**
+   * Removes a lease and moves its physical device `leased -> absent` in one write, for a device
+   * the watcher read not present past the grace period (ADR 0022 §8). The device is gone, so no
+   * `reclaiming` state stands between. `announceLeaseEnd` runs once the write has committed and
+   * before `device.absence-detected` is emitted, so the lease's own fact precedes the device's.
+   */
+  async endLeaseAndMarkDeviceAbsent(
+    leaseId: string,
+    absentReason: AbsentReason,
+    announceLeaseEnd: (ended: ReleasedLease) => void,
+  ): Promise<ReleasedLease> {
+    const lease = this.#leases.find((candidate) => candidate.id === leaseId);
+    if (lease === undefined) {
+      throw new UnknownLeaseError(leaseId);
+    }
+    const { device, index } = this.#requireDeviceRecord(lease.deviceId);
+    const absent = {
+      ...this.#transitioned(device, "absent", { absentReason }),
+      lastLeaseEndedAt: this.options.clock.now(),
+    };
+    const devices = [...this.#devices];
+    devices[index] = absent;
+    await this.#commit(
+      devices,
+      this.#leases.filter((candidate) => candidate.id !== leaseId),
+    );
+    const ended = { device: cloneDevice(absent), lease: cloneLease(lease) };
+    announceLeaseEnd(ended);
+    this.options.eventBus.emit(
+      "device.absence-detected",
+      { absentReason, deviceId: device.id, previousState: "leased" },
+      "registry",
+    );
+    return ended;
+  }
+
+  /**
+   * Rewrites why an `absent` device is absent. One write, no event: the device was already
+   * reported absent, and only the reason it is read with changed.
+   */
+  async rewriteAbsentReason(deviceId: string, absentReason: AbsentReason): Promise<DeviceRecord> {
+    const { device, index } = this.#requireDeviceRecord(deviceId);
+    if (!device.physical || device.state !== "absent") {
+      throw new RegistryEventError(`Device is not absent: ${deviceId}`);
+    }
+    const updated: PhysicalDevice = { ...device, absentReason };
+    const devices = [...this.#devices];
+    devices[index] = updated;
+    await this.#commit(devices, this.#leases);
+    return cloneDevice(updated);
   }
 
   /**
@@ -1023,6 +1084,12 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
       case "device.shutdown":
         this.options.eventBus.emit(event.event, event.payload, "registry");
         return;
+      case "device.absence-detected":
+        this.options.eventBus.emit(event.event, event.payload, "registry");
+        return;
+      case "device.returned":
+        this.options.eventBus.emit(event.event, event.payload, "registry");
+        return;
       case "device.deleted":
         this.options.eventBus.emit(
           event.event,
@@ -1056,6 +1123,8 @@ const deviceRecordKeys = [
   "leaseIdentity",
   "physical",
   "enrolledApps",
+  "reclaimingSince",
+  "absentReason",
 ] as const;
 /**
  * Fields a device record written before ADR 0007 carries that this daemon neither reads nor
@@ -1189,6 +1258,12 @@ function eventForTransition(
   from: DeviceState,
   to: DeviceState,
 ): RegistryDeviceEvent["event"] | undefined {
+  if (to === "absent") {
+    return "device.absence-detected";
+  }
+  if (from === "absent" && to === "reclaiming") {
+    return "device.returned";
+  }
   if (from === "reclaiming") {
     return "device.reclaimed";
   }
@@ -1320,9 +1395,12 @@ function parsePhysicalDevice(
   state: unknown,
   shared: SharedDeviceFields,
 ): PhysicalDevice {
-  const { enrolledApps } = value;
+  const { absentReason, enrolledApps, reclaimingSince } = value;
   if (
     !isPhysicalState(state) ||
+    (state === "absent") !== (absentReason !== undefined) ||
+    (absentReason !== undefined && !isAbsentReason(absentReason)) ||
+    (reclaimingSince !== undefined && typeof reclaimingSince !== "number") ||
     value.physical !== true ||
     value.mode !== undefined ||
     value.leaseIdentity !== undefined ||
@@ -1335,8 +1413,10 @@ function parsePhysicalDevice(
     ...shared,
     enrolledApps: [...(enrolledApps as string[])],
     physical: true,
+    ...(reclaimingSince === undefined ? {} : { reclaimingSince }),
     spec: parsePhysicalSpec(spec),
     state,
+    ...(state === "absent" ? { absentReason: absentReason as AbsentReason } : {}),
   };
 }
 
@@ -1668,9 +1748,14 @@ function isVirtualState(value: unknown): value is VirtualState {
   );
 }
 
+function isAbsentReason(value: unknown): value is AbsentReason {
+  return value === "locked" || value === "untrusted" || value === "not-present";
+}
+
 function isPhysicalState(value: unknown): value is PhysicalState {
   return (
     value === "ready" ||
+    value === "absent" ||
     value === "leased" ||
     value === "reclaiming" ||
     value === "quarantined" ||

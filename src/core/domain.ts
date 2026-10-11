@@ -207,8 +207,10 @@ export type LeaseIdentity = "reusable" | "fresh";
 /** The states both types share (ADR 0022 §1). */
 type SharedState = "ready" | "leased" | "reclaiming" | "quarantined";
 export type VirtualState = SharedState | "provisioning" | "shutdown" | "deleted";
-/** `absent` joins the physical states with the watcher, in a later task. */
-export type PhysicalState = SharedState | "deleted";
+/** `absent` is a physical device's alone: enrolled, and not there (ADR 0022 §2). */
+export type PhysicalState = SharedState | "absent" | "deleted";
+/** Why the read that made a device `absent` said not present (ADR 0022 §8). */
+export type AbsentReason = "locked" | "untrusted" | "not-present";
 export type DeviceState = VirtualState | PhysicalState;
 
 /** What a virtual and a physical device record both carry. */
@@ -288,6 +290,10 @@ export interface PhysicalDevice extends DeviceRecordFields {
   readonly state: PhysicalState;
   /** The apps the enrolment kept; never on the wire. */
   readonly enrolledApps: readonly string[];
+  /** When the device last entered `reclaiming`, by a lease ending or by coming back (epoch ms). */
+  readonly reclaimingSince?: number;
+  /** Set on every entry into `absent` and gone on every exit. */
+  readonly absentReason?: AbsentReason;
   readonly mode?: undefined;
   readonly leaseIdentity?: undefined;
 }
@@ -460,14 +466,16 @@ const legalTransitions: Readonly<Record<VirtualState, readonly VirtualState[]>> 
 
 /**
  * A physical device's machine (ADR 0022 §2): it has no `provisioning` and no `shutdown`, because
- * Simlock never creates, boots or stops it. `deleted` means unenrolled. `reclaiming` is entered
- * only from `leased` here; the state for a device that is not present comes with its watcher.
+ * Simlock never creates, boots or stops it. `deleted` means unenrolled. `absent` is a device
+ * that is enrolled and not there; it leaves only to a reclaim, to `device add`, or to `device
+ * remove`, and `quarantined` never moves to it.
  */
 const legalPhysicalTransitions: Readonly<Record<PhysicalState, readonly PhysicalState[]>> = {
-  ready: ["leased", "deleted"],
-  leased: ["reclaiming"],
-  reclaiming: ["ready", "quarantined"],
+  ready: ["leased", "absent", "deleted"],
+  leased: ["reclaiming", "absent"],
+  reclaiming: ["ready", "quarantined", "absent"],
   quarantined: ["ready", "deleted"],
+  absent: ["reclaiming", "ready", "deleted"],
   deleted: [],
 };
 
@@ -490,6 +498,12 @@ export interface DeviceTransitionUpdate {
   readonly shutdownAt?: number;
   readonly driverData?: unknown;
   readonly mode?: DeviceMode;
+  /** A physical device's new OS version, written when it comes back `absent -> reclaiming`. */
+  readonly osVersion?: string;
+  /** Written on entry into `absent`; any other move drops it. */
+  readonly absentReason?: AbsentReason;
+  /** Stamped by the registry on every physical entry into `reclaiming`. */
+  readonly reclaimingSince?: number;
 }
 
 /** One transition function, two tables (architecture rule 6): `current.physical` picks the table. */
@@ -557,9 +571,15 @@ function transitionPhysical(
     throw new IllegalTransition(current.state, to);
   }
   // A physical device has no driver-reported mode, and a deferred reclaim ends with any exit.
-  const { deferredReclaimLeaseId: _deferred, ...record } = current;
-  const { mode: _mode, ...fields } = update ?? {};
-  return { ...record, ...fields, state: to };
+  const { absentReason: _left, deferredReclaimLeaseId: _deferred, ...record } = current;
+  const { absentReason, mode: _mode, osVersion, ...fields } = update ?? {};
+  return {
+    ...record,
+    ...(osVersion === undefined ? {} : { spec: { ...record.spec, osVersion } }),
+    ...fields,
+    ...(to === "absent" && absentReason !== undefined ? { absentReason } : {}),
+    state: to,
+  };
 }
 
 function isVirtualState(state: DeviceState): state is VirtualState {
@@ -577,7 +597,9 @@ function isPhysicalState(state: DeviceState): state is PhysicalState {
  * No dedicated field was added for this: `createdAt` already doubles as provisioning's
  * entry time, since nothing ever transitions back into `provisioning` (see
  * `legalTransitions`), and `lastLeaseEndedAt` already doubles as reclaiming's, since
- * `beginRelease` is reclaiming's only entry point and stamps it fresh on every entry.
+ * `beginRelease` stamps it fresh on every entry. A physical device also enters `reclaiming` by
+ * coming back from `absent`, so its record carries `reclaimingSince`; one written before that
+ * field falls back to `lastLeaseEndedAt`.
  * Used by Doctor to age a mid-transition device against a driver-derived stall
  * threshold.
  */
@@ -586,7 +608,9 @@ export function transitionEnteredAt(record: DeviceRecord): number | undefined {
     case "provisioning":
       return record.createdAt;
     case "reclaiming":
-      return record.lastLeaseEndedAt;
+      return record.physical
+        ? (record.reclaimingSince ?? record.lastLeaseEndedAt)
+        : record.lastLeaseEndedAt;
     default:
       return undefined;
   }

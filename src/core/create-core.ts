@@ -96,6 +96,12 @@ export interface CorePorts {
   };
   /** Tells acquisition a device came back, so a waiting request is tried again. */
   readonly notifyAvailability: () => void;
+  /**
+   * Tells the physical-device watcher a physical device was just committed `ready`, by a
+   * reclaim, a quarantine recovery or `device add`, so its count of not-present reads starts
+   * again from zero (ADR 0022 §8). Omitted, nothing is told.
+   */
+  readonly physicalDeviceReady?: (deviceId: string) => void;
 }
 
 /** A core service reached a port that `Core#connect` has not been given yet. */
@@ -165,6 +171,7 @@ export function createCore(options: CoreOptions): Core {
     return ports[name];
   };
   const notifyAvailability = (): void => port("notifyAvailability")();
+  const physicalDeviceReady = (deviceId: string): void => ports?.physicalDeviceReady?.(deviceId);
   const leaseMaintenance = {
     acquisition: {
       beginMaintenance: () => port("leaseMaintenance").acquisition.beginMaintenance(),
@@ -228,6 +235,8 @@ export function createCore(options: CoreOptions): Core {
     drivers,
     eventBus: options.eventBus,
     notifyAvailability,
+    physicalDeviceReady,
+    probeIntervalMs: options.config.health.probeIntervalMs,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     registry,
   });
@@ -239,10 +248,17 @@ export function createCore(options: CoreOptions): Core {
     eventBus: options.eventBus,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     notifyAvailability,
+    physicalDeviceReady,
     quarantine,
     registry,
   });
-  const enrollment = new PhysicalEnrollment({ claims, decisions, drivers, registry });
+  const enrollment = new PhysicalEnrollment({
+    claims,
+    decisions,
+    drivers,
+    physicalDeviceReady,
+    registry,
+  });
   const cleanup = new CleanupExecutor({
     eventBus: options.eventBus,
     lifecycle: deviceLifecycle,

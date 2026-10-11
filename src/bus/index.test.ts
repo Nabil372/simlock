@@ -32,6 +32,8 @@ const EVENT_NAMES: Record<EventName, true> = {
   "device.recovered": true,
   "device.recovery-failed": true,
   "device.quarantined": true,
+  "device.absence-detected": true,
+  "device.returned": true,
   "device.quarantine-recovered": true,
   "device.quarantine-abandoned": true,
   "device.quarantine-stranded": true,

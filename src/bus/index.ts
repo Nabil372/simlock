@@ -166,6 +166,12 @@ export interface EventMap {
     readonly maxRetries: number;
     readonly nextRetryAt: number;
   };
+  "device.absence-detected": {
+    readonly deviceId: string;
+    readonly previousState: "ready" | "leased" | "reclaiming";
+    readonly absentReason: "locked" | "untrusted" | "not-present";
+  };
+  "device.returned": { readonly deviceId: string; readonly osVersion: string };
   "device.quarantine-recovered": {
     readonly deviceId: string;
     readonly attempts: number;
