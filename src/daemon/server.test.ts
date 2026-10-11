@@ -1041,7 +1041,7 @@ describe("DaemonServer", () => {
     try {
       connection.hangUp();
       // Another holder of the same principal releases the lease, so the daemon pushes
-      // lease-lost to this connection while its peer is gone and its close is still to come.
+      // lease-lost to this connection while its peer is gone and it is not yet destroyed.
       await harness.engine.release(leaseIdOf(grant), "explicit");
       await new Promise((resolve) => setImmediate(resolve));
 
@@ -3115,8 +3115,8 @@ class BlockingConnection implements IpcConnection {
     this.#blocked = true;
   }
 
-  /** From here on every write fails as a Node socket's does after its peer's FIN and before its
-   * `close` event: `closed` is still false, and the write rejects with EPIPE. */
+  /** From here on every write fails as a Node socket's does after its peer's FIN and before it is
+   * destroyed: `closed` is still false, and the write rejects with EPIPE. */
   hangUp(): void {
     this.#hungUp = true;
   }
