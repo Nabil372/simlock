@@ -685,7 +685,17 @@ describe("ReclaimCoordinator for a physical device the platform no longer lists 
     const device = () =>
       registry.snapshot.devices.find((candidate) => candidate.id === "dev_physical");
     const events = () => bus.replay().map((event) => event.event);
-    return { bus, claims, coordinator, device, driver, events, mockedQuarantine, registry };
+    return {
+      bus,
+      claims,
+      coordinator,
+      decisions,
+      device,
+      driver,
+      events,
+      mockedQuarantine,
+      registry,
+    };
   }
 
   function releasedPhysical(device: DeviceRecord | undefined): ReleasedLease {
@@ -829,7 +839,16 @@ describe("ReclaimCoordinator for a physical device the platform no longer lists 
     harness.driver.setPhysicalPresence(PHYSICAL_ID, true, { osVersion: "18.5" });
     const returned = harness.coordinator as unknown as ReturnedReclaims;
 
-    const started = await returned.reclaimReturned(PHYSICAL_ID, "18.5", () => false);
+    let proceeding = true;
+    let open!: () => void;
+    const busy = harness.decisions.run(() => new Promise<void>((resolve) => void (open = resolve)));
+
+    const pending = returned.reclaimReturned(PHYSICAL_ID, "18.5", () => proceeding);
+    await Promise.resolve();
+    proceeding = false;
+    open();
+    await busy;
+    const started = await pending;
 
     expect(started).toBeUndefined();
     expect(harness.device()?.state).toBe("absent");

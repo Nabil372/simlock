@@ -2950,10 +2950,9 @@ async function createHarness(
     readonly driver?: FakeDriver;
     readonly driverRejections?: readonly DriverRejection[];
     readonly logger?: Logger;
-    /** Passed to the default `FakeDriver`: the OS versions it can slim. */
+    /** Lets a test exercise the slim path, which only runs for an OS version the driver can slim. */
     readonly slimmableOsVersions?: readonly string[];
-    /** Overrides the default single-iOS-device capacity limit; a test that needs two
-     * concurrent iOS leases granted (rather than one queued behind the other) sets this. */
+    /** The default single-iOS-device limit queues a second lease; raising it lets both be granted. */
     readonly iosMaxDevices?: number;
     readonly settle?: () => Promise<void>;
     readonly physicalDeviceWatcher?: Pick<PhysicalDeviceWatcher, "dispose" | "start">;

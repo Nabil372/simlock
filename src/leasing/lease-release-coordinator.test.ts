@@ -61,9 +61,10 @@ async function createHarness() {
     count: 0,
     onNotify: undefined,
   };
+  const decisions = new SerializedDecision();
   const coordinator = new LeaseReleaseCoordinator({
     claims,
-    decisions: new SerializedDecision(),
+    decisions,
     lifecycle,
     notifyAvailability: () => {
       availability.count += 1;
@@ -77,6 +78,7 @@ async function createHarness() {
     claims,
     clock,
     coordinator,
+    decisions,
     eventBus,
     lifecycle,
     reclaims,
@@ -639,14 +641,23 @@ describe("LeaseReleaseCoordinator", () => {
     it("endForAbsentDevice answers false and leaves the lease when the caller no longer proceeds by the time the decision runs", async () => {
       const harness = await createHarness();
       const held = await grantPhysical(harness, "UDID-A");
-
-      const ended = await harness.coordinator.endForAbsentDevice(
-        held.lease.id,
-        "not-present",
-        () => false,
+      let proceeding = true;
+      let open!: () => void;
+      const busy = harness.decisions.run(
+        () => new Promise<void>((resolve) => void (open = resolve)),
       );
 
-      expect(ended).toBe(false);
+      const pending = harness.coordinator.endForAbsentDevice(
+        held.lease.id,
+        "not-present",
+        () => proceeding,
+      );
+      await flush();
+      proceeding = false;
+      open();
+      await busy;
+
+      await expect(pending).resolves.toBe(false);
       expect(harness.registry.snapshot.leases.map((lease) => lease.id)).toEqual([held.lease.id]);
     });
 
