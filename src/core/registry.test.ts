@@ -2882,7 +2882,20 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
 
     await expect(registry.reenrollPhysical(device.id, input)).rejects.toThrow(RegistryEventError);
     await expect(registry.unenrollPhysical(device.id)).rejects.toThrow(RegistryEventError);
-    await expect(registry.unenrollPhysical(virtual.id)).rejects.toThrow(RegistryEventError);
+    await expect(registry.unenrollPhysical(virtual.id)).rejects.toThrow(
+      `Cannot unenrol device: ${virtual.id}`,
+    );
+    const stopped = await readyVirtual(registry, "d2");
+    await registry.transitionDevice(stopped.id, "shutdown", {
+      event: "device.shutdown",
+      payload: { deviceId: stopped.id, initiator: "test" },
+    });
+    await expect(registry.unenrollPhysical(stopped.id)).rejects.toThrow(
+      `Cannot unenrol device: ${stopped.id}`,
+    );
+    expect(registry.snapshot.devices.find((entry) => entry.id === stopped.id)?.state).toBe(
+      "shutdown",
+    );
     await expect(registry.reenrollPhysical(virtual.id, input)).rejects.toThrow(
       `Cannot re-enrol device: ${virtual.id}`,
     );
