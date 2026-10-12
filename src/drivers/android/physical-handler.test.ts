@@ -159,14 +159,15 @@ class PhoneAdb implements ProcessRunner {
 
   #answer(rest: readonly string[]): ProcessResult {
     const line = rest.join(" ");
-    const body = rest[0] === "-s" ? rest.slice(2).join(" ") : line;
-    const fixed: Readonly<Record<string, string>> = {
-      "devices -l": this.devicesOutput,
-      "shell am get-current-user": this.userOutput,
-      "shell getprop ro.build.version.sdk": `${this.sdkLevel}\n`,
-      "shell getprop ro.product.model": `${this.model}\n`,
-    };
-    const answered = fixed[body];
+    if (line === "devices -l") return OK(this.devicesOutput);
+    // why: only a command scoped with -s <serial> reaches the phone; an unscoped one is unexpected.
+    const body = rest[0] === "-s" ? rest.slice(2).join(" ") : "";
+    const fixed = new Map<string, string>([
+      ["shell am get-current-user", this.userOutput],
+      ["shell getprop ro.build.version.sdk", `${this.sdkLevel}\n`],
+      ["shell getprop ro.product.model", `${this.model}\n`],
+    ]);
+    const answered = fixed.get(body);
     if (answered !== undefined) return OK(answered);
     if (body.startsWith("shell pm list packages -3 --user ")) return OK(this.#packageListing());
     const uninstall = /^shell pm uninstall --user \d+ (\S+)$/.exec(body);
@@ -585,6 +586,16 @@ describe("Android physical handler: the protocol gate", () => {
   it("an adb version with no protocol number blocks physical commands", async () => {
     const { driver, runner } = await world();
     runner.versionOutput = "adb: not a version\n";
+
+    const present = await driver.listPresentPhysical([PHONE]);
+
+    expect(present).toEqual([{ driverDeviceId: PHONE, present: false, reason: "not-present" }]);
+    expect(runner.commands).toEqual([]);
+  });
+
+  it("an adb version that exits non-zero blocks physical commands even when it printed a matching number", async () => {
+    const { driver, runner } = await world();
+    runner.versionCode = 1;
 
     const present = await driver.listPresentPhysical([PHONE]);
 

@@ -280,8 +280,7 @@ function parseDevices(output: string): ListedTransport[] {
   for (const line of output.split("\n")) {
     const tokens = line.trim().split(/\s+/);
     const [serial, state] = tokens;
-    if (serial === undefined || state === undefined || serial.startsWith("*")) continue;
-    if (serial === "List") continue;
+    if (serial === undefined || state === undefined) continue;
     entries.push({ serial, state, usb: tokens.some((token) => token.startsWith("usb:")) });
   }
   return entries;
