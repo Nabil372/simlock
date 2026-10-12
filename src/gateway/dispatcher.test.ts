@@ -61,6 +61,7 @@ const gatewayConfig = {
     identity: { ios: "reusable" as const, android: "reusable" as const },
     requestRetentionMs: 600_000,
     maxRequestRecords: 10_000,
+    maxPerRequester: 1,
   },
   log: { level: "info" as const, rotateBytes: 1 },
   mode: "gateway" as const,

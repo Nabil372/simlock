@@ -188,7 +188,7 @@ commands — the server renews its own session's lease on a timer, so an agent
 never has to ask it to. Start it with `simlock mcp` — it reserves stdout for
 MCP JSON-RPC, so lease results never mix with protocol framing.
 
-Simlock allows at most one active lease per requester identity, so each agent
+Simlock allows at most `lease.maxPerRequester` active leases (default 1) per requester identity, so each agent
 session needs a distinct, stable id. Under Claude Code the server takes it
 from the agent session (`claude-code:<id>`), the same id the CLI uses there,
 with no setup. Codex does not pass its session id to MCP servers, so under

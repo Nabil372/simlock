@@ -71,7 +71,7 @@ registry, and every safety invariant stay on the worker.
   frees the device at once; `--detach` skips the staying alive and leaves the
   renewing to you. A holder that dies without releasing costs its device only
   until the TTL runs out.
-- **One lease per agent** (v1) — fleet-wide when a gateway issued it.
+- **One lease per agent by default** — raise `lease.maxPerRequester` to allow more; fleet-wide when a gateway issued it.
 - **Managed-device registry.** Simlock only ever shuts down, erases, or
   deletes devices it created itself. Everything else on the machine is
   read-only to it.

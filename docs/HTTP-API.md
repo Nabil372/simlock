@@ -454,7 +454,7 @@ uses that ID, on a worker and through a gateway. You promise it is unique for
 all time: it names one lease, and you do not send it again once that lease has
 ended. Simlock refuses an ID an active lease or a waiting request already holds
 with `409 LEASE_ID_TAKEN` (the body carries `leaseId`) and does not remember
-IDs that were used before. A requester that already holds a lease or a waiting
+IDs that were used before. A requester that already holds `lease.maxPerRequester` leases (default 1) or a waiting
 request gets `409 REQUESTER_ALREADY_LEASED` first, whatever `leaseId` it sends.
 
 The body is strict: a key this route does not know, a `mode` other than

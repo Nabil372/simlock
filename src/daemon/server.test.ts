@@ -189,8 +189,9 @@ describe("DaemonServer", () => {
     [21, "cannot send lease.request's fleetRequestId"],
     [24, "cannot send lease.request's physical or read physicalQueueDepth"],
     [26, "cannot read a physical device's presence"],
+    [27, "cannot read config.get's lease.maxPerRequester"],
   ])(
-    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 27, to a client on protocol %i, which %s",
+    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 28, to a client on protocol %i, which %s",
     async (version) => {
       const harness = await createHarness();
       const previous = await createClient(harness.socketPath);
@@ -200,7 +201,7 @@ describe("DaemonServer", () => {
       ).resolves.toMatchObject({
         error: {
           code: "PROTOCOL_VERSION_UNSUPPORTED",
-          details: { client: { min: version, max: version }, daemon: { min: 27, max: 27 } },
+          details: { client: { min: version, max: version }, daemon: { min: 28, max: 28 } },
         },
         ok: false,
       });
@@ -3436,6 +3437,7 @@ function testConfig(
       identity: { ios: "reusable", android: "reusable" },
       requestRetentionMs: 600_000,
       maxRequestRecords: 10_000,
+      maxPerRequester: 1,
       ...leaseOverrides,
     },
     capacity: {

@@ -806,8 +806,9 @@ stops renewing loses its lease on the worker's clock, gateway or no gateway.
 - **The lease object gains `worker: { id, label }`** (additive) so a client
   and the console can say *where* the device lives. A worker's network
   address is never on it: clients reach devices through the gateway.
-- **One lease per requester is fleet-wide.** A requester already holding a
-  gateway-issued lease on any worker gets `REQUESTER_ALREADY_LEASED` from the
+- **The lease limit per requester is fleet-wide** (`lease.maxPerRequester`, default 1;
+  ADR 0023). A requester already holding that many
+  gateway-issued leases across the workers gets `REQUESTER_ALREADY_LEASED` from the
   gateway, naming the existing lease. The gateway enforces this from its own
   index of the leases *it* issued, rebuilt from each worker's `lease.list` on
   uplink connect. It picks its own out of that list by the requester prefix
@@ -1451,7 +1452,7 @@ There is **one kind of lease**, on every transport ([ADR
   reintroducing per-connection lease state that HTTP and a gateway could never
   honour anyway (ADR 0004, "Alternatives considered"). See
   [known-pitfalls.md](known-pitfalls.md#a-sigkilled-lease-holder-keeps-its-device-until-the-ttl-expires).
-- One lease per agent in v1; no atomic multi-device acquisition (documented
+- One lease per agent by default (`lease.maxPerRequester`); no atomic multi-device acquisition (documented
   deadlock risk if two devices are taken sequentially).
 
 ### Release hands the purge off

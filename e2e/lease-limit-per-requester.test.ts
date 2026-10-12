@@ -20,10 +20,14 @@ async function startWith(maxPerRequester?: number, extra: Record<string, unknown
   return env;
 }
 
-async function leaseAs(env: TestEnv, agent: string): Promise<{ id: string }> {
+async function leaseAs(
+  env: TestEnv,
+  agent: string,
+): Promise<{ id: string; driverDeviceId: string }> {
   const result = await env.cli([...LEASE_ARGS, "--agent-id", agent, "--detach"]);
   expect(result.code, result.stderr).toBe(0);
-  return (result.json as { lease: { id: string } }).lease;
+  const grant = result.json as { lease: { id: string }; device: { driverDeviceId: string } };
+  return { driverDeviceId: grant.device.driverDeviceId, id: grant.lease.id };
 }
 
 describe("a requester may hold up to lease.maxPerRequester leases", () => {
@@ -135,12 +139,23 @@ describe("a requester may hold up to lease.maxPerRequester leases", () => {
   it("after a restart with lease.maxPerRequester lowered from 3 to 1, an agent id's three running leases are all kept, and its next request is refused naming the earliest", async () => {
     const env = await startWith(3);
     const first = await leaseAs(env, "a");
-    await leaseAs(env, "a");
-    await leaseAs(env, "a");
+    const second = await leaseAs(env, "a");
+    const third = await leaseAs(env, "a");
+    // why: a restart ends a lease whose device is not running (ADR 0019), and the fake driver forgets its devices.
+    await env.driverScript.merge({
+      ios: {
+        managedReality: {
+          devices: [first, second, third].map((lease) => ({
+            deviceId: lease.driverDeviceId,
+            runState: "running" as const,
+          })),
+        },
+      },
+    });
 
     await env.withConfig({ lease: { maxPerRequester: 1 } }, async () => {
       const leases = await env.cli(["list", "--leases"]);
-      expect((leases.json as { leases: unknown[] }).leases).toHaveLength(3);
+      expect(leases.json as unknown[]).toHaveLength(3);
       const next = await env.cli([...LEASE_ARGS, "--agent-id", "a", "--detach"]);
       expect(next.code).toBe(13);
       expect(next.error?.message).toContain(first.id);

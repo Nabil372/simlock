@@ -52,6 +52,8 @@ const DEFAULT_LEASE_MAX_TTL_MS = 4 * 60 * 60_000;
 /** `lease.requestRetentionMs`'s default: how long a settled lease request still answers a replay. */
 export const DEFAULT_LEASE_REQUEST_RETENTION_MS = 10 * 60_000;
 
+const DEFAULT_LEASE_MAX_PER_REQUESTER = 1;
+
 /** `lease.maxRequestRecords`'s default: the most lease-request records the daemon keeps. */
 export const DEFAULT_LEASE_MAX_REQUEST_RECORDS = 10_000;
 
@@ -178,6 +180,7 @@ export interface Config {
      * an open record is never evicted.
      */
     readonly maxRequestRecords: number;
+    readonly maxPerRequester: number;
   };
   /**
    * ADR 0005 §19e. Platform-agnostic on purpose: it bounds the *daemon's* willingness to wait
@@ -674,6 +677,7 @@ function defaultConfig(
       identity: { ios: "reusable", android: "reusable" },
       requestRetentionMs: DEFAULT_LEASE_REQUEST_RETENTION_MS,
       maxRequestRecords: DEFAULT_LEASE_MAX_REQUEST_RECORDS,
+      maxPerRequester: DEFAULT_LEASE_MAX_PER_REQUESTER,
     },
     exec: { timeoutMs: DEFAULT_EXEC_TIMEOUT_MS },
     diskPressure: { freeBytesThreshold: 10 * 1024 ** 3 },
@@ -822,6 +826,7 @@ function configValidators(strategy: CapacityStrategyName): Record<string, Valida
       }),
       requestRetentionMs: positiveNumber,
       maxRequestRecords: positiveInteger,
+      maxPerRequester: positiveInteger,
     }),
     exec: objectValidator({ timeoutMs: positiveNumber }),
     diskPressure: objectValidator({ freeBytesThreshold: nonNegativeNumber }),

@@ -817,6 +817,7 @@ export const configSchema = z.object({
     }),
     requestRetentionMs: z.number(),
     maxRequestRecords: z.number(),
+    maxPerRequester: z.number(),
   }),
   exec: z.object({ timeoutMs: z.number() }),
   diskPressure: z.object({ freeBytesThreshold: z.number() }),

@@ -75,6 +75,7 @@ export function testConfig(
       identity: { ios: "reusable", android: "reusable" },
       requestRetentionMs: 600_000,
       maxRequestRecords: 10_000,
+      maxPerRequester: 1,
       ...overrides,
     },
     log: { level: "info", rotateBytes: 5 * 1024 * 1024 },

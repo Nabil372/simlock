@@ -106,7 +106,7 @@ command starts it again) to bring the platform up.
 | 12 | `DEVICE_NOT_ENROLLABLE` | `device add` of a device that cannot be enrolled; the message says why |
 | 12 | `UNKNOWN_DEVICE` | `device remove` of an ID that is not an enrolled device |
 | 12 | `COMPONENT_IN_USE` | `component remove` of a component a device uses, Simlock's or your own |
-| 13 | `REQUESTER_ALREADY_LEASED` | requester already holds a lease or has a pending request — one lease per agent in v1; release the named lease first |
+| 13 | `REQUESTER_ALREADY_LEASED` | requester already holds `lease.maxPerRequester` leases (default 1) or has a pending request; release the named lease first |
 | 13 | `LEASE_ID_TAKEN` | `lease --lease-id` named an ID an active lease or a waiting request already holds |
 | 14 | — | `lease` without `--detach` only: the daemon ended the lease without the holder asking (TTL expiry, operator `release`, or an unrecoverable device) |
 | 15 | — | `component install --worker`/`--all-workers` on a gateway only: at least one worker did not end `installed` or `already-installed` (it refused, failed, was skipped, or its result is unknown) |
@@ -162,8 +162,8 @@ implement them:
 
 ## Agent identity
 
-Leases are keyed by requester: at most one active lease per agent id,
-enforced by the daemon. Each agent session needs a **stable** id for this to
+Leases are keyed by requester: at most `lease.maxPerRequester` active leases
+per agent id (default 1), enforced by the daemon. Each agent session needs a **stable** id for this to
 constrain anything — a fresh id on every CLI invocation makes the constraint a
 no-op, since every invocation looks like a different requester.
 
@@ -322,9 +322,11 @@ granted.
   the owning agent is still very much alive; point this at the agent's own
   pid instead.
 
-One lease per requester in v1: leasing while you already hold a lease or
-have a request queued fails with `REQUESTER_ALREADY_LEASED` (exit 13); the
-error message names the existing lease id to release first.
+One lease per requester by default (`lease.maxPerRequester`, default 1): leasing
+while you already hold that many leases, or have a request queued, fails with
+`REQUESTER_ALREADY_LEASED` (exit 13); the error message names your earliest
+lease to release first. With the limit above 1, `simlock simctl` and `simlock adb`
+through a gateway need `--lease <id>` when you hold more than one lease.
 
 **Staying alive (the default):** intended to be run in the background by the
 agent. As soon as the device is ready, one JSON line is printed on stdout — the
@@ -961,10 +963,11 @@ nothing: a `simlock lease` left running renews on its timer as always, and a
 client that stops renewing loses the lease on the worker's clock whether or
 not a gateway is in the path.
 
-**One lease per requester is fleet-wide.** Leasing while you already hold a
-gateway-issued lease on *any* worker in the fleet is `REQUESTER_ALREADY_LEASED`
-(exit 13) naming that lease, the same rule and the same code as on one
-machine.
+**The lease limit per requester is fleet-wide.** Leasing while you already hold
+`lease.maxPerRequester` gateway-issued leases (default 1), counted across *all*
+workers in the fleet, is `REQUESTER_ALREADY_LEASED` (exit 13) naming your
+earliest lease, the same rule and the same code as on one machine. The limit
+that counts is the gateway's.
 
 One thing an operator sees only from the other side: the requester id the
 gateway forwards to a worker is **namespaced**,

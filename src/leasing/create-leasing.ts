@@ -153,6 +153,7 @@ export function createLeasing(options: LeasingOptions): Leasing {
     provisioner: core.provisioner,
     queue,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    maxPerRequester: options.config.lease.maxPerRequester,
     registry,
     requests,
   });
