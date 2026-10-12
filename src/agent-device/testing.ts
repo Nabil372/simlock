@@ -63,8 +63,17 @@ function gate(): Gate {
   return { open, promise };
 }
 
-function stringOrUndefined(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+async function readRpc(request: Request, tenantHeader: string | undefined) {
+  const body = (await request.json()) as {
+    readonly id?: unknown;
+    readonly method?: string;
+    readonly params?: Record<string, unknown>;
+  };
+  const params = body.params ?? {};
+  const meta = (params["meta"] ?? {}) as Record<string, unknown>;
+  const stamped = params["tenantId"] ?? meta["tenantId"];
+  const tenant = tenantHeader ?? (typeof stamped === "string" ? stamped : undefined);
+  return { id: body.id, meta, method: body.method ?? "", params, tenant };
 }
 
 function envelope(id: unknown, result: unknown): Response {
@@ -199,24 +208,20 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
   }
 
   async #rpc(request: Request, tenantHeader: string | undefined): Promise<Response> {
-    const body = (await request.json()) as {
-      readonly id?: unknown;
-      readonly method?: string;
-      readonly params?: Record<string, unknown>;
-    };
-    const params = body.params ?? {};
-    const meta = (params["meta"] ?? {}) as Record<string, unknown>;
-    const tenant = tenantHeader ?? stringOrUndefined(params["tenantId"] ?? meta["tenantId"]);
-    const method = body.method ?? "";
+    const call = await readRpc(request, tenantHeader);
+    const { id, meta, method, params, tenant } = call;
     this.requests.push({ method: request.method, params, path: "/rpc", rpcMethod: method, tenant });
-    const kind = method.replace(/^agent[_-]device\./, "");
-    if (kind === "lease.allocate") return this.#allocate(body.id, params, tenant);
-    if (kind === "lease.heartbeat") return envelope(body.id, { lease: params, ok: true });
-    if (kind === "lease.release") {
-      await this.onRelease?.();
-      return this.#release(body.id, params, tenant);
+    switch (method.replace(/^agent[_-]device\./, "")) {
+      case "lease.allocate":
+        return this.#allocate(id, params, tenant);
+      case "lease.heartbeat":
+        return envelope(id, { lease: params, ok: true });
+      case "lease.release":
+        await this.onRelease?.();
+        return this.#release(id, params, tenant);
+      default:
+        return this.#command(request, id, params, meta);
     }
-    return this.#command(request, body.id, params, meta);
   }
 
   async #allocate(
