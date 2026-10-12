@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { Driver, PresentPhysical } from "./driver.js";
+import * as presenceModule from "./physical-presence.js";
 import { readPhysicalPresence, readPhysicalPresenceDetail } from "./physical-presence.js";
+
+const latestPresence = (driverDeviceId: string): unknown =>
+  (presenceModule as unknown as Record<string, (id: string) => unknown>)["latestPresence"]?.(
+    driverDeviceId,
+  );
 
 function driverAnswering(answer: readonly PresentPhysical[]) {
   return { listPresentPhysical: vi.fn(async () => answer) } satisfies Pick<
@@ -77,5 +83,51 @@ describe("readPhysicalPresenceDetail", () => {
     expect(detail.get("A")).toStrictEqual({ present: false, reason: "locked" });
     expect(detail.get("B")).toStrictEqual({ present: false, reason: "not-present" });
     expect(detail.get("C")).toStrictEqual({ present: false, reason: "not-present" });
+  });
+});
+
+describe("the latest presence read of a device", () => {
+  it("is { present: true } after a present read, and { present: false, reason } with the read's reason after a not-present one", async () => {
+    const driver = driverAnswering([
+      { driverDeviceId: "LATEST-A", osVersion: "18.5", present: true },
+      { driverDeviceId: "LATEST-B", present: false, reason: "locked" },
+      { driverDeviceId: "LATEST-C", present: false },
+    ]);
+
+    await readPhysicalPresenceDetail(driver, ["LATEST-A", "LATEST-B", "LATEST-C", "LATEST-D"]);
+
+    expect(latestPresence("LATEST-A")).toStrictEqual({ present: true });
+    expect(latestPresence("LATEST-B")).toStrictEqual({ present: false, reason: "locked" });
+    expect(latestPresence("LATEST-C")).toStrictEqual({ present: false, reason: "not-present" });
+    expect(latestPresence("LATEST-D")).toStrictEqual({ present: false, reason: "not-present" });
+  });
+
+  it("is none before the device's first read, and a read that rejects leaves it as it was", async () => {
+    expect(latestPresence("LATEST-E")).toBeUndefined();
+    await readPhysicalPresence(
+      driverAnswering([{ driverDeviceId: "LATEST-E", present: false, reason: "untrusted" }]),
+      ["LATEST-E"],
+    );
+    expect(latestPresence("LATEST-E")).toStrictEqual({ present: false, reason: "untrusted" });
+
+    const failing = { listPresentPhysical: vi.fn().mockRejectedValue(new Error("usbmuxd")) };
+    await expect(readPhysicalPresence(failing, ["LATEST-E"])).rejects.toThrow("usbmuxd");
+    await expect(readPhysicalPresenceDetail(failing, ["LATEST-E"])).rejects.toThrow("usbmuxd");
+
+    expect(latestPresence("LATEST-E")).toStrictEqual({ present: false, reason: "untrusted" });
+  });
+
+  it("is changed the same way by the boolean read a grant makes, with the read's reason", async () => {
+    await readPhysicalPresence(driverAnswering([{ driverDeviceId: "LATEST-F", present: true }]), [
+      "LATEST-F",
+    ]);
+    expect(latestPresence("LATEST-F")).toStrictEqual({ present: true });
+
+    await readPhysicalPresence(
+      driverAnswering([{ driverDeviceId: "LATEST-F", present: false, reason: "locked" }]),
+      ["LATEST-F"],
+    );
+
+    expect(latestPresence("LATEST-F")).toStrictEqual({ present: false, reason: "locked" });
   });
 });

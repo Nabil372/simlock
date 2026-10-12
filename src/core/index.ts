@@ -131,6 +131,8 @@ export {
   type PhysicalRequest,
 } from "./domain.js";
 export {
+  type LatestPresence,
+  latestPresence,
   type PhysicalRead,
   readPhysicalPresence,
   readPhysicalPresenceDetail,

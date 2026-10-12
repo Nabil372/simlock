@@ -4,7 +4,14 @@ import { EventBus, type EventEnvelope } from "../bus/index.js";
 import { PROTOCOL_VERSION_RANGE } from "../contract/index.js";
 import { FakeClock, type Logger } from "../ports/index.js";
 import { MemoryDrainStore } from "./drain-store.js";
-import { catalogFixture, hostFixture, leaseFixture, statusFixture } from "./test-support.js";
+import {
+  catalogFixture,
+  deviceFixture,
+  hostFixture,
+  leaseFixture,
+  physicalDeviceFixture,
+  statusFixture,
+} from "./test-support.js";
 import { WorkerRegistry } from "./worker-registry.js";
 
 const RETENTION_MS = 24 * 60 * 60_000;
@@ -590,6 +597,39 @@ describe("WorkerRegistry", () => {
       expect(workers.view("wrk_1")?.catalog).toBeUndefined();
       expect(workers.routingViews()[0]?.catalog).toEqual(running.catalog);
       expect(workers.routingViews()[0]?.catalogReadAt).toBeUndefined();
+    });
+
+    it("carries the physical devices last read from a starting worker in its routing view, and its views() entry lists no devices", () => {
+      const { workers } = registry();
+      workers.connected("wrk_1", undefined, undefined);
+      const phone = physicalDeviceFixture("dev_p", "ready");
+      workers.refresh("wrk_1", {
+        ...running,
+        devices: [phone, deviceFixture("dev_sim", "ready")],
+      });
+
+      workers.refresh("wrk_1", { health: "starting", host: hostFixture() });
+
+      expect(workers.routingViews()[0]?.devices).toEqual([phone]);
+      expect(workers.view("wrk_1")?.devices).toBeUndefined();
+      expect(workers.views()[0]).not.toHaveProperty("devices");
+    });
+
+    it("drops a removed worker's last physical devices, so one that comes back starting has none in its routing view", async () => {
+      const { clock, workers } = registry();
+      workers.connected("wrk_1", undefined, undefined);
+      workers.refresh("wrk_1", { ...running, devices: [physicalDeviceFixture("dev_p", "ready")] });
+      workers.refresh("wrk_1", { health: "starting", host: hostFixture() });
+      expect(workers.routingViews()[0]?.devices).toHaveLength(1);
+      workers.disconnected("wrk_1");
+      clock.advance(RETENTION_MS);
+      await workers.pruneExpired();
+      expect(workers.routingViews()).toEqual([]);
+
+      workers.connected("wrk_1", undefined, undefined);
+      workers.refresh("wrk_1", { health: "starting", host: hostFixture() });
+
+      expect(workers.routingViews()[0]?.devices).toBeUndefined();
     });
 
     it("has no catalog for routing from a worker whose catalog was never read", () => {

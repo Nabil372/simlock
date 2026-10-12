@@ -591,6 +591,31 @@ describe("startDaemon wires core and leasing together", () => {
     expect(outcome).toMatchObject({ device: { physical: true } });
   });
 
+  it("status.get carries the presence the grant's read found on a physical device, through the daemon's own wiring", async () => {
+    const clock = new FakeClock(1_000);
+    const phone = { apps: [], class: "phone", model: "iPhone 15 Pro", osVersion: "18.4" } as const;
+    const driver = new FakeDriver({
+      clock,
+      physicalDevices: [{ ...phone, ids: ["UDID-WIRED-PRESENCE"] }],
+      platform: "ios",
+    });
+    driver.setPhysicalPresence("UDID-WIRED-PRESENCE", true);
+    const { daemon } = await start({ clock, drivers: [driver] });
+    await daemon.dispatch("device.add", { id: "UDID-WIRED-PRESENCE", platform: "ios" }, admin);
+    await daemon.dispatch(
+      "lease.request",
+      { model: "iPhone 15 Pro", physical: true, platform: "ios", requesterId: "agent-1" },
+      agent,
+    );
+
+    const status = (await daemon.dispatch("status.get", {}, agent)) as {
+      devices?: { driverDeviceId?: string; presence?: unknown }[];
+    };
+
+    const entry = status.devices?.find((device) => device.driverDeviceId === "UDID-WIRED-PRESENCE");
+    expect(entry).toMatchObject({ presence: { present: true } });
+  });
+
   it("announces the capacity figures and then the queue depth once startup is done", async () => {
     const { directory } = await start();
 

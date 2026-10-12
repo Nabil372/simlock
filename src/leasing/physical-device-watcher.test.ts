@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as coreModule from "../core/index.js";
 import {
   type Config,
   type DeviceRequest,
@@ -17,6 +18,11 @@ import {
   MemoryLogSink,
 } from "../ports/index.js";
 import { createTestEngine, type TestEngine } from "./testing.js";
+
+const latestPresence = (driverDeviceId: string): unknown =>
+  (coreModule as unknown as Record<string, (id: string) => unknown>)["latestPresence"]?.(
+    driverDeviceId,
+  );
 
 const gibibyte = 1024 ** 3;
 const statePath = "/home/agent/.simlock/state.json";
@@ -784,6 +790,21 @@ describe("PhysicalDeviceWatcher acting on a device", () => {
     expect(eventsOf(harness, "device.returned")).toHaveLength(1);
     expect(reclaimCalls(harness.driver)).toHaveLength(1);
     expect(stateOf(harness, device)).toBe("ready");
+  });
+
+  it("a device the fake driver reports present again has a latest read of present within one health.probeIntervalMs", async () => {
+    const harness = await createHarness();
+    await enrollIphone(harness, "UDID-LATEST-WATCH");
+    startWatcher(harness);
+    gone(harness, "UDID-LATEST-WATCH", "locked");
+    await tick(harness);
+    expect(latestPresence("UDID-LATEST-WATCH")).toStrictEqual({ present: false, reason: "locked" });
+
+    back(harness, "UDID-LATEST-WATCH");
+    harness.clock.advance(PROBE_MS);
+    await flush();
+
+    expect(latestPresence("UDID-LATEST-WATCH")).toStrictEqual({ present: true });
   });
 
   it("two ready devices read not present for the grace period both become absent, each judged on its own state", async () => {

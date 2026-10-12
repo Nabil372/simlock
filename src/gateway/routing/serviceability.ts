@@ -4,10 +4,16 @@
  * it and acts on the answer, and the stages never see a request this table has rejected.
  */
 import type { Platform } from "../../contract/index.js";
-import type { DeviceClass } from "../../core/index.js";
+import { type DeviceClass, noPhysicalMatch } from "../../core/index.js";
 import type { WorkerView } from "../worker-registry.js";
 import type { RoutableRequest } from "./pipeline.js";
-import { hasPlatform, listsModel, matchRequest, wantedClass } from "./request-match.js";
+import {
+  hasPlatform,
+  listsModel,
+  matchRequest,
+  physicalMatch,
+  wantedClass,
+} from "./request-match.js";
 import { takesRequests } from "./stages/takes-requests.js";
 
 export type RejectionCode = "NO_CAPACITY" | "NO_DRIVER" | "UNKNOWN_MODEL" | "RUNTIME_MISSING";
@@ -45,7 +51,7 @@ export function assess(request: RoutableRequest, views: readonly WorkerView[]): 
       reason: "unresolvable-spec",
     };
   }
-  if (request.physical === true) return { kind: "route-or-wait" };
+  if (request.physical === true) return assessPhysical(request, known, takers);
   if (!known.some((worker) => listsModel(worker, request))) return unknownModel(request);
   if (!known.some((worker) => matchRequest(worker, request) !== undefined)) {
     const osVersion = request.osVersion ?? "default";
@@ -58,6 +64,24 @@ export function assess(request: RoutableRequest, views: readonly WorkerView[]): 
     };
   }
   if (!takers.some((worker) => matchRequest(worker, request) !== undefined)) return noWorker();
+  return { kind: "route-or-wait" };
+}
+
+// why: `presence` plays no part in the table: a device last read not present makes the request wait, not fail.
+function assessPhysical(
+  request: RoutableRequest,
+  known: readonly WorkerView[],
+  takers: readonly WorkerView[],
+): Assessment {
+  if (!known.some((worker) => physicalMatch(worker, request, "enrolled"))) {
+    return {
+      ...noPhysicalMatch(request),
+      code: "UNKNOWN_MODEL",
+      kind: "reject",
+      reason: "unresolvable-spec",
+    };
+  }
+  if (!takers.some((worker) => physicalMatch(worker, request, "enrolled"))) return noWorker();
   return { kind: "route-or-wait" };
 }
 

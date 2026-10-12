@@ -46,6 +46,7 @@ import type { EventBus, EventMap } from "../bus/index.js";
 import type { LeaseGrant, LeaseRecord, SimlockAdminClient } from "../admin/index.js";
 import {
   isSimlockError,
+  requestedClass,
   requestedDevice,
   type AnySimlockError,
   type Platform,
@@ -677,53 +678,6 @@ export class FleetLeaseCoordinator {
     this.#enqueue(waiter);
   }
 
-  /**
-   * ADR §11: re-run on every worker-view change. Every already-queued waiter not currently in
-   * flight gets one more look, oldest first; one no eligible worker can take right now is passed over,
-   * not blocked on -- there is no early exit from this loop.
-   *
-   * H6 (round 3 review): `routing.select` reads the same unchanged `routingViews()` snapshot for every
-   * waiter in this loop, so a worker whose view over-reports free capacity relative to what it
-   * can actually grant right now used to look equally eligible to every one of them -- N queued
-   * waiters could all pick that one worker in a single pass, and every one past the first came
-   * back `NO_CAPACITY`, each triggering its own `#staleView` refresh. Self-limiting once the
-   * refresh lands (the module doc's "the dispatch race"), but an over-reporting view that never
-   * corrects itself between passes turns this into an RPC storm scaling with queue depth. Once a
-   * worker is claimed by a waiter this pass, it drops out of the pool the rest of the pass sees:
-   * at most one dispatch per worker per pass. A waiter left without a worker this way is not
-   * rejected -- it stays `queued` for the next pass. C1 (round 3 review): that next pass is
-   * guaranteed now, not merely hoped for -- `#attempt` runs one itself the moment *any* attempt
-   * settles (a grant via `#settleGrant`, or a terminal rejection), on top of the existing
-   * worker-view trigger, so a waiter passed over here always gets looked at again once whatever
-   * claimed its worker this pass is done with it, the same "passed over, not blocked on" contract
-   * this method already promises for a request a busy fleet cannot take yet. (A request no worker
-   * can serve at all is not passed over: the walk rejects it, ADR 0009 §4.) Before this, only a
-   * worker's own event stream (a `lease.rejected`/`lease.expired` push, or the 30s refresh tick)
-   * ever re-ran this method -- several of `#attempt`'s own terminal branches
-   * (`WORKER_UNREACHABLE`, `INTERNAL`, a target that disappeared between routing and dispatch)
-   * produce no such push at all, so a waiter passed over in the same pass as one of those had
-   * nothing left to schedule another look.
-   *
-   * `#dispatchDepth` guards against this method ever running re-entrantly on the same call stack
-   * (defensive: `#beginAttempt`'s own `#attempt` is `void`-async and every await point in it is
-   * genuinely asynchronous -- see `#raceTimeout` -- so a nested synchronous call back into this
-   * method should not be reachable today, but nothing about that is enforced by a type). A nested
-   * call is *deferred*, not dropped: it sets `#passRequested` and the running call walks again
-   * once it unwinds. Dropping it was C1's own stall reintroduced by the guard meant to prevent
-   * recursion -- the outer walk iterates a snapshot and has already claimed workers, so a waiter
-   * freed mid-pass would never be reconsidered (round 4 review, finding 6).
-   *
-   * `candidate` is the waiter `#admit` is admitting; it walks last and the return value says
-   * whether it was attempted. See `#dispatchPass`.
-   *
-   * The deferred passes above deliberately carry **no** candidate, and that is not a dropped
-   * one (round 5 review): a nested `#dispatch` can only be raised from inside a `#beginAttempt`,
-   * `#dispatchPass` re-reads `views.routingViews()` per waiter rather than once per pass, and the
-   * candidate walks last. So every view change a deferred pass exists to react to was already
-   * raised *before* the candidate's own iteration read the views, and was already visible to it.
-   * There is no state a second pass could show the candidate that its first look did not have,
-   * which is why re-offering it there would add a branch no test can fail for the right reason.
-   */
   #dispatch(candidate?: FleetWaiter): boolean {
     if (this.#dispatchDepth > 0) {
       // Round 4 review: a nested pass used to be *dropped*. The outer walk iterates a snapshot
@@ -752,7 +706,7 @@ export class FleetLeaseCoordinator {
    * The return says whether it was attempted, which `waiter.state` alone cannot tell `#admit`.
    */
   #dispatchPass(candidate?: FleetWaiter): boolean {
-    // The two lines are matched separately, so each claims its own set.
+    // why: a virtual pick holds a worker; a physical pick holds a worker for the same match only.
     const claimedThisPass = { physical: new Set<string>(), virtual: new Set<string>() };
     const attempted = new Set<FleetWaiter | undefined>();
     const waiters =
@@ -771,8 +725,10 @@ export class FleetLeaseCoordinator {
     waiter: FleetWaiter,
     claims: { readonly physical: Set<string>; readonly virtual: Set<string> },
   ): boolean {
-    const claimedThisPass =
-      lineOf(waiter.request) === "physical" ? claims.physical : claims.virtual;
+    const isPhysical = lineOf(waiter.request) === "physical";
+    const claimedThisPass = isPhysical ? claims.physical : claims.virtual;
+    const claimKey = (workerId: string): string =>
+      isPhysical ? `${workerId}\u0000${physicalMatchKey(waiter.request)}` : workerId;
     const refusals = this.#cannotServe.get(waiter);
     // A worker claimed this pass or one that answered `NO_CAPACITY` is busy, not unable, so it
     // stays in the table's view.
@@ -786,11 +742,11 @@ export class FleetLeaseCoordinator {
       return false;
     }
     const eligibleWorkers = views.filter(
-      (worker) => !claimedThisPass.has(worker.id) && !this.#refused(waiter, worker),
+      (worker) => !claimedThisPass.has(claimKey(worker.id)) && !this.#refused(waiter, worker),
     );
     const decision = this.options.routing.select(request, eligibleWorkers);
     if (decision === undefined) return false;
-    claimedThisPass.add(decision.workerId);
+    claimedThisPass.add(claimKey(decision.workerId));
     this.#beginAttempt(waiter, decision, forwardedModel(request, eligibleWorkers, decision));
     return true;
   }
@@ -882,6 +838,7 @@ export class FleetLeaseCoordinator {
         ...(waiter.request.model === undefined ? {} : { model: waiter.request.model }),
         ...(waiter.request.class === undefined ? {} : { class: waiter.request.class }),
         ...(waiter.request.mode === undefined ? {} : { mode: waiter.request.mode }),
+        ...(lineOf(waiter.request) === "physical" ? { physical: true as const } : {}),
         platform: waiter.request.platform,
         queuedMs: createdAt === undefined ? 0 : Math.max(0, this.options.clock.now() - createdAt),
         reason: decision.reason,
@@ -1081,8 +1038,13 @@ export class FleetLeaseCoordinator {
 
   /** Whether `worker` refused `waiter` and its view has not changed since. */
   #refused(waiter: FleetWaiter, worker: WorkerView): boolean {
-    const key = this.#refusals.get(waiter)?.get(worker.id);
-    return key !== undefined && key === viewLoadKey(worker);
+    const refusals = this.#refusals.get(waiter);
+    const key = refusals?.get(worker.id);
+    if (key === undefined) return false;
+    if (key === viewLoadKey(worker)) return true;
+    // why: a device unplugged and plugged back in returns the view to the key it was refused at; the refusal must end at the first change.
+    refusals?.delete(worker.id);
+    return false;
   }
 
   /**
@@ -1355,6 +1317,15 @@ function leaseIdTaken(leaseId: string): DispatchError {
 
 interface ModelName {
   readonly model?: string;
+}
+
+// why: keyed as the core's `fitsPhysical` compares: platform, model in any letter case or else the class (`phone` when absent), and the OS text.
+function physicalMatchKey(request: FleetWaiter["request"]): string {
+  const target =
+    request.model === undefined
+      ? `class:${requestedClass({ class: request.class })}`
+      : `model:${request.model.toLowerCase()}`;
+  return [request.platform, target, request.osVersion ?? ""].join("\u0000");
 }
 
 function routable(waiter: FleetWaiter): RoutableRequest {

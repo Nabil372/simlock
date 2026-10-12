@@ -374,6 +374,7 @@ export interface EventMap {
     readonly class?: string;
     /** The mode the request named (ADR 0009 §8); absent when it named none. */
     readonly mode?: "slim" | "full";
+    readonly physical?: true;
     readonly reason: "warm-hit" | "free-capacity";
     /** The routing stage that decided the pick (ADR 0009 §8). */
     readonly stage: string;

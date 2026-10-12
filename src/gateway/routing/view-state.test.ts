@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { deviceFixture, leaseFixture, statusFixture } from "../test-support.js";
+import {
+  deviceFixture,
+  leaseFixture,
+  physicalDeviceFixture,
+  type PhysicalPresenceFixture,
+  statusFixture,
+} from "../test-support.js";
 import type { WorkerView } from "../worker-registry.js";
 import { viewLoadKey } from "./view-state.js";
 
@@ -83,5 +89,25 @@ describe("viewLoadKey", () => {
     ) as WorkerView["capacity"];
 
     expect(viewLoadKey(view({ capacity }))).toBe(viewLoadKey(base));
+  });
+  it("gives two views that differ only in one physical device's presence, from not present to present or from one reason to another, different keys", () => {
+    const withPresence = (presence?: PhysicalPresenceFixture) =>
+      view({
+        devices: [
+          physicalDeviceFixture("dev_p", "ready", presence === undefined ? {} : { presence }),
+        ],
+      });
+    const keys = [
+      viewLoadKey(withPresence({ present: false, reason: "not-present" })),
+      viewLoadKey(withPresence({ present: true })),
+      viewLoadKey(withPresence({ present: false, reason: "locked" })),
+      viewLoadKey(withPresence({ present: false, reason: "untrusted" })),
+      viewLoadKey(withPresence()),
+    ];
+
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(viewLoadKey(withPresence({ present: true }))).toBe(
+      viewLoadKey(withPresence({ present: true })),
+    );
   });
 });

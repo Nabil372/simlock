@@ -11,12 +11,17 @@ import {
 } from "../ports/index.js";
 import { promiseState } from "../test-support/promise-state.js";
 import { MemoryDrainStore } from "./drain-store.js";
+import { FleetLeaseCoordinator } from "./fleet-coordinator.js";
+import { FleetLeaseIndex } from "./lease-index.js";
+import { createRoutingPolicy } from "./routing.js";
 import { GatewayService, REJECTION_COALESCE_WINDOW_MS } from "./service.js";
 import {
   catalogFixture,
   deviceFixture,
   hostFixture,
   leaseFixture,
+  physicalDeviceFixture,
+  type PhysicalPresenceFixture,
   protocolMismatchError,
   ScriptedWorkerClient,
   statusFixture,
@@ -93,6 +98,7 @@ function fleet(
   return {
     clients,
     clock,
+    eventBus,
     events,
     service,
     transport,
@@ -772,6 +778,65 @@ describe("GatewayService", () => {
     await harness.service.stop();
   });
 
+  it("sends a waiting physical request its worker refused to that worker again on the first periodic refresh after the worker's view reports the device present, with no worker event", async () => {
+    const harness = fleet();
+    await harness.service.start();
+    const coordinator = new FleetLeaseCoordinator({
+      clock: harness.clock,
+      describeFailure: (error) => ({ code: "INTERNAL", message: String(error) }),
+      directory: harness.service,
+      eventBus: harness.eventBus,
+      execTimeoutMs: 11 * 60_000,
+      idGenerator: {
+        generate: (() => {
+          let next = 1;
+          return () => `${next++}`;
+        })(),
+      },
+      leaseIndex: new FleetLeaseIndex("gw:instance-1:"),
+      leaseRequestLimits: { maxRecords: 10_000, retentionMs: 600_000 },
+      leaseRequestTimeoutMs: 5 * 60_000,
+      routing: createRoutingPolicy("warm-then-free"),
+      views: harness.service.workers,
+    });
+    const worker = new ScriptedWorkerClient();
+    const phone = (presence: PhysicalPresenceFixture) =>
+      physicalDeviceFixture("dev_p", "ready", { presence });
+    worker.devices = [phone({ present: true })];
+    worker.catalog = catalogFixture([
+      { models: ["iPhone 15 Pro"], platform: "ios", runtimes: ["18.4"] },
+    ]);
+    await harness.join("wrk_1", worker);
+    await vi.waitFor(() => expect(harness.service.workers.view("wrk_1")?.devices).toHaveLength(1));
+    const leaseRequests = () => worker.calls.filter((call) => call.startsWith("lease.request"));
+
+    void coordinator
+      .request(
+        { physical: true, platform: "ios" },
+        { allowDownload: false, noWait: false, ownerId: "agent-1", requesterId: "agent-1" },
+      )
+      .catch(() => undefined);
+    await vi.waitFor(() => expect(leaseRequests()).toHaveLength(1));
+    const callsBefore = worker.calls.length;
+
+    worker.devices = [phone({ present: false, reason: "not-present" })];
+    harness.clock.advance(REFRESH_MS);
+    await vi.waitFor(() => expect(worker.calls.length).toBeGreaterThan(callsBefore));
+    await vi.waitFor(() =>
+      expect(harness.service.workers.view("wrk_1")?.devices?.[0]).toMatchObject({
+        presence: { present: false, reason: "not-present" },
+      }),
+    );
+    expect(leaseRequests()).toHaveLength(1);
+
+    worker.devices = [phone({ present: true })];
+    harness.clock.advance(REFRESH_MS);
+
+    await vi.waitFor(() => expect(leaseRequests()).toHaveLength(2));
+
+    await harness.service.stop();
+  });
+
   it("shows a pairing that changes on a worker on its view after the next refresh tick", async () => {
     const harness = fleet();
     await harness.service.start();
@@ -1142,7 +1207,7 @@ describe("GatewayService", () => {
       min: PROTOCOL_VERSION_RANGE.max - 1,
       max: PROTOCOL_VERSION_RANGE.max - 1,
     };
-    expect(PROTOCOL_VERSION_RANGE.max).toBe(26);
+    expect(PROTOCOL_VERSION_RANGE.max).toBe(27);
     expect(negotiateProtocolVersion(PROTOCOL_VERSION_RANGE, previous)).toBeUndefined();
     const harness = fleet();
     await harness.service.start();

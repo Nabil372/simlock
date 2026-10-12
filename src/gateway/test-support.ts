@@ -112,6 +112,38 @@ export function deviceFixture(
   };
 }
 
+export type PhysicalPresenceFixture =
+  | { readonly present: true }
+  | { readonly present: false; readonly reason: "locked" | "untrusted" | "not-present" };
+
+export function physicalDeviceFixture(
+  id: string,
+  state: "ready" | "leased" | "reclaiming" | "absent" | "quarantined" | "deleted" = "ready",
+  overrides: {
+    readonly presence?: PhysicalPresenceFixture;
+    readonly class?: "phone" | "tablet";
+    readonly model?: string;
+    readonly osVersion?: string;
+    readonly platform?: "ios" | "android";
+  } = {},
+) {
+  const { presence, class: deviceClass, model, osVersion, platform } = overrides;
+  return {
+    class: deviceClass ?? "phone",
+    id,
+    physical: true,
+    servesDefaultMode: false,
+    spec: {
+      model: model ?? "iPhone 15 Pro",
+      osVersion: osVersion ?? "18.4",
+      physical: true,
+      platform: platform ?? "ios",
+    },
+    state,
+    ...(presence === undefined ? {} : { presence }),
+  } as unknown as ReturnType<typeof deviceFixture>;
+}
+
 /**
  * A worker's catalog. An entry without `modelRuntimes` pairs each of its models with every one of
  * its runtimes -- a single worker's answer, so this is never the fleet cross product. An entry

@@ -226,6 +226,35 @@ describe("statusDeviceSchema's device projection", () => {
     expect(device).not.toHaveProperty("address");
   });
 
+  it("statusDeviceSchema and deviceRecordSchema accept presence present, and not present with each of locked, untrusted and not-present, and refuse any other reason", () => {
+    const physical = {
+      ...fullCoreShapedDevice(),
+      class: "phone",
+      driverDeviceId: "00008110-001A2B3C4D5E",
+      mode: undefined,
+      physical: true,
+      spec: { physical: true, platform: "ios", model: "iPhone 15 Pro", osVersion: "18.4" },
+      state: "ready",
+    };
+
+    for (const presence of [
+      { present: true },
+      { present: false, reason: "locked" },
+      { present: false, reason: "untrusted" },
+      { present: false, reason: "not-present" },
+    ]) {
+      const device = { ...physical, presence };
+      expect(statusDeviceSchema.parse(device)).toMatchObject({ presence });
+      expect(deviceRecordSchema.parse(device)).toMatchObject({ presence });
+    }
+    expect(statusDeviceSchema.parse(physical)).not.toHaveProperty("presence");
+    for (const schema of [statusDeviceSchema, deviceRecordSchema]) {
+      expect(() =>
+        schema.parse({ ...physical, presence: { present: false, reason: "unplugged" } }),
+      ).toThrow();
+    }
+  });
+
   it("rejects a device object that is missing the fields status.get must keep", () => {
     expect(() => statusDeviceSchema.parse({ id: "device-1" })).toThrow();
   });

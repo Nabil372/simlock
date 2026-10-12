@@ -90,6 +90,47 @@ describe("workerViewFields", () => {
     expect(() => workerViewFields(reads({ ...absent, absentReason: "unplugged" }))).toThrow();
   });
 
+  it("keeps a physical device's latest presence in the worker view built from list.get, and refuses a reason it does not know", () => {
+    const record = {
+      address: "00008110-001A2B3C4D5E",
+      class: "phone",
+      createdAt: 1,
+      driverData: {},
+      driverDeviceId: "00008110-001A2B3C4D5E",
+      id: "dev_p",
+      physical: true,
+      servesDefaultMode: false,
+      spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+      state: "ready",
+    };
+    const reads = (device: object) =>
+      ({
+        devices: [device],
+        status: {
+          capacity: CAPACITY,
+          daemon: { health: "running", mode: "worker" },
+          host: HOST,
+          leases: [],
+          queueDepth: 0,
+        },
+      }) as unknown as Parameters<typeof workerViewFields>[0];
+
+    for (const presence of [
+      { present: true },
+      { present: false, reason: "locked" },
+      { present: false, reason: "untrusted" },
+      { present: false, reason: "not-present" },
+    ]) {
+      expect(workerViewFields(reads({ ...record, presence })).devices?.[0]).toMatchObject({
+        presence,
+      });
+    }
+    expect(workerViewFields(reads(record)).devices?.[0]).not.toHaveProperty("presence");
+    expect(() =>
+      workerViewFields(reads({ ...record, presence: { present: false, reason: "unplugged" } })),
+    ).toThrow();
+  });
+
   it("builds a starting worker's view from its health and host alone, with every other field absent", () => {
     const view = workerViewFields({
       status: { daemon: { health: "starting", mode: "worker" }, host: HOST },

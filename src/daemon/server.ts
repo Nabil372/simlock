@@ -143,6 +143,7 @@ export interface DaemonServerEngineOptions {
   readonly hostFacts: () => HostFacts;
   readonly instanceId: string;
   readonly queue: QueueControl;
+  readonly presence?: DispatcherOptions["presence"];
   readonly reaper: CleanupReaper;
   readonly healthMonitor?: LeaseHealthMonitor | undefined;
   readonly physicalDeviceWatcher?: PhysicalDeviceWatcher | undefined;
@@ -298,6 +299,7 @@ function buildDispatcher(
     ...(options.processRunner === undefined ? {} : { processRunner: options.processRunner }),
     ...(options.execEnv === undefined ? {} : { execEnv: options.execEnv }),
     queue: options.queue,
+    ...(options.presence === undefined ? {} : { presence: options.presence }),
     reaper: options.reaper,
     registry: options.registry,
     ...(options.stalls === undefined ? {} : { stalls: options.stalls }),

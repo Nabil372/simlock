@@ -258,6 +258,11 @@ its pool is the one a lease request with no `mode` draws from on this daemon
 `servesDefaultMode` says whether a request naming no mode would get it. An
 older daemon does not send it.
 
+A physical device that has been read at least once also carries **`presence`**:
+`{ "present": true }`, or `{ "present": false, "reason": "locked" | "untrusted" | "not-present" }`,
+the latest read of whether it is plugged in. A simulator, an emulator and a
+physical device not yet read carry none.
+
 ```json
 { "id": "dev_7", "state": "provisioning", "mode": "full", "servesDefaultMode": true, "transitionAgeMs": 412000, "stalled": true,
   "spec": { "platform": "ios", "model": "iPhone 16", "osVersion": "18.4" } }

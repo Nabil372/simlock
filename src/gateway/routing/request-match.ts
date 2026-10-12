@@ -1,8 +1,3 @@
-/**
- * The one place the gateway decides whether a worker can serve a request (ADR 0009 §3). It reads
- * only the worker's catalog (ADR 0008 §1): the `can-serve` stage, the `warm-hit` stage, and the
- * forwarded `lease.request` all ask it, so the worker resolves exactly what the gateway matched.
- */
 import { requestedClass } from "../../contract/index.js";
 import { type OsConstraint, parseOsConstraint, satisfies } from "../../contract/os-range.js";
 import {
@@ -13,22 +8,13 @@ import {
   type DeviceRequirement,
   type FittableSpec,
   fits,
+  fitsPhysical,
 } from "../../core/index.js";
 import type { WorkerView } from "../worker-registry.js";
 import type { RoutableRequest } from "./pipeline.js";
 
-/**
- * The worker's own name for a model that can serve the request, or `undefined` when none can.
- *
- * An exact request: the first entry of `models` whose name or `modelAliases` entry equals the
- * requested name, ignoring letter case. A class request (the class `requestedClass` gives, `phone`
- * for neither): the first model the catalog classes as that class. Either way the model must pair
- * with an installed runtime that satisfies the request's OS constraint (`os-range`); with none
- * named, one runtime is enough. Only installed runtimes are listed, so a request that would need
- * a download never matches. A request naming an image tag counts only the runtimes for which the
- * catalog's `images` lists an image of that tag.
- */
 export function matchRequest(worker: WorkerView, request: RoutableRequest): string | undefined {
+  if (request.physical === true) return undefined;
   const catalog = catalogOf(worker, request);
   return catalog === undefined ? undefined : servingModel(catalog, request);
 }
@@ -49,6 +35,7 @@ export function deviceFit(
   worker: WorkerView,
   request: RoutableRequest,
 ): ((spec: FittableSpec) => boolean) | undefined {
+  if (request.physical === true) return undefined;
   const catalog = catalogOf(worker, request);
   if (catalog === undefined) return undefined;
   const model = servingModel(catalog, request);
@@ -132,6 +119,25 @@ function pairedRuntimesOf(
   return runtimes.filter((runtime) =>
     (catalog.images ?? []).some((image) => image.tag === imageTag && image.runtime === runtime),
   );
+}
+
+// why: the one gateway read of a worker's enrolled devices: `enrolled` is any state but `deleted`, `pickable` is `ready` and not last read not present (no read yet counts as present).
+export function physicalMatch(
+  worker: WorkerView,
+  request: RoutableRequest,
+  which: "enrolled" | "pickable",
+): boolean {
+  return (worker.devices ?? []).some((device) => {
+    if (device.physical !== true || device.state === "deleted") return false;
+    if (which === "pickable" && (device.state !== "ready" || device.presence?.present === false)) {
+      return false;
+    }
+    const { spec } = device;
+    return fitsPhysical(
+      { spec, ...(device.class === undefined ? {} : { class: device.class }) },
+      request,
+    );
+  });
 }
 
 /** Whether the worker's catalog has an entry for the request's platform. */

@@ -14,12 +14,14 @@ export interface RoutableRequest {
 
 export interface FilterStage {
   readonly kind: "filter";
+  readonly appliesToPhysical: boolean;
   keeps(worker: WorkerView, request: RoutableRequest): boolean;
 }
 
 export interface RankStage {
   readonly kind: "rank";
   readonly name: string;
+  readonly appliesToPhysical: boolean;
   readonly settles: boolean;
   score(worker: WorkerView, request: RoutableRequest): number;
 }
@@ -47,6 +49,8 @@ export function runStages(
   let lastRemoved: string | undefined;
 
   for (const stage of stages) {
+    // why: the one place a stage is skipped for a physical request.
+    if (request.physical === true && !stage.appliesToPhysical) continue;
     if (stage.kind === "filter") {
       remaining = remaining.filter((worker) => stage.keeps(worker, request));
       continue;

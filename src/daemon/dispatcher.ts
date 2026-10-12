@@ -16,6 +16,7 @@ import {
   type Driver,
   type HostFacts,
   isStalledTransition,
+  type LatestPresence,
   type Nuke,
   type PhysicalClass,
   type PhysicalEnrollment,
@@ -139,6 +140,7 @@ export interface DispatcherOptions {
    */
   readonly execEnv?: NodeJS.ProcessEnv;
   readonly queue: QueueControl;
+  readonly presence?: (driverDeviceId: string) => LatestPresence | undefined;
   readonly reaper: CleanupReaper;
   readonly registry: Registry;
   /**
@@ -864,6 +866,7 @@ export class Dispatcher {
   #decorateDevice(device: DeviceRecord): DeviceRecord & {
     readonly class?: PhysicalClass;
     readonly servesDefaultMode: boolean;
+    readonly presence?: LatestPresence;
     readonly transitionAgeMs?: number;
     readonly stalled?: true;
   } {
@@ -871,9 +874,11 @@ export class Dispatcher {
     const { reclaimingSince: _internal, ...onTheWire } = device as DeviceRecord & {
       readonly reclaimingSince?: number;
     };
+    const presence = device.physical ? this.options.presence?.(device.driverDeviceId) : undefined;
     const decorated = {
       ...onTheWire,
       ...(device.physical ? { class: device.spec.class } : {}),
+      ...(presence === undefined ? {} : { presence }),
       servesDefaultMode: this.options.deviceModes.servesDefaultMode(device.spec),
     };
     const enteredAt = transitionEnteredAt(device);

@@ -46,6 +46,11 @@ const deviceStateSchema = z.enum([
 
 const absentReasonSchema = z.enum(["locked", "untrusted", "not-present"]);
 
+const devicePresenceSchema = z.discriminatedUnion("present", [
+  z.object({ present: z.literal(true) }),
+  z.object({ present: z.literal(false), reason: absentReasonSchema }),
+]);
+
 const deviceModeSchema = z.enum(["slim", "full"]);
 
 const leaseIdentitySchema = z.enum(["reusable", "fresh"]);
@@ -142,6 +147,7 @@ export const deviceRecordSchema = z
     transitionAgeMs: z.number().optional(),
     stalled: z.boolean().optional(),
     servesDefaultMode: z.boolean().optional(),
+    presence: devicePresenceSchema.optional(),
   })
   .superRefine((device, context) => checkDeviceType(device, context, true));
 
@@ -167,6 +173,7 @@ export const statusDeviceSchema = z
     absentReason: absentReasonSchema.optional(),
     transitionAgeMs: z.number().optional(),
     stalled: z.boolean().optional(),
+    presence: devicePresenceSchema.optional(),
     workerId: z.string().optional(),
   })
   .superRefine((device, context) => checkDeviceType(device, context, true))

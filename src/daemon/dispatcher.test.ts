@@ -16,6 +16,7 @@ import {
   DriverCatalog,
   type HostFacts,
   HostFactsReader,
+  type LatestPresence,
   Nuke,
   PassthroughRefusedError,
   Registry,
@@ -226,6 +227,7 @@ async function buildDispatcher(
     readonly engine?: Pick<Parameters<typeof createTestEngine>[0], "defaultModes">;
     /** A `state.json` the registry loads, for a test that starts from records already on disk. */
     readonly state?: object;
+    readonly presence?: (driverDeviceId: string) => LatestPresence | undefined;
   } = {},
 ) {
   const clock = overrides.clock ?? new FakeClock(1_000);
@@ -333,6 +335,7 @@ async function buildDispatcher(
     ...(overrides.processRunner === undefined ? {} : { processRunner: overrides.processRunner }),
     execEnv: overrides.execEnv ?? { PATH: "/usr/bin" },
     queue: engine,
+    ...(overrides.presence === undefined ? {} : { presence: overrides.presence }),
     reaper,
     registry,
     stalls: stallOptions(engine, driver, overrides),
@@ -1388,6 +1391,62 @@ describe("Dispatcher: device mode on every surface", () => {
       expect(simulator).not.toHaveProperty("class");
     }
     expect(status.capacity?.ios).toMatchObject({ running: 1, used: 1, warm: 0 });
+  });
+
+  it("status.get and list.get carry the latest presence read as presence on a physical device; a virtual device, and a physical device not yet read, carry none", async () => {
+    const physical = (id: string, driverDeviceId: string) => ({
+      createdAt: 1,
+      driverData: {},
+      driverDeviceId,
+      enrolledApps: [],
+      id,
+      physical: true,
+      spec: {
+        class: "phone",
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        physical: true,
+        platform: "ios",
+      },
+      state: "ready",
+    });
+    const reads = new Map<string, LatestPresence>([
+      ["UDID-READ", { present: false, reason: "locked" }],
+      ["UDID-PRESENT", { present: true }],
+    ]);
+    const { dispatcher, engine } = await buildDispatcher({
+      // why: every ID but the unread one answers a read, so a virtual device's own driver ID does too and only the physical guard keeps it off the wire.
+      presence: (driverDeviceId) =>
+        driverDeviceId === "UDID-UNREAD"
+          ? undefined
+          : (reads.get(driverDeviceId) ?? { present: true }),
+      state: {
+        devices: [],
+        leases: [],
+        physicalDevices: [
+          physical("dev_read", "UDID-READ"),
+          physical("dev_present", "UDID-PRESENT"),
+          physical("dev_unread", "UDID-UNREAD"),
+        ],
+      },
+    });
+    await engine.convergeRunningCapacity();
+    const lease = await dispatcher.dispatch("lease.request", request, session());
+
+    const status = await dispatcher.dispatch("status.get", {}, session());
+    const listed = (await dispatcher.dispatch(
+      "list.get",
+      { kind: "devices" },
+      session({ role: "admin" }),
+    )) as { id: string; presence?: unknown }[];
+
+    for (const devices of [status.devices ?? [], listed]) {
+      const byId = (id: string) => devices.find((device) => device.id === id);
+      expect(byId("dev_read")).toMatchObject({ presence: { present: false, reason: "locked" } });
+      expect(byId("dev_present")).toMatchObject({ presence: { present: true } });
+      expect(byId("dev_unread")).not.toHaveProperty("presence");
+      expect(byId(lease.device.id)).not.toHaveProperty("presence");
+    }
   });
 
   it("a reclaiming physical device's status entry has no reclaimingSince", async () => {
