@@ -54,11 +54,19 @@ default (see [CONFIGURATION.md](CONFIGURATION.md)).
 
 ## Open it
 
-`simlock daemon start` and `simlock status` print the address:
+`simlock daemon start` prints the address in a `Daemon running` block:
 
 ```
 Daemon running
 Console: http://127.0.0.1:4700/
+```
+
+`simlock status` prints it after the daemon's health and mode:
+
+```
+Daemon: running (worker)
+Console: http://127.0.0.1:4700/
+...
 ```
 
 Open that address in a browser. `simlock status --json` has it as
