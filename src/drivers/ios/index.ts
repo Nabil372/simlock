@@ -1545,27 +1545,7 @@ export class IosSimctlDriver implements Driver {
     args: readonly string[],
     context?: PassthroughContext,
   ): Promise<PassthroughCommand> {
-    if (tool === "devicectl") {
-      if (device === undefined) {
-        throw new PassthroughRefusedError(
-          tool,
-          "Refusing `simlock devicectl`: Simlock has no local devicectl wrapper. Run `xcrun devicectl` directly, or use `device.exec` on a lease.",
-        );
-      }
-      if (!isPhysicalDriverDevice(device)) {
-        throw new PassthroughRefusedError(
-          tool,
-          "Refusing `devicectl`: it only serves a physical device, and this lease holds a simulator. Use `simctl`.",
-        );
-      }
-      if (context?.platform !== undefined && context.platform !== this.platform) {
-        throw new PassthroughRefusedError(
-          tool,
-          `Refusing \`devicectl\`: it only serves a physical iOS device, and this lease is on the ${context.platform} platform.`,
-        );
-      }
-      return devicectlExecCommand(device.deviceId, args);
-    }
+    if (tool === "devicectl") return this.#devicectlPassthrough(device, args, context);
     if (tool !== "simctl") {
       throw new PassthroughRefusedError(
         tool,
@@ -1585,6 +1565,33 @@ export class IosSimctlDriver implements Driver {
       command: "xcrun",
       env: {},
     });
+  }
+
+  #devicectlPassthrough(
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    args: readonly string[],
+    context: PassthroughContext | undefined,
+  ): PassthroughCommand {
+    const tool = "devicectl";
+    if (device === undefined) {
+      throw new PassthroughRefusedError(
+        tool,
+        "Refusing `simlock devicectl`: Simlock has no local devicectl wrapper. Run `xcrun devicectl` directly, or use `device.exec` on a lease.",
+      );
+    }
+    if (!isPhysicalDriverDevice(device)) {
+      throw new PassthroughRefusedError(
+        tool,
+        "Refusing `devicectl`: it only serves a physical device, and this lease holds a simulator. Use `simctl`.",
+      );
+    }
+    if (context?.platform !== undefined && context.platform !== this.platform) {
+      throw new PassthroughRefusedError(
+        tool,
+        `Refusing \`devicectl\`: it only serves a physical iOS device, and this lease is on the ${context.platform} platform.`,
+      );
+    }
+    return devicectlExecCommand(device.deviceId, args);
   }
 
   #assertProxyable(args: readonly string[]): void {
