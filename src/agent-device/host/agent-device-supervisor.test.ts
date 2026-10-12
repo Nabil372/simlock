@@ -1443,4 +1443,43 @@ describe("AgentDeviceSupervisor.stop", () => {
     expect(daemonSpawns(harness)).toHaveLength(1);
     expect(stateOf(harness)).toBe("off");
   });
+
+  it("logs no start-failed warning when stop() cancels a start", async () => {
+    const harness = await arrange({ daemonJson: () => "none" });
+    harness.begin();
+    await advanceBy(harness, 1_000);
+
+    await advancing(harness, harness.agentDevice.stop());
+    await advancing(harness, harness.started as Promise<void>);
+
+    expect(warnings(harness).filter((line) => line.includes("start failed"))).toEqual([]);
+    expect(stateOf(harness)).toBe("off");
+  });
+
+  it("leaves no unhandled rejection when a health read rejects after stop() was asked during the port check", async () => {
+    const harness = await arrange();
+    harness.health.rejectWith(new Error("ECONNREFUSED"));
+    const isListening = harness.probe.isListening.bind(harness.probe);
+    let stopping: Promise<void> | undefined;
+    vi.spyOn(harness.probe, "isListening").mockImplementation(async (port) => {
+      stopping = harness.agentDevice.stop();
+      return isListening(port);
+    });
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", record);
+    try {
+      harness.begin();
+      await advanceBy(harness, 5_000);
+      await advancing(harness, stopping as Promise<void>);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+
+    expect(unhandled).toEqual([]);
+    expect(stateOf(harness)).toBe("off");
+  });
 });

@@ -242,7 +242,8 @@ export class AgentDeviceSupervisor {
   }
 
   #fail(reason: UnavailableReason, message: string, remedyKind?: RemedyKind): void {
-    if (reason === "start-failed") this.#o.logger.warn(`agent-device start failed: ${message}`);
+    if (reason === "start-failed" && !this.#stopped)
+      this.#o.logger.warn(`agent-device start failed: ${message}`);
     this.#availability = {
       state: "unavailable",
       reason,
@@ -733,7 +734,10 @@ export class AgentDeviceSupervisor {
 
   // why: a waiter per poll on one never-settling promise would pile up reactions across retries.
   async #untilStop<T>(work: Promise<T>): Promise<T | "stopped"> {
-    if (this.#stopped) return "stopped";
+    if (this.#stopped) {
+      work.catch(() => undefined);
+      return "stopped";
+    }
     let wake!: () => void;
     const stopped = new Promise<"stopped">((resolve) => {
       wake = () => resolve("stopped");
