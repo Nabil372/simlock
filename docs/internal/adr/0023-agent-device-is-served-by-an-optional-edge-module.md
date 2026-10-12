@@ -105,8 +105,9 @@ supervisor:
 
 ### 4. One simlock token is one tenant
 
-The front sets agent-device's tenant to the simlock principal on every
-request, and an auth hook the agent-device daemon loads confirms it. Agents
+The proxy's `authenticate` callback checks the simlock token and sets
+agent-device's tenant to its principal on every request, overwriting any
+tenant the client sent. Upload tickets carry the agent's own simlock token. Agents
 on different simlock tokens never see each other's agent-device sessions.
 Agents sharing a token share a tenant; the docs say not to.
 
@@ -123,7 +124,9 @@ The front also refuses what would reach past the agent's grant:
 
 - The edge depends on agent-device changes not yet released (a lease id the
   caller chooses, `open` sending its selectors, sessions ending with their
-  lease, refusing a request's own device set). simlock builds no stand-ins;
+  lease, refusing a request's own device set, the proxy's `authenticate`,
+  the CLI releasing its lease after `close`, upload resume through the
+  proxy). simlock builds no stand-ins;
   it tests against a local agent-device build until they ship.
 - A new agent-device selector flag can slip past the front's check until
   agent-device refuses it itself.
