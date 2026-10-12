@@ -280,6 +280,16 @@ describe("EventBus", () => {
     },
   );
 
+  it.each(["docs/internal/EVENTS.md", "docs/EVENTS.md"])(
+    "lists lease-engine among the device.deleted initiators in %s",
+    (doc) => {
+      const markdown = readFileSync(join(REPO_ROOT, doc), "utf8");
+      const row = markdown.split("\n").find((line) => line.startsWith("| `device.deleted` |"));
+      expect(row).toBeDefined();
+      expect(row).toContain("`lease-engine`");
+    },
+  );
+
   it("types every event's payload as an object", () => {
     expectTypeOf<EventMap>().toMatchTypeOf<Record<EventName, object>>();
   });
