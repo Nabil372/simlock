@@ -252,33 +252,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
           );
           throw new NukeCancelledError();
         }
-        const held = this.options.registry.snapshot.leases.filter(
-          (lease) => lease.requesterId === options.requesterId,
-        );
-        const activeLease = earliestGranted(held);
-        const limit = this.options.maxPerRequester ?? 1;
-        const waiting = this.options.queue.hasPendingRequester(options.requesterId);
-        // why: a probe's held leases were counted by the gateway, fleet-wide; only its waiting
-        // request is checked here (ADR 0023 §2).
-        const atLimit = options.fleetRequestId === undefined && held.length >= limit;
-        if (waiting || atLimit) {
-          emitLeaseRefusal(
-            this.options.eventBus,
-            {
-              requestId,
-              requester: options.requesterId,
-              requestSpec: request,
-              reason: "already-leased",
-              fleetRequestId: options.fleetRequestId,
-            },
-            "lease-acquisition-coordinator",
-          );
-          throw new RequesterAlreadyLeasedError(options.requesterId, activeLease?.id, {
-            held: held.length,
-            limit,
-            waiting,
-          });
-        }
+        this.#refuseIfRequesterAtLimit(request, options, requestId);
         this.#refuseIfLeaseIdTaken(request, options, requestId);
         const { id, started: accepted } = await this.options.requests.admit(
           request,
@@ -309,6 +283,38 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     const { waiter } = admitted;
     this.#track(this.#resolveAndDrive(waiter, request, options));
     return waiter.promise;
+  }
+
+  #refuseIfRequesterAtLimit(
+    request: DeviceRequest,
+    options: LeaseRequestOptions,
+    requestId: string,
+  ): void {
+    const held = this.options.registry.snapshot.leases.filter(
+      (lease) => lease.requesterId === options.requesterId,
+    );
+    const limit = this.options.maxPerRequester ?? 1;
+    const waiting = this.options.queue.hasPendingRequester(options.requesterId);
+    // why: a probe's held leases were counted by the gateway, fleet-wide; only its waiting
+    // request is checked here (ADR 0023 §2).
+    const atLimit = options.fleetRequestId === undefined && held.length >= limit;
+    if (!waiting && !atLimit) return;
+    emitLeaseRefusal(
+      this.options.eventBus,
+      {
+        requestId,
+        requester: options.requesterId,
+        requestSpec: request,
+        reason: "already-leased",
+        fleetRequestId: options.fleetRequestId,
+      },
+      "lease-acquisition-coordinator",
+    );
+    throw new RequesterAlreadyLeasedError(options.requesterId, earliestGranted(held)?.id, {
+      held: held.length,
+      limit,
+      waiting,
+    });
   }
 
   /**
