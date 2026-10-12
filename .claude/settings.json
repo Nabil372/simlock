@@ -76,12 +76,27 @@
         ]
       }
     ],
+    "SubagentStop": [
+      {
+        "matcher": "implementer|reviewer|hardware-verifier",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/scripts/report-guard.mjs"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.agents/scripts/ensure-pnpm.sh --hook"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.agents/scripts/session-env.sh"
           }
         ]
       }

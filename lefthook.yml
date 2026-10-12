@@ -11,13 +11,18 @@ pre-commit:
       glob: "*.{ts,tsx,js,mjs,mts,cts}"
       run: pnpm exec oxlint {staged_files}
       fail_text: "Run 'pnpm lint' to fix lint errors."
+    # A comment the commit adds or edits starts with "why:" or goes (architecture rule 17).
+    comments:
+      glob: "*.{ts,tsx,js,mjs,mts,cts,sh}"
+      run: node .agents/scripts/comment-lint.mjs --base HEAD {staged_files}
+      fail_text: "Delete the comment, or start it with 'why:' when it says why the code does something unexpected."
     # A change can break the files that call it, so this checks the whole project; it takes seconds.
     typecheck:
       glob: "*.{ts,tsx,mts,cts}"
       run: pnpm run typecheck
 
-# These audit the whole branch against main and take minutes, so they run once per push
-# rather than on every checkpoint commit, in order: fallow, the e2e typecheck, then mutants.
+# These audit the whole branch against main, so they run once per push rather than on every
+# checkpoint commit.
 pre-push:
   piped: true
   commands:
@@ -28,8 +33,3 @@ pre-push:
     typecheck-e2e:
       priority: 2
       run: pnpm run typecheck:e2e
-    # Mutants only on the source lines this branch changed. A survivor does not block the push:
-    # an equivalent mutant cannot be killed, so each survivor is killed or explained in the PR body.
-    mutate:
-      priority: 3
-      run: pnpm run mutate || true

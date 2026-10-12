@@ -61,19 +61,29 @@ describe("comments.mjs", () => {
     );
   });
 
-  it("lists an existing comment within 20 lines of an added code line, and not one 21 lines away", () => {
-    const before = ["// near", ...filler(19), "const x = 0;", ...filler(20), "// far", ""];
+  it("leaves out an unchanged comment next to an added code line, and lists it with --all", () => {
+    const before = ["// near", "const x = 0;", ...filler(40), "// far", ""];
     const after = [...before];
-    after[20] = "const x = 1;";
+    after[1] = "const x = 1;";
     const dir = repo({ "src/a.ts": before.join("\n") }, { "src/a.ts": after.join("\n") });
 
-    const output = list(dir, "base", "HEAD");
+    expect(list(dir, "base", "HEAD")).toBe("");
 
-    expect(output).toContain("src/a.ts:1 (near)\n  1 | // near\n");
-    expect(output).not.toContain("// far");
+    const output = list(dir, "--all", "base", "HEAD");
+    expect(output).toContain("src/a.ts:1 (unchanged)\n  1 | // near\n");
+    expect(output).toContain("src/a.ts:43 (unchanged)\n  43 | // far\n");
   });
 
-  it("puts nothing in reach when only a comment changes, and marks a block it changes in part as edited", () => {
+  it("with --all, leaves out the comments of a file the diff does not touch", () => {
+    const dir = repo(
+      { "src/a.ts": "const a = 0;\n", "src/b.ts": "// untouched\nconst b = 0;\n" },
+      { "src/a.ts": "const a = 1;\n" },
+    );
+
+    expect(list(dir, "--all", "base", "HEAD")).toBe("");
+  });
+
+  it("lists only the block a comment edit touches, and marks a block it changes in part as edited", () => {
     const before = [
       "// other",
       "const x = 0;",
