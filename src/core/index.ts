@@ -92,7 +92,12 @@ export {
 } from "./driver-catalog.js";
 // fallow-ignore-next-line unused-type -- wire-visible rejection vocabulary for Simlock's own adb server.
 export type { AdbServerRejectionReason, DriverRejectionReason } from "./driver.js";
-export { Doctor, isStalledTransition, type StallInput } from "./doctor.js";
+export {
+  Doctor,
+  isStalledTransition,
+  type OptionalModuleFinding,
+  type StallInput,
+} from "./doctor.js";
 export { StartupRead } from "./startup-read.js";
 export { type HostFacts, HostFactsReader } from "./host-facts.js";
 export { ensureOwnedRoot, OWNED_ROOT_MARKER_FILE, OwnedRootError } from "./device-root.js";

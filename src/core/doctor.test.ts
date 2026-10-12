@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { EventBus } from "../bus/index.js";
-import { FakeClock, MemoryFilesystem } from "../ports/index.js";
+import { FakeClock, JsonLinesLogger, MemoryFilesystem, MemoryLogSink } from "../ports/index.js";
 import { FakeSystemStats } from "../ports/index.js";
 import type { Config } from "./config.js";
 import { DeviceOperationClaims } from "./device-operation-claims.js";
-import { Doctor, type DoctorFinding, type DoctorReport, isStalledTransition } from "./doctor.js";
+import {
+  Doctor,
+  type DoctorFinding,
+  type DoctorReport,
+  isStalledTransition,
+  type OptionalModuleFinding,
+} from "./doctor.js";
 import { DriverCatalog } from "./driver-catalog.js";
 import type { DriverRejection, PrerequisiteCheck } from "./driver.js";
 import { FakeDriver } from "./fake-driver.js";
@@ -2639,6 +2645,191 @@ describe("Doctor with a platform it cannot observe", () => {
     // finding is the one whose fix only writes to the registry.
     expect(report.findings.map((finding) => finding.kind)).toEqual(["registry-device-missing"]);
     expect(driver.calls.filter((call) => call.operation === "destroyLegacy")).toEqual([]);
+  });
+});
+
+describe("Doctor: optional module findings", () => {
+  const unavailable: OptionalModuleFinding = {
+    kind: "agent-device-unavailable",
+    message: "found 0.20.3, need 0.21.25 or later",
+    remedy: "install agent-device 0.21.25 or later, then restart the daemon",
+  };
+
+  async function setup(
+    options: {
+      readonly optionalModules?: () => readonly OptionalModuleFinding[];
+      readonly orphan?: boolean;
+      readonly missing?: boolean;
+      readonly sink?: MemoryLogSink;
+    } = {},
+  ) {
+    const clock = new FakeClock(10_000);
+    const eventBus = new EventBus(clock);
+    const registry = await loadRegistry(clock, eventBus);
+    if (options.missing === true) {
+      await readyDevice(registry, "gone", "ios");
+    }
+    const driver = new FakeDriver({ clock, platform: "ios" });
+    if (options.orphan === true) {
+      driver.setManagedReality({
+        devices: [
+          {
+            address: "simlock-orphan-address",
+            deviceId: "simlock-orphan",
+            driverData: { fakeDeviceId: "simlock-orphan" },
+            runState: "running",
+          },
+        ],
+        processes: [],
+      });
+    }
+    const doctor = new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: config(),
+      drivers: [driver],
+      eventBus,
+      registry,
+      ...(options.sink === undefined
+        ? {}
+        : { logger: new JsonLinesLogger({ clock, level: "debug", sink: options.sink }) }),
+      ...(options.optionalModules === undefined
+        ? {}
+        : { optionalModules: options.optionalModules }),
+    });
+    return { doctor, eventBus, registry };
+  }
+
+  it("returns each finding optionalModules gives, with its kind, message and remedy unchanged, after a warm-pool-target-unreachable finding returned by the same run", async () => {
+    const clock = new FakeClock(10_000);
+    const eventBus = new EventBus(clock);
+    const doctor = new Doctor({
+      decisions: new SerializedDecision(),
+      clock,
+      config: { ...config(), warmPool: { ...config().warmPool, enabled: true } },
+      drivers: [new FakeDriver({ clock, platform: "ios" })],
+      eventBus,
+      optionalModules: () => [unavailable],
+      registry: await loadRegistry(clock, eventBus),
+      warmPool: {
+        figures: () => ({
+          enabled: true,
+          reserveRunning: { android: 0, ios: 0 },
+          targets: [
+            {
+              booting: 0,
+              count: 1,
+              mode: "full" as const,
+              model: "iPhone 17",
+              osVersion: "27.0",
+              platform: "ios" as const,
+              ready: 0,
+              short: "runtime-missing" as const,
+            },
+          ],
+        }),
+        runningCapacity: () => ({
+          android: { maxRunning: 10, overLimit: false, reserved: 0, running: 0 },
+          global: { maxRunning: 20, overLimit: false, reserved: 0, running: 0 },
+          ios: { maxRunning: 10, overLimit: false, reserved: 0, running: 0 },
+        }),
+      },
+    } as ConstructorParameters<typeof Doctor>[0]);
+
+    const report = await doctor.reconcile();
+
+    expect(report.findings.map((finding) => finding.kind)).toEqual([
+      "warm-pool-target-unreachable",
+      "agent-device-unavailable",
+    ]);
+    expect(report.findings.at(-1)).toStrictEqual(unavailable);
+  });
+
+  it("returns no agent-device-unavailable when optionalModules is omitted or returns none", async () => {
+    const omitted = await (await setup()).doctor.reconcile();
+    const none = await (await setup({ optionalModules: () => [] })).doctor.reconcile();
+
+    expect(omitted.findings).toEqual([]);
+    expect(none.findings).toEqual([]);
+  });
+
+  it("reports the finding on a run where optionalModules returns it, and not on the next where it returns none", async () => {
+    const answers: (readonly OptionalModuleFinding[])[] = [[unavailable], []];
+    const { doctor } = await setup({ optionalModules: () => answers.shift() ?? [] });
+
+    const first = await doctor.reconcile();
+    const second = await doctor.reconcile();
+
+    expect(first.findings).toStrictEqual([unavailable]);
+    expect(second.findings).toEqual([]);
+  });
+
+  it("calls optionalModules only after fix and purge have run, with fix and purgeOrphans on, and reports its finding", async () => {
+    let stateWhenCalled: string | undefined;
+    let registryRef: Awaited<ReturnType<typeof setup>>["registry"] | undefined;
+    const harness = await setup({
+      missing: true,
+      optionalModules: () => {
+        stateWhenCalled = registryRef?.snapshot.devices[0]?.state;
+        return [unavailable];
+      },
+    });
+    registryRef = harness.registry;
+
+    const report = await harness.doctor.reconcile({ fix: true, purgeOrphans: true });
+
+    expect(stateWhenCalled).toBe("deleted");
+    expect(report.findings.map((finding) => finding.kind)).toEqual([
+      "registry-device-missing",
+      "agent-device-unavailable",
+    ]);
+  });
+
+  it("leaves the finding out of doctor.reconciled's driftFindings and emits no other event for it", async () => {
+    const withModule = await setup({ optionalModules: () => [unavailable], orphan: true });
+    const without = await setup({ orphan: true });
+
+    const report = await withModule.doctor.reconcile();
+    await without.doctor.reconcile();
+
+    expect(report.findings).toContainEqual(unavailable);
+
+    const reconciled = withModule.eventBus
+      .replay()
+      .find((event) => event.event === "doctor.reconciled");
+    expect(reconciled?.payload).toMatchObject({ driftFindings: [{ kind: "orphan-device" }] });
+    expect(reconciled?.payload).toHaveProperty("driftFindings.length", 1);
+    expect(withModule.eventBus.replay().map((event) => event.event)).toEqual(
+      without.eventBus.replay().map((event) => event.event),
+    );
+  });
+
+  it("returns the finding with prerequisites false too", async () => {
+    const { doctor } = await setup({ optionalModules: () => [unavailable] });
+
+    const report = await doctor.reconcile({ prerequisites: false });
+
+    expect(report.findings).toStrictEqual([unavailable]);
+  });
+
+  it("logs a warning naming the error when optionalModules throws, contributes nothing, and still returns the other findings", async () => {
+    const sink = new MemoryLogSink();
+    const { doctor } = await setup({
+      optionalModules: () => {
+        throw new Error("supervisor exploded");
+      },
+      orphan: true,
+      sink,
+    });
+
+    const report = await doctor.reconcile();
+
+    expect(report.findings.map((finding) => finding.kind)).toEqual(["orphan-device"]);
+    const warning = sink.records.find(
+      (record) => record.message === "Could not read optional module findings",
+    );
+    expect(warning?.level).toBe("warn");
+    expect(JSON.stringify(warning?.fields)).toContain("supervisor exploded");
   });
 });
 

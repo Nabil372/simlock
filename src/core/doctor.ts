@@ -114,7 +114,17 @@ export type DoctorFinding =
       readonly reason: "runtime-missing" | "unknown-model" | "over-limit";
       readonly message: string;
       readonly remedy: string;
+    }
+  | {
+      readonly kind: "agent-device-unavailable";
+      readonly message: string;
+      readonly remedy: string;
     };
+
+export type OptionalModuleFinding = Extract<
+  DoctorFinding,
+  { readonly kind: "agent-device-unavailable" }
+>;
 
 export type ProvenanceDrift = "erased" | "mark-mismatch" | "durable-mark-missing";
 
@@ -143,6 +153,7 @@ export interface DoctorOptions {
   readonly claims?: Pick<DeviceOperationClaims, "isClaimed">;
   readonly driverRejections?: readonly DriverRejection[];
   readonly logger?: Logger;
+  readonly optionalModules?: () => readonly OptionalModuleFinding[];
   readonly warmPool?: {
     readonly figures: WarmPoolReader["figures"];
     readonly runningCapacity: () => CapacityReader["runningCapacity"];

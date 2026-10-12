@@ -1369,6 +1369,75 @@ describe("CLI: daemon status (ADR 0003 §11)", () => {
     expect(JSON.parse(output.stdout)).toEqual({ findings });
   });
 
+  it("simlock doctor writes agent-device  fail  <message>; <remedy> on stderr, one line of at most 500 characters per part, after the advisory, prerequisite and warm-pool lines, prints the report on stdout unchanged, and exits 0", async () => {
+    const output = outputCapture();
+    const findings = [
+      {
+        kind: "agent-device-unavailable" as const,
+        message: `found 0.20.3,\n  need ${"x".repeat(600)}`,
+        remedy: "install agent-device 0.21.25 or later,\nthen restart the daemon",
+      },
+      {
+        kind: "warm-pool-target-unreachable" as const,
+        message: "iOS 27.0 is not installed",
+        platform: "ios" as const,
+        reason: "runtime-missing" as const,
+        remedy: "run simlock component install ios 27.0",
+        target: "iPhone 17 / 27.0 / full",
+      },
+      {
+        kind: "prerequisite-missing" as const,
+        message: "Xcode is not installed.",
+        platform: "ios" as const,
+        prerequisite: "xcode",
+        remedy: "Run `xcode-select`.",
+      },
+      {
+        code: "slim-runtime-unsupported",
+        kind: "driver-advisory" as const,
+        message: "detail",
+        platform: "ios" as const,
+      },
+    ];
+
+    await expect(
+      runCli(
+        ["doctor"],
+        output.environmentWith({
+          connectAdmin: async () =>
+            fakeClient({ runDoctor: () => Promise.resolve({ findings } as never) }),
+        }),
+      ),
+    ).resolves.toBe(0);
+
+    const lines = output.stderr.split("\n");
+    const index = lines.findIndex((line) => line.startsWith("agent-device  fail  "));
+    expect(index).toBeGreaterThan(-1);
+    expect(lines[index]).toBe(
+      `agent-device  fail  found 0.20.3, need ${"x".repeat(500 - "found 0.20.3, need ".length)}; install agent-device 0.21.25 or later, then restart the daemon`,
+    );
+    expect(lines.filter((line) => line.startsWith("agent-device"))).toHaveLength(1);
+    for (const earlier of ["Warning [ios]", "Missing [ios]", "warm-pool-target-unreachable"]) {
+      expect(lines.findIndex((line) => line.startsWith(earlier))).toBeLessThan(index);
+      expect(lines.findIndex((line) => line.startsWith(earlier))).toBeGreaterThan(-1);
+    }
+    expect(JSON.parse(output.stdout)).toEqual({ findings });
+  });
+
+  it("simlock doctor writes no agent-device line when the report has no such finding", async () => {
+    const output = outputCapture();
+    const findings = [{ deviceId: "d-1", kind: "expired-live-lease" as const, leaseId: "l-1" }];
+
+    await runCli(
+      ["doctor"],
+      output.environmentWith({
+        connectAdmin: async () => fakeClient({ runDoctor: () => Promise.resolve({ findings }) }),
+      }),
+    );
+
+    expect(output.stderr).not.toContain("agent-device");
+  });
+
   it("keeps --purge-orphans off the wire when --fix is all that was asked for", async () => {
     const output = outputCapture();
     const seen: unknown[] = [];
