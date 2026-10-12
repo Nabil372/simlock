@@ -250,22 +250,6 @@ describe("a physical reclaim that fails quarantines the device", () => {
     await waitForState(env, LEASED.id, "quarantined");
   });
 
-  it("a failed reclaim of a device read not present also quarantines it (interim until #439)", async () => {
-    const env = await startWith(LEASED, {
-      config: SLOW_RETRY,
-      leases: [HELD_LEASE(600_000)],
-      script: { failReclaim: true, installed: [...ENROLLED, ...AGENT_APPS], present: false },
-    });
-
-    const released = await env.cli(["release", "lse_pheld"]);
-    expect(released.code, released.stderr).toBe(0);
-
-    await waitForState(env, LEASED.id, "quarantined");
-    expect(await named(env, "device.quarantined")).toContainEqual(
-      expect.objectContaining({ payload: expect.objectContaining({ deviceId: LEASED.id }) }),
-    );
-  });
-
   it("a quarantine retry that succeeds makes the device ready with device.quarantine-recovered strategy uninstall and missingApps", async () => {
     const env = await startWith(LEASED, {
       config: { warmPool: { quarantine: { retryBackoffMs: 1_500 } } },
@@ -323,10 +307,10 @@ describe("a physical reclaim that fails quarantines the device", () => {
 });
 
 describe("a physical device that was mid-reclaim or quarantined when the daemon stopped", () => {
-  it("a physical device left reclaiming in state.json stays reclaiming after a daemon start (interim until #439); doctor --fix past its estimate quarantines it, and it is retried after retryBackoffMs", async () => {
+  it("a physical device left reclaiming in state.json that is not present stays reclaiming after a daemon start; doctor --fix past its estimate quarantines it, and it is retried after retryBackoffMs once present", async () => {
     const env = await startWith(RECLAIMING, {
       config: { warmPool: { quarantine: { retryBackoffMs: 1_500 } } },
-      script: { installed: [...ENROLLED, ...AGENT_APPS] },
+      script: { installed: [...ENROLLED, ...AGENT_APPS], present: false },
     });
     await observeFor(1_500, async () => {
       expect(await stateOf(env, RECLAIMING.id), "the start leaves it reclaiming").toBe(
@@ -337,6 +321,7 @@ describe("a physical device that was mid-reclaim or quarantined when the daemon 
     const fixed = await env.cli(["doctor", "--fix"]);
     expect(fixed.code, fixed.stderr).toBe(0);
     expect(await stateOf(env, RECLAIMING.id)).toBe("quarantined");
+    await setScript(env, RECLAIMING, { installed: [...ENROLLED, ...AGENT_APPS] });
 
     await waitForState(env, RECLAIMING.id, "ready");
     expect(await uninstalls(env)).toEqual([

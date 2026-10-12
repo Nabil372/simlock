@@ -2420,9 +2420,6 @@ function formatStatus(status: StatusGetOutput, now: number): string {
       : [
           `RAM budget: ${formatGibibytes(ramBudget.usedBytes)}/${formatGibibytes(ramBudget.limitBytes)} used${ramBudget.overLimit ? " (over limit)" : ""}`,
         ];
-  // ADR 0005 §20: on a gateway every device and lease names the worker it lives on, and the
-  // fleet itself is a block of its own above them. On a worker `workers` is absent and this is
-  // exactly the output it has always been.
   const workerLines =
     workers === undefined ? [] : [formatWorkers(workers), ""].filter((line) => line !== "");
   // A gateway keeps no pool of its own: each worker's is on its entry in the JSON.
@@ -2442,10 +2439,8 @@ function formatStatus(status: StatusGetOutput, now: number): string {
     ].filter((marker) => marker !== undefined);
     const suffix = markers.length === 0 ? "" : ` (${markers.join(", ")})`;
     const where = device.workerId === undefined ? "" : ` on ${device.workerId}`;
-    return `Device ${device.id}${where}: ${device.state}, ${deviceKind(device)}${suffix}`;
+    return `Device ${device.id}${where}: ${stateLabel(device)}, ${deviceKind(device)}${suffix}`;
   });
-  // ADR 0004: `lastRenewedAt` is a stored field written at grant and on every renew, so unlike
-  // the derived `lastHeartbeatAt` it replaces, every lease has one to render.
   const leaseLines = leases.map(
     (lease) =>
       `Lease ${lease.id}: ${lease.requesterId}${lease.workerId === undefined ? "" : ` on ${lease.workerId}`} since ${lease.grantedAt}, last renewed ${lease.lastRenewedAt}`,
@@ -2466,13 +2461,17 @@ function formatStatus(status: StatusGetOutput, now: number): string {
   ].join("\n");
 }
 
-/** What a device line says it is: a physical device's class, or a virtual one's mode and pool. */
+function stateLabel(device: NonNullable<StatusGetOutput["devices"]>[number]): string {
+  return device.state === "absent" && device.absentReason !== undefined
+    ? `absent (${device.absentReason})`
+    : device.state;
+}
+
 function deviceKind(device: NonNullable<StatusGetOutput["devices"]>[number]): string {
   if (device.physical) return `physical ${String(device.class)}`;
   return `mode ${String(device.mode)}, serves default mode: ${device.servesDefaultMode ? "yes" : "no"}`;
 }
 
-/** The warm pool as `status` prints it: the switch and reserve, then a line per target. */
 function formatWarmPool(warmPool: NonNullable<StatusGetOutput["warmPool"]>): string[] {
   const { enabled, reserveRunning, targets } = warmPool;
   return [

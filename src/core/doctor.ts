@@ -108,16 +108,8 @@ export type DoctorFinding =
       readonly remedy: string;
     }
   | {
-      /**
-       * A warm pool target that cannot be met as configured: its runtime or model is not there, or
-       * the targets of a platform (or all of them) add up to more than the running limit leaves
-       * once the reserve is held back. Configuration information, not drift: `--fix` never acts
-       * on it and `doctor.reconciled` does not carry it.
-       */
       readonly kind: "warm-pool-target-unreachable";
-      /** Absent for the finding about every platform's targets together. */
       readonly platform?: Platform;
-      /** The target as `status` prints it, or the platform's or every target's sum. */
       readonly target: string;
       readonly reason: "runtime-missing" | "unknown-model" | "over-limit";
       readonly message: string;
@@ -133,7 +125,7 @@ export interface DoctorReport {
 }
 
 export interface DoctorQuarantine {
-  enterFromStalledTransition(deviceId: string): Promise<void>;
+  enterFromStalledTransition(deviceId: string, findingState: DeviceState): Promise<void>;
 }
 
 export interface DoctorOptions {
@@ -235,13 +227,13 @@ export class Doctor {
         realDeviceKeys,
       })),
     );
-    // The stalled-transition rule is shared by both types, so it reads every device.
     findings.push(...this.#stalledFindings(snapshot.devices, driversByPlatform));
     findings.push(...driverUnavailableFindings(this.options.driverRejections ?? []));
     findings.push(...orphanFindings(realities, registryDeviceKeys));
     findings.push(...expiredLeaseFindings(snapshot.leases, this.options.clock.now()));
     findings.push(...(await this.#collectAdvisories()));
 
+    this.#emitStalledEvents(findings);
     if (fix) {
       await this.#applySafeFixes(findings, driversByPlatform);
     }
@@ -258,13 +250,8 @@ export class Doctor {
     this.options.eventBus.emit(
       "doctor.reconciled",
       {
-        // `driftFindings` is a stable payload contract (events rule 6: additive changes only)
-        // that has always meant "things `--fix` might correct" -- every finding kind so far.
-        // A `driver-advisory` or `prerequisite-missing` is neither drift nor ever actionable by
-        // `--fix` (see `#applySafeFix`), so folding it into this field would silently redefine
-        // what an existing consumer is entitled to assume about every entry in it. Both stay
-        // available through `DoctorReport.findings` (what `doctor.run` returns to a caller) but
-        // are filtered out of the event payload.
+        // why: `driftFindings` means things `--fix` might correct;
+        // advisory and prerequisite findings are not drift, so they stay out of this payload.
         driftFindings: remaining.filter(isDrift),
       },
       "doctor",
@@ -644,19 +631,27 @@ export class Doctor {
           "doctor",
         );
       }
-      if (finding.kind === "stalled-transition") {
-        this.options.eventBus.emit(
-          "device.stalled-transition-detected",
-          {
-            ageMs: finding.ageMs,
-            deviceId: finding.deviceId,
-            platform: finding.platform,
-            state: finding.state,
-            thresholdMs: finding.thresholdMs,
-          },
-          "doctor",
-        );
-      }
+    }
+  }
+
+  /**
+   * why: announced as soon as the read finds it, before `--fix` acts: a stall is not a commit, and the
+   * fix re-reads the device under its claim, so a reclaim that starts in between is left alone.
+   */
+  #emitStalledEvents(findings: readonly DoctorFinding[]): void {
+    for (const finding of findings) {
+      if (finding.kind !== "stalled-transition") continue;
+      this.options.eventBus.emit(
+        "device.stalled-transition-detected",
+        {
+          ageMs: finding.ageMs,
+          deviceId: finding.deviceId,
+          platform: finding.platform,
+          state: finding.state,
+          thresholdMs: finding.thresholdMs,
+        },
+        "doctor",
+      );
     }
   }
 
@@ -804,20 +799,16 @@ export class Doctor {
       return;
     }
     const device = snapshot.devices.find((candidate) => candidate.id === finding.deviceId);
-    // Only fix if the device is still in the exact state the finding was computed
-    // against -- it may have resolved on its own between finding computation and fix
-    // application within this reconcile call.
     if (device === undefined || device.state !== finding.state) {
       return;
     }
     if (this.options.quarantine === undefined) {
       return;
     }
-    await this.options.quarantine.enterFromStalledTransition(finding.deviceId);
+    await this.options.quarantine.enterFromStalledTransition(finding.deviceId, finding.state);
   }
 }
 
-/** Existence and boot-state drift for a single registry device against observed reality. */
 function registryDriftFindings(
   device: DeviceRecord,
   realDeviceKeys: ReadonlySet<string>,
@@ -832,21 +823,13 @@ function registryDriftFindings(
     findings.push(missing);
   }
 
-  // `expected === undefined` means the registry is mid-transition (provisioning,
-  // reclaiming, deleted). Simlock is acting on the device itself in those states,
-  // including erasing it, so neither run state nor marks are compared.
+  // why: `expected === undefined` means the registry is mid-transition: simlock is acting on the device
+  // itself, so neither run state nor marks are compared.
   //
-  // A device this daemon holds an operation claim on is excluded the same way, the same
-  // live-versus-orphaned test `isStalledTransition` already applies (see its comment). A
-  // lease-path boot from `shutdown` runs `makeReady` while the committed record still says
-  // `shutdown` -- observed reality goes `running` before the transition that would update
-  // `expectedRunState` ever commits. Without this guard a concurrent `doctor --fix` reads that
-  // as foreign drift, "fixes" the record to `ready`, and the boot's own transition commit
-  // afterwards finds the record changed underneath it and silently drops its
-  // `address`/`driverData`/`mode`, dropping the waiter. The claim is held for the
-  // whole boot, so it exactly brackets the window this needs to cover -- unlike
-  // `isStalledTransition`, this applies regardless of `device.state`, since the record can
-  // be `shutdown`, `ready`, or `leased` while a claimed operation is in flight against it.
+  // A device this daemon holds an operation claim on is excluded too: a lease-path boot from
+  // `shutdown` runs `makeReady` while the record still says `shutdown`, and a concurrent
+  // `doctor --fix` would read that as foreign drift, "fix" the record, and make the boot's own
+  // commit drop its `address`/`driverData`/`mode`.
   const expected = expectedRunState(device.state);
   const observed = observedDevices.get(deviceKey);
   const claimed = claims?.isClaimed(device.id) === true;
@@ -1231,6 +1214,7 @@ function expectedRunState(state: DeviceState): "running" | "stopped" | undefined
     case "provisioning":
     case "reclaiming":
     case "quarantined":
+    case "absent":
     case "deleted":
       return undefined;
   }

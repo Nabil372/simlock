@@ -141,6 +141,8 @@ async function createHarness(
     readonly config?: QuarantineRetryConfig;
     readonly driver?: FakeDriver;
     readonly logger?: Logger;
+    readonly others?: readonly VirtualDevice[];
+    readonly physicalDeviceReady?: (deviceId: string) => void;
     readonly target?: Pick<VirtualDevice, "lastLeaseEndedAt" | "leaseIdentity">;
   } = {},
 ) {
@@ -149,7 +151,7 @@ async function createHarness(
   const driver = options.driver ?? new FakeDriver({ clock, platform: "ios" });
   const driverDevice = await driver.provision(spec);
   const target = { ...device("dev_1", driverDevice.deviceId), ...options.target };
-  const registry = new FakeRegistry([target]);
+  const registry = new FakeRegistry([...(options.others ?? []), target]);
   const notifyAvailability = vi.fn();
   const claims = new DeviceOperationClaims();
   const coordinator = new QuarantineCoordinator({
@@ -161,6 +163,9 @@ async function createHarness(
     eventBus: bus,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     notifyAvailability,
+    ...(options.physicalDeviceReady === undefined
+      ? {}
+      : { physicalDeviceReady: options.physicalDeviceReady }),
     registry,
   });
   return { bus, claims, clock, coordinator, driver, notifyAvailability, registry, target };
@@ -196,6 +201,10 @@ describe("QuarantineCoordinator", () => {
     expect(eventsOf(harness.bus)[1]).toMatchObject({
       payload: { deviceId: harness.target.id, maxRetries: 2, nextRetryAt: 2_000 },
     });
+    expect(eventsOf(harness.bus).map((event) => event.module)).toEqual([
+      "quarantine-coordinator",
+      "quarantine-coordinator",
+    ]);
     expect(harness.notifyAvailability).not.toHaveBeenCalled();
   });
 
@@ -214,7 +223,21 @@ describe("QuarantineCoordinator", () => {
     ]);
   });
 
-  it("commits stalled-transition quarantine entry, emits only quarantined, and does not wake availability", async () => {
+  it("a virtual device's recovery from quarantine does not tell the physical-ready port", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
+    const physicalDeviceReady = vi.fn();
+    const harness = await createHarness({ clock, driver, physicalDeviceReady });
+
+    await harness.coordinator.enterFromStalledTransition(harness.target.id);
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.registry.snapshot.virtualDevices[0]?.state).toBe("ready");
+    expect(physicalDeviceReady).not.toHaveBeenCalled();
+  });
+
+  it("commits stalled-transition quarantine entry, emits only quarantined (no device.purge-failed), and does not wake availability", async () => {
     const harness = await createHarness();
 
     await harness.coordinator.enterFromStalledTransition(harness.target.id);
@@ -224,7 +247,6 @@ describe("QuarantineCoordinator", () => {
       quarantineNextRetryAt: 2_000,
       state: "quarantined",
     });
-    // Unlike enter(), there was no purge -- no device.purge-failed fires.
     expect(eventsOf(harness.bus).map((event) => event.event)).toEqual(["device.quarantined"]);
     expect(eventsOf(harness.bus)[0]).toMatchObject({
       payload: { deviceId: harness.target.id, maxRetries: 2, nextRetryAt: 2_000 },
@@ -674,6 +696,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
     const clock = new FakeClock(1_000);
     const bus = new EventBus(clock);
     const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
+    driver.setPhysicalPresence(physicalRecord.driverDeviceId, true);
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
     await filesystem.writeFileAtomic(
@@ -963,6 +986,7 @@ describe("QuarantineCoordinator and enrollment of a quarantined physical device 
     const clock = new FakeClock(1_000);
     const eventBus = new EventBus(clock);
     const driver = new FakeDriver({ clock, physicalDevices: DEVICES, platform: "ios" });
+    for (const id of [FIRST, SECOND]) driver.setPhysicalPresence(id, true);
     const filesystem = new MemoryFilesystem();
     const systemStats = new FakeSystemStats({ cpuCount: 8, totalRamBytes: 32 * 1024 ** 3 });
     let next = 1;
@@ -1119,5 +1143,255 @@ describe("QuarantineCoordinator and enrollment of a quarantined physical device 
     await flush();
 
     expect(reclaimedIds(harness)).toEqual([FIRST]);
+  });
+});
+
+describe("QuarantineCoordinator retry of a physical device that is not present (ADR 0022 §2)", () => {
+  const FIRST = "00008110-001A2B3C4D5E";
+  const PROBE_INTERVAL_MS = 7_000;
+  const DEVICES: readonly FakePhysicalDevice[] = [
+    { apps: [], ids: [FIRST], model: "iPhone 15 Pro", osVersion: "18.4" },
+  ];
+
+  async function build(logger?: Logger) {
+    const clock = new FakeClock(1_000);
+    const eventBus = new EventBus(clock);
+    const driver = new FakeDriver({ clock, physicalDevices: DEVICES, platform: "ios" });
+    const filesystem = new MemoryFilesystem();
+    const systemStats = new FakeSystemStats({ cpuCount: 8, totalRamBytes: 32 * 1024 ** 3 });
+    let next = 1;
+    const registry = await Registry.load({
+      clock,
+      eventBus,
+      filesystem,
+      idGenerator: { generate: () => `${next++}` },
+      statePath: "/state.json",
+    });
+    const config = await loadConfig({
+      filesystem,
+      overrides: { health: { probeIntervalMs: PROBE_INTERVAL_MS } },
+      systemStats,
+    });
+    const core = createCore({
+      clock,
+      config,
+      drivers: [driver],
+      eventBus,
+      ...(logger === undefined ? {} : { logger }),
+      registry,
+      systemStats,
+      ...testComponentWiring({ clock, drivers: [driver], eventBus, registry }),
+    });
+    return { clock, config, core, driver, eventBus, registry };
+  }
+
+  type Harness = Awaited<ReturnType<typeof build>>;
+
+  async function enrollQuarantined(harness: Harness): Promise<string> {
+    const { device } = await harness.core.enrollment.add("ios", FIRST);
+    const lease = await harness.registry.createLease({
+      deviceId: device.id,
+      ownerId: "agent",
+      requesterId: "agent",
+      ttlDeadline: 61_000,
+      ttlMs: 60_000,
+    });
+    await harness.registry.beginRelease(lease.id);
+    await harness.core.quarantine.enterFromStalledTransition(device.id);
+    return device.id;
+  }
+
+  async function advance(harness: Harness, ms: number): Promise<void> {
+    harness.clock.advance(ms);
+    for (let round = 0; round < 5; round += 1) await flush();
+  }
+
+  function record(harness: Harness, id: string): PhysicalDevice | undefined {
+    return harness.registry.snapshot.devices.find(
+      (device): device is PhysicalDevice => device.physical && device.id === id,
+    );
+  }
+
+  function verbCalls(harness: Harness, operation: "reclaim" | "destroy"): unknown[] {
+    return harness.driver.calls.filter((call) => call.operation === operation);
+  }
+
+  it("a physical retry while not present makes no reclaim or destroy call, keeps quarantineAttempts, writes quarantineNextRetryAt as now plus health.probeIntervalMs, and re-arms for that time; a virtual retry is unchanged", async () => {
+    const harness = await build();
+    const id = await enrollQuarantined(harness);
+    const backoff = harness.config.warmPool.quarantine.retryBackoffMs;
+    harness.driver.setPhysicalPresence(FIRST, false, { reason: "locked" });
+
+    await advance(harness, backoff);
+
+    expect(verbCalls(harness, "reclaim")).toEqual([]);
+    expect(verbCalls(harness, "destroy")).toEqual([]);
+    expect(record(harness, id)).toMatchObject({
+      quarantineAttempts: 0,
+      quarantineNextRetryAt: 1_000 + backoff + PROBE_INTERVAL_MS,
+      state: "quarantined",
+    });
+    await advance(harness, PROBE_INTERVAL_MS - 1);
+    expect(verbCalls(harness, "reclaim")).toEqual([]);
+    harness.driver.setPhysicalPresence(FIRST, true);
+    await advance(harness, 1);
+    expect(verbCalls(harness, "reclaim")).toHaveLength(1);
+    expect(record(harness, id)?.state).toBe("ready");
+
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
+    const virtual = await createHarness({ clock, driver });
+    await virtual.coordinator.enterFromStalledTransition(virtual.target.id);
+    virtual.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+    expect(virtual.driver.calls.filter((call) => call.operation === "reclaim")).toHaveLength(1);
+    expect(virtual.driver.calls.map((call) => call.operation)).not.toContain("listPresentPhysical");
+    expect(virtual.registry.snapshot.virtualDevices[0]?.state).toBe("ready");
+  });
+
+  it("a physical retry that runs while present and fails counts one attempt", async () => {
+    const harness = await build();
+    const id = await enrollQuarantined(harness);
+    harness.driver.failOn("reclaim", 1, new Error("uninstall exploded"));
+    harness.driver.setPhysicalPresence(FIRST, false);
+    await advance(harness, harness.config.warmPool.quarantine.retryBackoffMs);
+    expect(record(harness, id)).toMatchObject({ quarantineAttempts: 0, state: "quarantined" });
+    expect(verbCalls(harness, "reclaim")).toEqual([]);
+
+    harness.driver.setPhysicalPresence(FIRST, true);
+    await advance(harness, PROBE_INTERVAL_MS);
+
+    expect(verbCalls(harness, "reclaim")).toHaveLength(1);
+    expect(record(harness, id)).toMatchObject({ quarantineAttempts: 1, state: "quarantined" });
+  });
+
+  it("a physical retry that fails while present, then finds the device gone, keeps the one attempt it counted", async () => {
+    const harness = await build();
+    const id = await enrollQuarantined(harness);
+    harness.driver.failOn("reclaim", 1, new Error("uninstall exploded"));
+    harness.driver.setPhysicalPresence(FIRST, true);
+    await advance(harness, harness.config.warmPool.quarantine.retryBackoffMs);
+    expect(record(harness, id)).toMatchObject({ quarantineAttempts: 1, state: "quarantined" });
+
+    harness.driver.setPhysicalPresence(FIRST, false);
+    await advance(harness, harness.config.warmPool.quarantine.retryBackoffMs * 2);
+
+    expect(verbCalls(harness, "reclaim")).toHaveLength(1);
+    expect(record(harness, id)).toMatchObject({ quarantineAttempts: 1, state: "quarantined" });
+  });
+
+  it("a physical retry whose presence read rejects logs a warning naming the device, the presence step and the error", async () => {
+    const sink = new MemoryLogSink();
+    const harness = await build(new JsonLinesLogger({ clock: new FakeClock(1_000), sink }));
+    const id = await enrollQuarantined(harness);
+    harness.driver.setPhysicalPresence(FIRST, true);
+    vi.spyOn(harness.driver, "listPresentPhysical").mockRejectedValueOnce(new Error("link down"));
+
+    await advance(harness, harness.config.warmPool.quarantine.retryBackoffMs);
+
+    expect(sink.records.filter((entry) => entry.level === "warn")).toEqual([
+      expect.objectContaining({
+        message: "quarantine presence read failed",
+        fields: { deviceId: id, error: "Error: link down", step: "presence" },
+      }),
+    ]);
+  });
+
+  it("a physical retry whose presence read rejects makes no reclaim or destroy call, keeps quarantineAttempts, and re-arms after health.probeIntervalMs", async () => {
+    const harness = await build();
+    const id = await enrollQuarantined(harness);
+    harness.driver.setPhysicalPresence(FIRST, true);
+    const read = vi
+      .spyOn(harness.driver, "listPresentPhysical")
+      .mockRejectedValueOnce(new Error("link down"));
+
+    await advance(harness, harness.config.warmPool.quarantine.retryBackoffMs);
+
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(verbCalls(harness, "reclaim")).toEqual([]);
+    expect(verbCalls(harness, "destroy")).toEqual([]);
+    expect(record(harness, id)).toMatchObject({ quarantineAttempts: 0, state: "quarantined" });
+    await advance(harness, PROBE_INTERVAL_MS - 1);
+    expect(verbCalls(harness, "reclaim")).toEqual([]);
+    await advance(harness, 1);
+    expect(verbCalls(harness, "reclaim")).toHaveLength(1);
+    expect(record(harness, id)?.state).toBe("ready");
+  });
+});
+
+describe("QuarantineCoordinator enterFromStalledTransition under the device's reclaim claim (ADR 0022 §8)", () => {
+  type StalledEntry = (deviceId: string, findingState: string) => Promise<void>;
+
+  async function reclaimingHarness() {
+    const harness = await createHarness();
+    harness.registry.forceState(harness.target.id, "reclaiming");
+    const enter: StalledEntry = (deviceId, findingState) =>
+      (
+        harness.coordinator as unknown as { enterFromStalledTransition: StalledEntry }
+      ).enterFromStalledTransition(deviceId, findingState);
+    return { ...harness, enter };
+  }
+
+  it("enterFromStalledTransition checks the state of the device it was given, not of another, and writes nothing for an id the registry does not hold", async () => {
+    const bystander: VirtualDevice = { ...device("dev_other", "other-driver-id"), state: "ready" };
+    const harness = await createHarness({ others: [bystander] });
+    harness.registry.forceState(harness.target.id, "reclaiming");
+    const enter = (deviceId: string): Promise<void> =>
+      harness.coordinator.enterFromStalledTransition(deviceId, "reclaiming");
+
+    await expect(enter("dev_missing")).resolves.toBeUndefined();
+    expect(eventsOf(harness.bus)).toEqual([]);
+
+    await enter(harness.target.id);
+
+    expect(eventsOf(harness.bus).map((event) => event.event)).toEqual(["device.quarantined"]);
+    expect(
+      harness.registry.snapshot.virtualDevices.map((entry) => [entry.id, entry.state]),
+    ).toEqual([
+      ["dev_other", "ready"],
+      [harness.target.id, "quarantined"],
+    ]);
+  });
+
+  it("enterFromStalledTransition of a claimed device, or of one no longer in the finding's state, writes nothing and arms no retry; otherwise it holds the device's reclaim claim while it writes and releases it after, also when the write throws", async () => {
+    const claimed = await reclaimingHarness();
+    const held = claimed.claims.tryClaim(claimed.target.id, "boot");
+    await claimed.enter(claimed.target.id, "reclaiming");
+    expect(claimed.registry.snapshot.virtualDevices[0]?.state).toBe("reclaiming");
+    expect(eventsOf(claimed.bus)).toEqual([]);
+    expect(claimed.clock.pendingTimerCount).toBe(0);
+    expect(claimed.claims.operationFor(claimed.target.id)).toBe("boot");
+    held?.release();
+
+    const moved = await reclaimingHarness();
+    moved.registry.forceState(moved.target.id, "ready");
+    await moved.enter(moved.target.id, "reclaiming");
+    expect(moved.registry.snapshot.virtualDevices[0]?.state).toBe("ready");
+    expect(eventsOf(moved.bus)).toEqual([]);
+    expect(moved.clock.pendingTimerCount).toBe(0);
+
+    const written = await reclaimingHarness();
+    const heldDuringWrite: unknown[] = [];
+    const original = written.registry.enterQuarantine.bind(written.registry);
+    vi.spyOn(written.registry, "enterQuarantine").mockImplementation(async (...args) => {
+      heldDuringWrite.push(written.claims.operationFor(written.target.id));
+      return original(...args);
+    });
+    await written.enter(written.target.id, "reclaiming");
+    expect(heldDuringWrite).toEqual(["reclaim"]);
+    expect(written.claims.isClaimed(written.target.id)).toBe(false);
+    expect(written.registry.snapshot.virtualDevices[0]?.state).toBe("quarantined");
+    expect(eventsOf(written.bus).map((event) => event.event)).toEqual(["device.quarantined"]);
+    expect(written.clock.pendingTimerCount).toBe(1);
+
+    const failing = await reclaimingHarness();
+    const heldDuringFailure: unknown[] = [];
+    vi.spyOn(failing.registry, "enterQuarantine").mockImplementation(async () => {
+      heldDuringFailure.push(failing.claims.operationFor(failing.target.id));
+      throw new Error("disk full");
+    });
+    await failing.enter(failing.target.id, "reclaiming").catch(() => undefined);
+    expect(heldDuringFailure).toEqual(["reclaim"]);
+    expect(failing.claims.isClaimed(failing.target.id)).toBe(false);
   });
 });

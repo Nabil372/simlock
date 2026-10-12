@@ -136,8 +136,8 @@ describe("FakeDriver", () => {
     driver.releasePresenceReads();
     await read;
     expect(answer).toEqual([
-      { driverDeviceId: "B", present: false },
-      { driverDeviceId: "A", present: true },
+      { driverDeviceId: "B", present: false, reason: "not-present" },
+      { driverDeviceId: "A", osVersion: "1.0", present: true },
     ]);
   });
 
@@ -152,7 +152,30 @@ describe("FakeDriver", () => {
       new Promise((resolve) => setTimeout(() => resolve("held"), 25)),
     ]);
 
-    expect(answer).toEqual([{ driverDeviceId: "A", present: true }]);
+    expect(answer).toEqual([{ driverDeviceId: "A", osVersion: "1.0", present: true }]);
+  });
+
+  it("reports the scripted reason of a not-present device and the scripted OS version of a present one", async () => {
+    const driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
+    driver.setPhysicalPresence("A", false, { reason: "locked" });
+    driver.setPhysicalPresence("B", true, { osVersion: "18.5" });
+    driver.setPhysicalPresence("C", false);
+
+    await expect(driver.listPresentPhysical(["A", "B", "C"])).resolves.toEqual([
+      { driverDeviceId: "A", present: false, reason: "locked" },
+      { driverDeviceId: "B", osVersion: "18.5", present: true },
+      { driverDeviceId: "C", present: false, reason: "not-present" },
+    ]);
+  });
+
+  it("forgets a scripted OS version when the device is scripted present again without one", async () => {
+    const driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
+    driver.setPhysicalPresence("A", true, { osVersion: "18.5" });
+    driver.setPhysicalPresence("A", true);
+
+    await expect(driver.listPresentPhysical(["A"])).resolves.toEqual([
+      { driverDeviceId: "A", osVersion: "1.0", present: true },
+    ]);
   });
 
   it("implements the platform-agnostic Driver contract", () => {

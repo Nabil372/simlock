@@ -529,7 +529,8 @@ the range that covers it (`--os ">=18 <19"` for `18`). If a device could
 match but is leased, being reclaimed or quarantined, the request waits for
 it, or fails with `NO_CAPACITY` (exit 11) under `--no-wait`. A device that is
 not plugged in, trusted and usable at that moment is not granted: the request
-waits, and the device stays `ready`. The grant is checked against the device
+waits. If it stays gone, the device becomes `absent` and is reclaimed once it
+is back. The grant is checked against the device
 when it is made, so nothing is granted that is unplugged.
 
 Physical and simulator requests wait in separate lines. A simulator request is
@@ -549,8 +550,10 @@ every app Simlock can see that is not on the device's enrollment app list
 On Android those are the user-installed apps; on iOS, the apps installed by
 Xcode or `devicectl`. `device.reclaimed` names any app on the list that is no
 longer installed: it is reported and not reinstalled. A reclaim that fails
-leaves the device `quarantined` and is retried in the background; when its
-retries run out the device is unenrolled, never destroyed.
+while the device is plugged in leaves it `quarantined` and is retried in the
+background; when its retries run out the device is unenrolled, never
+destroyed. A reclaim that fails while the device is not there leaves it
+`absent` instead (see below).
 
 **What a release does not do.** It does not touch App Store or TestFlight apps
 on iOS, which are never recorded. It does not reset settings, files,
@@ -568,13 +571,24 @@ first one's apps when it releases.
 uninstalled; the device stays enrolled, and `--delete-devices` never deletes
 it. A physical lease survives a daemon restart.
 
-Until the watcher arrives, a request that waits only for a device that read
-not present is tried again the next time anything wakes the queue (a release,
-a reclaim, an enrollment change, another grant or a waiter's timeout), or
-ends at its `--timeout`. A request with no `--timeout` has no bound, even
-after the device is plugged back in. A failed reclaim quarantines the device
-whether or not it is plugged in, so an unplugged device can use up its
-retries and be unenrolled.
+**When a device goes away.** Every `health.probeIntervalMs`, whatever
+`health.enabled` says, Simlock reads which enrolled devices are connected. A
+device that is not connected for `health.stableObservations` reads in a row
+(60 seconds by default) becomes `absent`, and `simlock status` says why:
+`absent (locked)` for a device that needs its passcode, `absent (untrusted)`
+for one not paired with this Mac (or an Android device whose USB debugging is
+not authorized), and `absent (not-present)` for one that is not listed. A
+lease on it ends with reason `device-lost` and its holder gets the
+`lease-lost` message. After a daemon restart, a lease on a device that is not
+connected ends once the new daemon has read it that many times. One read that
+finds the device again starts the count over.
+
+When the device is read connected again, Simlock reclaims it
+(`device.returned`, then `device.reclaimed`) and it is leasable. A request
+that waits for an `absent` device is granted once it is back. A quarantined
+device that is not connected keeps its retries until it is back. `simlock
+device add` makes an `absent` device that is connected `ready` again, and
+`simlock device remove` unenrolls it.
 
 Before rolling back to a Simlock without physical devices, release every
 lease on a physical device: the older version cannot end one.
@@ -1329,7 +1343,8 @@ entry in `workers`.
 Human and JSON status include derived warm counts globally and per platform.
 `ready` devices contribute to those counts; `reclaiming` and `quarantined`
 virtual devices remain visible as busy running capacity (a physical device never counts as running capacity) and never contribute to warm
-inventory. A `quarantined` device is one whose release-time purge failed, one
+inventory. A `quarantined` device is one whose release-time purge failed, a returned
+physical device whose reclaim failed while it was present, one
 created under `lease.identity` `fresh` whose lease-end delete failed (it is
 retried as a delete, never returned to the pool), or one
 whose `provisioning`/`reclaiming` transition stalled past its driver-derived

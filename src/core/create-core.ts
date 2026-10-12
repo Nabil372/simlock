@@ -67,38 +67,22 @@ interface CoreOptions {
   readonly systemStats: SystemStats;
 }
 
-/**
- * What core needs from leasing and cannot import (ADR 0018 §2). Leasing implements each one and
- * the composition root hands them over through `Core#connect`.
- */
 export interface CorePorts {
-  /**
-   * The fences an operator reset puts around acquisition and around release, and the release of
-   * every lease it runs between them (`NukeService`).
-   */
   readonly leaseMaintenance: {
     readonly acquisition: AcquisitionMaintenance;
     readonly leases: LeaseMaintenance;
   };
-  /** Administrative lease expiry, which doctor reconciliation uses on a lease that lapsed. */
   readonly leaseExpirer: LeaseExpirer;
-  /**
-   * What the warm pool reads of acquisition: the requests with no device yet, and whether an
-   * operator reset holds acquisition closed (the pool then leaves every device alone).
-   */
   readonly warmPoolDemand: {
     readonly maintenanceActive: boolean;
     waitingDemand(): readonly WaitingDemand[];
-    /** The mode a request naming none plans on a platform: where a target with no mode lands. */
     defaultMode(platform: Platform): DeviceMode;
-    /** A target as a request, resolved with downloads off: the spec, or why there is none. */
     resolve(request: DeviceRequest): Promise<TargetResolution>;
   };
-  /** Tells acquisition a device came back, so a waiting request is tried again. */
   readonly notifyAvailability: () => void;
+  readonly physicalDeviceReady?: (deviceId: string) => void;
 }
 
-/** A core service reached a port that `Core#connect` has not been given yet. */
 class CorePortMissingError extends Error {
   constructor(readonly port: keyof CorePorts) {
     super(`A core service was called before connect() supplied the "${port}" port`);
@@ -106,7 +90,6 @@ class CorePortMissingError extends Error {
   }
 }
 
-/** Device management, built and ready except for the ports `connect` fills. */
 export interface Core {
   readonly capacity: CapacityCoordinator;
   readonly capacityReader: CapacityReader;
@@ -137,26 +120,16 @@ export interface Core {
   passWarmPool(): Promise<void>;
   /** The devices the idle shutdown timer leaves alone: those a warm target keeps. */
   targetedDevices(): Promise<ReadonlySet<string>>;
-  /**
-   * Awaits the deferred startup wipes, then the warm pool's running pass, so a graceful shutdown
-   * hands back a settled pool.
-   */
   settle(): Promise<void>;
-  /**
-   * A graceful stop: the warm pool starts nothing new and finishes what is in flight, so the
-   * daemon exits on a settled pool.
-   */
   drain(): Promise<void>;
   /**
-   * The first step of a graceful stop: closes the warm pool to new work before leasing settles,
-   * so a reclaim that commits meanwhile cannot start a creation `drain` would then wait for.
+   * why: closes the warm pool before leasing settles, so a reclaim
+   * that commits meanwhile cannot start a creation `drain` would then wait for.
    */
   closeWarmPool(): void;
-  /** Cancels the timers core armed, so the process can exit. */
   dispose(): void;
 }
 
-/** Composition root for device management: the registry's services, with no lease in them. */
 export function createCore(options: CoreOptions): Core {
   const { decisions, registry } = options;
   let ports: CorePorts | undefined;
@@ -165,6 +138,7 @@ export function createCore(options: CoreOptions): Core {
     return ports[name];
   };
   const notifyAvailability = (): void => port("notifyAvailability")();
+  const physicalDeviceReady = (deviceId: string): void => ports?.physicalDeviceReady?.(deviceId);
   const leaseMaintenance = {
     acquisition: {
       beginMaintenance: () => port("leaseMaintenance").acquisition.beginMaintenance(),
@@ -228,6 +202,8 @@ export function createCore(options: CoreOptions): Core {
     drivers,
     eventBus: options.eventBus,
     notifyAvailability,
+    physicalDeviceReady,
+    probeIntervalMs: options.config.health.probeIntervalMs,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     registry,
   });
@@ -239,10 +215,17 @@ export function createCore(options: CoreOptions): Core {
     eventBus: options.eventBus,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     notifyAvailability,
+    physicalDeviceReady,
     quarantine,
     registry,
   });
-  const enrollment = new PhysicalEnrollment({ claims, decisions, drivers, registry });
+  const enrollment = new PhysicalEnrollment({
+    claims,
+    decisions,
+    drivers,
+    physicalDeviceReady,
+    registry,
+  });
   const cleanup = new CleanupExecutor({
     eventBus: options.eventBus,
     lifecycle: deviceLifecycle,

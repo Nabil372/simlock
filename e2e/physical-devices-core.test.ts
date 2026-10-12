@@ -54,6 +54,15 @@ interface Capacity {
   readonly warm: number;
 }
 
+function presentDevice(seed: PhysicalSeed) {
+  return {
+    apps: [],
+    ids: [seed.driverDeviceId],
+    model: PHYSICAL_MODEL,
+    osVersion: PHYSICAL_OS,
+  };
+}
+
 async function startWith(
   physical: readonly PhysicalSeed[],
   options: {
@@ -173,6 +182,7 @@ describe("the core knows physical devices", () => {
     const env = await startWith([LEASED], {
       config: { health: { probeIntervalMs: 200, stableObservations: 2 } },
       leases: [HELD_LEASE(600_000)],
+      script: { physicalDevices: [presentDevice(LEASED)] },
     });
 
     await observeFor(2_000, async () => {
@@ -202,6 +212,7 @@ describe("the core knows physical devices", () => {
   it("doctor --fix reports stalled-transition for the reclaiming physical record and moves it to quarantined with device.quarantined; after warmPool.quarantine.retryBackoffMs has passed, the retry reclaims it by uninstall and it is ready with device.quarantine-recovered", async () => {
     const env = await startWith([RECLAIMING], {
       config: { warmPool: { quarantine: { retryBackoffMs: 300 } } },
+      script: { physicalDevices: [presentDevice(RECLAIMING)] },
     });
 
     const fixed = await env.cli(["doctor", "--fix"]);

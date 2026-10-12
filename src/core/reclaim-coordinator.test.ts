@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { EventBus } from "../bus/index.js";
-import { FakeClock } from "../ports/index.js";
+import { FakeClock, type Logger, MemoryFilesystem } from "../ports/index.js";
 import { DeviceOperationClaims } from "./device-operation-claims.js";
 import type {
   DeviceRecord,
@@ -12,12 +12,13 @@ import type {
   VirtualSpec,
 } from "./domain.js";
 import { FakeDriver } from "./fake-driver.js";
-import { DriverCatalog } from "./driver-catalog.js";
-import type { QuarantinePurgeFailure } from "./quarantine-coordinator.js";
-import type { ReleasedLease } from "./registry.js";
+import { DriverCatalog, NoDriverError } from "./driver-catalog.js";
+import { QuarantineCoordinator, type QuarantinePurgeFailure } from "./quarantine-coordinator.js";
+import { Registry, type ReleasedLease } from "./registry.js";
 import { SerializedDecision } from "./serialized-decision.js";
 import {
   ReclaimCoordinator,
+  type ReclaimDriverCatalog,
   type ReclaimQuarantine,
   type ReclaimRegistry,
 } from "./reclaim-coordinator.js";
@@ -37,10 +38,12 @@ class TestRegistry {
   }
 
   get snapshot(): {
+    readonly devices: readonly DeviceRecord[];
     readonly virtualDevices: readonly VirtualDevice[];
     readonly leases: readonly LeaseRecord[];
   } {
     return {
+      devices: this.#devices.map((device) => ({ ...device })),
       leases: this.leases,
       virtualDevices: this.#devices.flatMap((device) => (device.physical ? [] : [{ ...device }])),
     };
@@ -48,6 +51,10 @@ class TestRegistry {
 
   deviceById(deviceId: string): DeviceRecord | undefined {
     return this.#devices.find((device) => device.id === deviceId);
+  }
+
+  remove(deviceId: string): void {
+    this.#devices = this.#devices.filter((device) => device.id !== deviceId);
   }
 
   async transitionDevice(
@@ -85,6 +92,7 @@ async function createHarness(
     readonly devices?: readonly DeviceRecord[];
     readonly driver?: FakeDriver;
     readonly leases?: readonly LeaseRecord[];
+    readonly physicalDeviceReady?: (deviceId: string) => void;
   } = {},
 ) {
   const clock = new FakeClock(1_000);
@@ -100,13 +108,17 @@ async function createHarness(
     enter: vi.fn(async (failure) => void quarantined.push(failure)),
   };
   const claims = new DeviceOperationClaims();
+  const decisions = new SerializedDecision();
   const coordinator = new ReclaimCoordinator({
     claims,
     clock,
-    decisions: new SerializedDecision(),
+    decisions,
     drivers: new DriverCatalog([driver]),
     eventBus: bus,
     notifyAvailability,
+    ...(options.physicalDeviceReady === undefined
+      ? {}
+      : { physicalDeviceReady: options.physicalDeviceReady }),
     quarantine,
     registry,
   });
@@ -115,6 +127,7 @@ async function createHarness(
     claims,
     clock,
     coordinator,
+    decisions,
     driver,
     notifyAvailability,
     quarantine,
@@ -569,5 +582,466 @@ describe("ReclaimCoordinator", () => {
         "shutdown",
       ]);
     });
+  });
+});
+
+describe("ReclaimCoordinator for a physical device the platform no longer lists (ADR 0022 §8)", () => {
+  const PHYSICAL_ID = "00008110-001A2B3C4D5E";
+
+  async function physicalHarness(
+    state: "reclaiming" | "absent",
+    options: {
+      readonly driver?: FakeDriver;
+      readonly drivers?: (driver: FakeDriver) => ReclaimDriverCatalog;
+      readonly logger?: Logger;
+      readonly realQuarantine?: boolean;
+    } = {},
+  ) {
+    const clock = new FakeClock(1_000);
+    const bus = new EventBus(clock);
+    const driver =
+      options.driver ??
+      new FakeDriver({
+        clock,
+        physicalDevices: [
+          { apps: [], ids: [PHYSICAL_ID], model: "iPhone 15 Pro", osVersion: "18.4" },
+        ],
+        platform: "ios",
+        reclaimResult: "ready",
+      });
+    const filesystem = new MemoryFilesystem();
+    await filesystem.writeFileAtomic(
+      "/state.json",
+      JSON.stringify({
+        devices: [],
+        leases: [],
+        physicalDevices: [
+          {
+            createdAt: 1,
+            driverData: {},
+            driverDeviceId: PHYSICAL_ID,
+            enrolledApps: [],
+            id: "dev_physical",
+            lastLeaseEndedAt: 900,
+            physical: true,
+            spec: {
+              class: "phone",
+              model: "iPhone 15 Pro",
+              osVersion: "18.4",
+              physical: true,
+              platform: "ios",
+            },
+            state,
+            ...(state === "absent" ? { absentReason: "not-present" } : {}),
+          },
+        ],
+      }),
+    );
+    const loaded = await Registry.load({
+      clock,
+      eventBus: bus,
+      filesystem,
+      idGenerator: { generate: () => "id" },
+      statePath: "/state.json",
+    }).catch((error: unknown) => error);
+    expect(loaded, `a state.json holding a physical device in state ${state} loads`).toBeInstanceOf(
+      Registry,
+    );
+    const registry = loaded as Registry;
+    const drivers = options.drivers?.(driver) ?? new DriverCatalog([driver]);
+    const claims = new DeviceOperationClaims();
+    const decisions = new SerializedDecision();
+    const notifyAvailability = vi.fn();
+    const mockedQuarantine = { enter: vi.fn(async () => undefined) };
+    const quarantine: ReclaimQuarantine =
+      options.realQuarantine === true
+        ? new QuarantineCoordinator({
+            claims,
+            clock,
+            config: {
+              maxRetries: 2,
+              maxRetryBackoffMs: 5_000,
+              retryBackoffMs: 1_000,
+              retryBackoffMultiplier: 2,
+            },
+            decisions,
+            drivers,
+            eventBus: bus,
+            notifyAvailability,
+            registry,
+          })
+        : mockedQuarantine;
+    const coordinator = new ReclaimCoordinator({
+      claims,
+      clock,
+      decisions,
+      drivers,
+      eventBus: bus,
+      ...(options.logger === undefined ? {} : { logger: options.logger }),
+      notifyAvailability,
+      quarantine,
+      registry,
+    });
+    const device = () =>
+      registry.snapshot.devices.find((candidate) => candidate.id === "dev_physical");
+    const events = () => bus.replay().map((event) => event.event);
+    return {
+      bus,
+      claims,
+      coordinator,
+      decisions,
+      device,
+      driver,
+      events,
+      mockedQuarantine,
+      registry,
+    };
+  }
+
+  function releasedPhysical(device: DeviceRecord | undefined): ReleasedLease {
+    return {
+      device: device as PhysicalDevice,
+      lease: {
+        deviceId: "dev_physical",
+        grantedAt: 1,
+        id: "lease-1",
+        idChosenByRequester: false,
+        lastRenewedAt: 1,
+        ownerId: "agent",
+        requesterId: "agent",
+        ttlDeadline: 100,
+        ttlMs: 60_000,
+      },
+    };
+  }
+
+  type ReturnedReclaims = {
+    reclaimReturned(
+      deviceId: string,
+      osVersion?: string,
+      proceed?: () => boolean,
+    ): Promise<unknown>;
+  };
+
+  it("a returned device's reclaim that fails while present enters quarantine with device.quarantined and no device.purge-failed", async () => {
+    const harness = await physicalHarness("absent", { realQuarantine: true });
+    harness.driver.setPhysicalPresence(PHYSICAL_ID, true, { osVersion: "18.5" });
+    harness.driver.failOn("reclaim", 1, new Error("uninstall exploded"));
+    const returned = harness.coordinator as unknown as Partial<ReturnedReclaims>;
+    expect(returned.reclaimReturned, "ReclaimCoordinator.reclaimReturned").toBeTypeOf("function");
+
+    await returned.reclaimReturned?.(PHYSICAL_ID, "18.5");
+    await harness.coordinator.settle();
+
+    expect(harness.driver.calls.filter((call) => call.operation === "reclaim")).toHaveLength(1);
+    expect(
+      harness.driver.calls.filter((call) => call.operation === "listPresentPhysical").length,
+    ).toBeGreaterThan(0);
+    expect(harness.device()?.state).toBe("quarantined");
+    expect(harness.events()).toContain("device.quarantined");
+    expect(harness.events()).not.toContain("device.purge-failed");
+    expect(harness.events()).not.toContain("device.absence-detected");
+    const quarantined = harness.bus.replay().find((event) => event.event === "device.quarantined");
+    expect(quarantined?.payload).toMatchObject({ deviceId: "dev_physical" });
+  });
+
+  it("a failed physical reclaim whose presence read rejects, or whose platform has no driver, commits absent with not-present", async () => {
+    const rejected = await physicalHarness("reclaiming");
+    rejected.driver.setPhysicalPresence(PHYSICAL_ID, true);
+    rejected.driver.failOn("reclaim", 1, new Error("uninstall exploded"));
+    rejected.driver.failOn("listPresentPhysical", 1, new Error("link down"));
+    let lost = false;
+    const withoutDriver = await physicalHarness("reclaiming", {
+      drivers: (driver) => ({
+        get: (platform) => {
+          if (lost) throw new NoDriverError(platform);
+          return driver;
+        },
+      }),
+    });
+    withoutDriver.driver.setPhysicalPresence(PHYSICAL_ID, true);
+    vi.spyOn(withoutDriver.driver, "reclaim").mockImplementation(async () => {
+      lost = true;
+      throw new Error("uninstall exploded");
+    });
+
+    for (const harness of [rejected, withoutDriver]) {
+      await harness.coordinator.reclaim(releasedPhysical(harness.device()));
+
+      expect(harness.device()).toMatchObject({ absentReason: "not-present", state: "absent" });
+      const absence = harness.bus
+        .replay()
+        .find((event) => (event.event as string) === "device.absence-detected");
+      expect((absence as { payload?: unknown } | undefined)?.payload).toMatchObject({
+        absentReason: "not-present",
+        deviceId: "dev_physical",
+        previousState: "reclaiming",
+      });
+      expect(harness.events()).not.toContain("device.purge-failed");
+      expect(harness.events()).not.toContain("device.quarantined");
+      expect(harness.mockedQuarantine.enter).not.toHaveBeenCalled();
+    }
+  });
+
+  function recordingLogger() {
+    const logger: Logger = {
+      child: () => logger,
+      debug: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+    };
+    return logger;
+  }
+
+  it("commits the reason the platform reports for a device it lists as not usable, not not-present", async () => {
+    const harness = await physicalHarness("reclaiming");
+    harness.driver.setPhysicalPresence(PHYSICAL_ID, false, { reason: "locked" });
+    harness.driver.failOn("reclaim", 1, new Error("device is locked"));
+
+    await harness.coordinator.reclaim(releasedPhysical(harness.device()));
+
+    expect(harness.device()).toMatchObject({ absentReason: "locked", state: "absent" });
+    const absence = harness.bus.replay().find((event) => event.event === "device.absence-detected");
+    expect(absence?.payload).toMatchObject({ absentReason: "locked" });
+  });
+
+  it("logs the failed reclaim of an absent device as an error naming the device and the error", async () => {
+    const logger = recordingLogger();
+    const harness = await physicalHarness("reclaiming", { logger });
+    harness.driver.setPhysicalPresence(PHYSICAL_ID, false);
+    harness.driver.failOn("reclaim", 1, new Error("uninstall exploded"));
+
+    await harness.coordinator.reclaim(releasedPhysical(harness.device()));
+
+    expect(logger.error).toHaveBeenCalledWith("reclaim of a device that is not present failed", {
+      deviceId: "dev_physical",
+      error: "Error: uninstall exploded",
+    });
+  });
+
+  it("logs a presence read that rejects after a failed reclaim as a warning naming the device and the error", async () => {
+    const logger = recordingLogger();
+    const harness = await physicalHarness("reclaiming", { logger });
+    harness.driver.failOn("reclaim", 1, new Error("uninstall exploded"));
+    harness.driver.failOn("listPresentPhysical", 1, new Error("link down"));
+
+    await harness.coordinator.reclaim(releasedPhysical(harness.device()));
+
+    expect(logger.warn).toHaveBeenCalledWith("presence read after a failed reclaim failed", {
+      deviceId: "dev_physical",
+      error: "Error: link down",
+    });
+  });
+
+  it("a returned device's reclaim whose caller no longer proceeds when the decision runs writes nothing, starts no wipe and leaves no claim", async () => {
+    const harness = await physicalHarness("absent");
+    harness.driver.setPhysicalPresence(PHYSICAL_ID, true, { osVersion: "18.5" });
+    const returned = harness.coordinator as unknown as ReturnedReclaims;
+
+    let proceeding = true;
+    let open!: () => void;
+    const busy = harness.decisions.run(() => new Promise<void>((resolve) => void (open = resolve)));
+
+    const pending = returned.reclaimReturned(PHYSICAL_ID, "18.5", () => proceeding);
+    await Promise.resolve();
+    proceeding = false;
+    open();
+    await busy;
+    const started = await pending;
+
+    expect(started).toBeUndefined();
+    expect(harness.device()?.state).toBe("absent");
+    expect(harness.driver.calls.filter((call) => call.operation === "reclaim")).toHaveLength(0);
+    expect(harness.claims.isClaimed("dev_physical")).toBe(false);
+  });
+
+  it("records the OS version a returned device reports on its record before the wipe", async () => {
+    const harness = await physicalHarness("absent");
+    harness.driver.setPhysicalPresence(PHYSICAL_ID, true, { osVersion: "18.5" });
+    const returned = harness.coordinator as unknown as ReturnedReclaims;
+    const original = harness.driver.reclaim.bind(harness.driver);
+    const versionsAtWipe: unknown[] = [];
+    vi.spyOn(harness.driver, "reclaim").mockImplementationOnce(async (device, options) => {
+      versionsAtWipe.push(harness.device()?.spec.osVersion);
+      return original(device, options);
+    });
+
+    await returned.reclaimReturned(PHYSICAL_ID, "18.5");
+    await harness.coordinator.settle();
+
+    expect(versionsAtWipe).toEqual(["18.5"]);
+    expect(harness.device()).toMatchObject({
+      spec: { osVersion: "18.5" },
+      state: "ready",
+    });
+  });
+});
+
+describe("ReclaimCoordinator readiness callback and returned-device reclaims", () => {
+  const PHYSICAL_ID = "00008110-001A2B3C4D5E";
+
+  function physicalRecord(state: PhysicalDevice["state"], id = "dev_physical"): PhysicalDevice {
+    return {
+      createdAt: 1,
+      driverData: {},
+      driverDeviceId: PHYSICAL_ID,
+      enrolledApps: [],
+      id,
+      lastLeaseEndedAt: 900,
+      physical: true,
+      spec: {
+        class: "phone",
+        model: "iPhone 15 Pro",
+        osVersion: "18.4",
+        physical: true,
+        platform: "ios",
+      },
+      state,
+    };
+  }
+
+  function lease(deviceId: string): LeaseRecord {
+    return released({ ...device("x", "reclaiming", "x", spec), id: deviceId }).lease;
+  }
+
+  function physicalDriver() {
+    return new FakeDriver({
+      clock: new FakeClock(1_000),
+      physicalDevices: [
+        { apps: [], ids: [PHYSICAL_ID], model: "iPhone 15 Pro", osVersion: "18.4" },
+      ],
+      platform: "ios",
+    });
+  }
+
+  function reclaimsOf(driver: FakeDriver) {
+    return driver.calls.filter((call) => call.operation === "reclaim");
+  }
+
+  it("calls the readiness callback with the ID of a physical device whose reclaim committed ready", async () => {
+    const physicalDeviceReady = vi.fn();
+    const harness = await createHarness({
+      devices: [physicalRecord("reclaiming")],
+      driver: physicalDriver(),
+      physicalDeviceReady,
+    });
+
+    await harness.coordinator.reclaim({
+      ...released(harness.reclaiming),
+      device: physicalRecord("reclaiming"),
+    });
+
+    expect(harness.registry.deviceById("dev_physical")?.state).toBe("ready");
+    expect(physicalDeviceReady).toHaveBeenCalledExactlyOnceWith("dev_physical");
+  });
+
+  it("does not call the readiness callback for a virtual device reclaimed to ready", async () => {
+    const physicalDeviceReady = vi.fn();
+    const harness = await createHarness({ physicalDeviceReady });
+
+    await harness.coordinator.reclaim(released(harness.reclaiming));
+
+    expect(harness.registry.deviceById("reclaiming")?.state).toBe("ready");
+    expect(physicalDeviceReady).not.toHaveBeenCalled();
+  });
+
+  it("does not call the readiness callback for a physical device whose reclaim committed shutdown", async () => {
+    const physicalDeviceReady = vi.fn();
+    const driver = physicalDriver();
+    vi.spyOn(driver, "reclaim").mockResolvedValue({ state: "shutdown", strategy: "uninstall" });
+    const harness = await createHarness({
+      devices: [physicalRecord("reclaiming")],
+      driver,
+      physicalDeviceReady,
+    });
+
+    await harness.coordinator.reclaim({
+      ...released(harness.reclaiming),
+      device: physicalRecord("reclaiming"),
+    });
+
+    expect(harness.registry.deviceById("dev_physical")?.state).toBe("shutdown");
+    expect(physicalDeviceReady).not.toHaveBeenCalled();
+  });
+
+  it("answers undefined to a returned reclaim for an ID that is no physical device, taking no claim", async () => {
+    const harness = await createHarness({ driver: physicalDriver() });
+
+    await expect(harness.coordinator.reclaimReturned("nobody")).resolves.toBeUndefined();
+
+    expect(harness.claims.tryClaim("nobody", "reclaim")).toBeDefined();
+  });
+
+  it("answers undefined and frees the claim when a returned reclaim finds the device not reclaiming", async () => {
+    const driver = physicalDriver();
+    const harness = await createHarness({ devices: [physicalRecord("ready")], driver });
+
+    await expect(harness.coordinator.reclaimReturned("dev_physical")).resolves.toBeUndefined();
+
+    expect(reclaimsOf(driver)).toHaveLength(0);
+    const again = harness.claims.tryClaim("dev_physical", "reclaim");
+    expect(again).toBeDefined();
+    again?.release();
+  });
+
+  it("wipes a reclaiming device with no lease, found by its driver ID, while a lease of another device does not stop it", async () => {
+    const driver = physicalDriver();
+    const harness = await createHarness({
+      devices: [physicalRecord("reclaiming")],
+      driver,
+      leases: [lease("other_device")],
+    });
+
+    const started = await harness.coordinator.reclaimReturned(PHYSICAL_ID);
+    await started?.settled;
+
+    expect(started).toBeDefined();
+    expect(reclaimsOf(driver)).toHaveLength(1);
+    expect(harness.registry.deviceById("dev_physical")?.state).toBe("ready");
+    expect(harness.claims.tryClaim("dev_physical", "reclaim")).toBeDefined();
+  });
+
+  it("answers undefined and wipes nothing when a returned reclaim finds the device still leased", async () => {
+    const driver = physicalDriver();
+    const harness = await createHarness({
+      devices: [physicalRecord("reclaiming")],
+      driver,
+      leases: [lease("dev_physical")],
+    });
+
+    await expect(harness.coordinator.reclaimReturned("dev_physical")).resolves.toBeUndefined();
+
+    expect(reclaimsOf(driver)).toHaveLength(0);
+    expect(harness.registry.deviceById("dev_physical")?.state).toBe("reclaiming");
+  });
+
+  it("answers undefined and commits nothing when a device that reports an OS version is not absent", async () => {
+    const driver = physicalDriver();
+    const harness = await createHarness({ devices: [physicalRecord("ready")], driver });
+
+    await expect(
+      harness.coordinator.reclaimReturned("dev_physical", "18.5"),
+    ).resolves.toBeUndefined();
+
+    expect(harness.registry.deviceById("dev_physical")?.state).toBe("ready");
+    expect(harness.bus.replay()).toEqual([]);
+    expect(reclaimsOf(driver)).toHaveLength(0);
+  });
+
+  it("answers undefined and frees the claim when the device record is gone by the time its turn comes", async () => {
+    const driver = physicalDriver();
+    const harness = await createHarness({ devices: [physicalRecord("absent")], driver });
+    let open!: () => void;
+    const busy = harness.decisions.run(() => new Promise<void>((resolve) => void (open = resolve)));
+
+    const pending = harness.coordinator.reclaimReturned("dev_physical", "18.5");
+    await Promise.resolve();
+    harness.registry.remove("dev_physical");
+    open();
+    await busy;
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(harness.claims.tryClaim("dev_physical", "reclaim")).toBeDefined();
   });
 });

@@ -2916,6 +2916,50 @@ describe("createLeasing wiring", () => {
     expect(harness.bus.replay().map((event) => event.event)).toContain("lease.expired");
   });
 
+  it("hands the physical device watcher leasing's logger: a failed presence read is logged by it", async () => {
+    const sink = new MemoryLogSink();
+    const logger = new JsonLinesLogger({ clock: new FakeClock(1_000), sink });
+    const harness = await createHarness({ logger });
+    await harness.registry.enrollPhysical({
+      apps: [],
+      class: "phone",
+      driverDeviceId: "UDID-A",
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      platform: "ios",
+    });
+    harness.driver.failOn("listPresentPhysical", 1, new Error("devicectl failed"));
+    harness.engine.leasing.physicalDeviceWatcher.start();
+
+    harness.clock.advance(30_000);
+    await harness.engine.settle();
+
+    expect(sink.records.map((record) => record.message)).toContain("physical presence read failed");
+    harness.engine.dispose();
+  });
+
+  it("disposes the physical device watcher with leasing: no presence read happens after dispose", async () => {
+    const harness = await createHarness();
+    await harness.registry.enrollPhysical({
+      apps: [],
+      class: "phone",
+      driverDeviceId: "UDID-A",
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      platform: "ios",
+    });
+    harness.driver.setPhysicalPresence("UDID-A", true);
+    harness.engine.leasing.physicalDeviceWatcher.start();
+    harness.engine.dispose();
+
+    harness.clock.advance(120_000);
+    await harness.engine.settle();
+
+    expect(harness.driver.calls.filter((call) => call.operation === "listPresentPhysical")).toEqual(
+      [],
+    );
+  });
+
   it("does not connect core itself: building a second leasing leaves the first one's ports in place", async () => {
     const harness = await createHarness();
     const connect = vi.spyOn(harness.engine.core, "connect");

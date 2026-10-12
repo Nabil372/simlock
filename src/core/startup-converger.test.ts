@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { VirtualDevice, DeviceState, LeaseRecord, Platform } from "./domain.js";
+import type { VirtualDevice, VirtualState, LeaseRecord, Platform } from "./domain.js";
 import { SerializedDecision } from "./serialized-decision.js";
 import { StartupConverger } from "./startup-converger.js";
 import { StartupRead } from "./startup-read.js";
@@ -8,7 +8,7 @@ import { StartupRead } from "./startup-read.js";
 function device(
   id: string,
   platform: Platform,
-  state: DeviceState,
+  state: VirtualState,
   lastLeaseEndedAt: number,
 ): VirtualDevice {
   return {
@@ -66,7 +66,7 @@ function createHarness(
     spentDeviceDeletion,
   });
 
-  function updateState(deviceId: string, state: DeviceState): void {
+  function updateState(deviceId: string, state: VirtualState): void {
     const index = devices.findIndex((item) => item.id === deviceId);
     const current = devices[index];
     if (current !== undefined) devices[index] = { ...current, state };

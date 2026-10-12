@@ -6,6 +6,7 @@ import {
   DEFAULT_LEASE_TTL_MS,
 } from "./config.js";
 import {
+  type AbsentReason,
   DEVICE_CLASSES,
   type DeviceClass,
   type DeviceMode,
@@ -119,15 +120,11 @@ export interface CreateLeaseInput {
   readonly ownerId: string;
   readonly ttlMs: number;
   readonly ttlDeadline: number;
-  /**
-   * The ID the requester chose for this lease (ADR 0020). Omitted, the registry generates one.
-   * The caller has already refused an ID that is in use: one place enforces that rule.
-   */
+  /** why: the caller has already refused an ID that is in use: one place enforces that rule. */
   readonly leaseId?: string;
   /**
-   * The request this lease is granted for, and the rest of the grant its repeat answers. When
-   * given, the commit that adds the lease also marks that request `granted` with the whole
-   * `LeaseGrant` (device, environment, lease, timing), so no crash can fall between the two.
+   * why: when given, the commit that adds the lease also marks the request `granted`, so no crash can
+   * fall between the two.
    */
   readonly request?: {
     readonly id: string;
@@ -141,8 +138,12 @@ export type RegistryDeviceEvent =
   | { readonly event: "device.reclaimed"; readonly payload: EventMap["device.reclaimed"] }
   | { readonly event: "device.shutdown"; readonly payload: EventMap["device.shutdown"] }
   | {
+      readonly event: "device.absence-detected";
+      readonly payload: EventMap["device.absence-detected"];
+    }
+  | { readonly event: "device.returned"; readonly payload: EventMap["device.returned"] }
+  | {
       readonly event: "device.deleted";
-      /** `physical` is the record's own: the registry adds it when it emits. */
       readonly payload: Omit<EventMap["device.deleted"], "physical">;
     };
 
@@ -375,11 +376,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return cloneDevice(updated);
   }
 
-  /**
-   * The one place the registry calls `transition`: every move into `ready` stamps `readyAt`, and
-   * every move into `shutdown` stamps `shutdownAt`, with the moment of it, whichever path made it.
-   * `markDeviceMissing` records a device already gone and sets `deleted` itself.
-   */
   #transitioned(
     device: DeviceRecord,
     to: DeviceState,
@@ -388,10 +384,12 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     const now = this.options.clock.now();
     if (to === "ready") return transition(device, to, { ...update, readyAt: now });
     if (to === "shutdown") return transition(device, to, { ...update, shutdownAt: now });
+    if (to === "reclaiming" && device.physical) {
+      return transition(device, to, { ...update, reclaimingSince: now });
+    }
     return transition(device, to, update);
   }
 
-  /** Commits a successful quarantine retry; the device rejoins the warm pool. */
   async recoverFromQuarantine(deviceId: string, to: "ready" | "shutdown"): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (device.state !== "quarantined") {
@@ -572,6 +570,51 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
       "registry",
     );
     return ended;
+  }
+
+  /** why: `announceLeaseEnd` runs after the commit and before `device.absence-detected`, so the lease's fact comes first. */
+  // fallow-ignore-next-line unused-class-member -- called through LeaseLifecycle's registry port.
+  async endLeaseAndMarkDeviceAbsent(
+    leaseId: string,
+    absentReason: AbsentReason,
+    announceLeaseEnd: (ended: ReleasedLease) => void,
+  ): Promise<ReleasedLease> {
+    const lease = this.#leases.find((candidate) => candidate.id === leaseId);
+    if (lease === undefined) {
+      throw new UnknownLeaseError(leaseId);
+    }
+    const { device, index } = this.#requireDeviceRecord(lease.deviceId);
+    const absent = {
+      ...this.#transitioned(device, "absent", { absentReason }),
+      lastLeaseEndedAt: this.options.clock.now(),
+    };
+    const devices = [...this.#devices];
+    devices[index] = absent;
+    await this.#commit(
+      devices,
+      this.#leases.filter((candidate) => candidate.id !== leaseId),
+    );
+    const ended = { device: cloneDevice(absent), lease: cloneLease(lease) };
+    announceLeaseEnd(ended);
+    this.options.eventBus.emit(
+      "device.absence-detected",
+      { absentReason, deviceId: device.id, previousState: "leased" },
+      "registry",
+    );
+    return ended;
+  }
+
+  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's registry port.
+  async rewriteAbsentReason(deviceId: string, absentReason: AbsentReason): Promise<DeviceRecord> {
+    const { device, index } = this.#requireDeviceRecord(deviceId);
+    if (!device.physical || device.state !== "absent") {
+      throw new RegistryEventError(`Device is not absent: ${deviceId}`);
+    }
+    const updated: PhysicalDevice = { ...device, absentReason };
+    const devices = [...this.#devices];
+    devices[index] = updated;
+    await this.#commit(devices, this.#leases);
+    return cloneDevice(updated);
   }
 
   /**
@@ -1023,6 +1066,12 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
       case "device.shutdown":
         this.options.eventBus.emit(event.event, event.payload, "registry");
         return;
+      case "device.absence-detected":
+        this.options.eventBus.emit(event.event, event.payload, "registry");
+        return;
+      case "device.returned":
+        this.options.eventBus.emit(event.event, event.payload, "registry");
+        return;
       case "device.deleted":
         this.options.eventBus.emit(
           event.event,
@@ -1056,12 +1105,9 @@ const deviceRecordKeys = [
   "leaseIdentity",
   "physical",
   "enrolledApps",
+  "reclaimingSince",
+  "absentReason",
 ] as const;
-/**
- * Fields a device record written before ADR 0007 carries that this daemon neither reads nor
- * keeps. `featureProfile` is stripped on load, not preserved as an unknown field, and no mode is
- * derived from it (ADR 0007 §11).
- */
 const retiredDeviceRecordKeys = ["featureProfile"] as const;
 const leaseRecordKeys = [
   "id",
@@ -1189,6 +1235,12 @@ function eventForTransition(
   from: DeviceState,
   to: DeviceState,
 ): RegistryDeviceEvent["event"] | undefined {
+  if (to === "absent") {
+    return "device.absence-detected";
+  }
+  if (from === "absent" && to === "reclaiming") {
+    return "device.returned";
+  }
   if (from === "reclaiming") {
     return "device.reclaimed";
   }
@@ -1205,10 +1257,8 @@ function eventForTransition(
 }
 
 /**
- * Every optional field on a device record happens to be a number, so they are
- * parsed as one group: absent stays absent, present-but-not-a-number is a
- * corrupt record. Keeping them out of `parseDevice`'s required-field check is
- * what stops that check growing another two branches per field added.
+ * why: parsed as one group so `parseDevice`'s required-field check does not grow two branches per
+ * field added.
  */
 const optionalDeviceNumberKeys = [
   "lastLeaseEndedAt",
@@ -1335,8 +1385,24 @@ function parsePhysicalDevice(
     ...shared,
     enrolledApps: [...(enrolledApps as string[])],
     physical: true,
+    ...parsePhysicalMarks(state, value),
     spec: parsePhysicalSpec(spec),
     state,
+  };
+}
+
+function parsePhysicalMarks(
+  state: PhysicalState,
+  value: Record<string, unknown>,
+): Pick<PhysicalDevice, "absentReason" | "reclaimingSince"> {
+  const { absentReason, reclaimingSince } = value;
+  const absent = state === "absent" ? isAbsentReason(absentReason) : absentReason === undefined;
+  if (!absent || !isOptionalNumber(reclaimingSince)) {
+    throw new RegistryLoadError("Invalid device record in registry state");
+  }
+  return {
+    ...(reclaimingSince === undefined ? {} : { reclaimingSince }),
+    ...(absentReason === undefined ? {} : { absentReason: absentReason as AbsentReason }),
   };
 }
 
@@ -1617,6 +1683,10 @@ function hasOptionalRequestFields(value: Record<string, unknown>): boolean {
   );
 }
 
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || typeof value === "number";
+}
+
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
 }
@@ -1668,9 +1738,14 @@ function isVirtualState(value: unknown): value is VirtualState {
   );
 }
 
+function isAbsentReason(value: unknown): value is AbsentReason {
+  return value === "locked" || value === "untrusted" || value === "not-present";
+}
+
 function isPhysicalState(value: unknown): value is PhysicalState {
   return (
     value === "ready" ||
+    value === "absent" ||
     value === "leased" ||
     value === "reclaiming" ||
     value === "quarantined" ||

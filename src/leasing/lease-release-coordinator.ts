@@ -1,5 +1,6 @@
 import { type Logger, NoopLogger } from "../ports/index.js";
 import {
+  type AbsentReason,
   type DeviceOperationClaims,
   type LeaseRecord,
   type ReleasedLease,
@@ -19,28 +20,19 @@ export interface LeaseExpirationAdmin {
   expire(leaseId: string, expectedDeadline?: number): Promise<void>;
 }
 
-/** Administrative boundary that fences release/reclaim work during reset. */
 export interface LeaseReleaseMaintenance {
   beginMaintenance(): Promise<void>;
   releaseAllDuringMaintenance(reason: "killed"): Promise<readonly string[]>;
   endMaintenance(): Promise<void>;
 }
 
-/**
- * What a daemon start does about the device of a lease it ends. `reclaim` wipes it in the
- * background and returns it to the pool; `wait` leaves it `reclaiming` with no reclaim started, for
- * a platform that could not be listed; `missing` marks it missing, for a device gone from a platform
- * that could.
- */
 export type StartupDeviceOutcome = "reclaim" | "wait" | "missing";
 
-/** How a lease is ended at startup: `expired` for one whose deadline passed, else `device-lost`. */
 export interface StartupEnding {
   readonly device: StartupDeviceOutcome;
   readonly reason: "device-lost" | "expired";
 }
 
-/** The release a daemon start performs on a lease whose device is not running. */
 export interface StartupLeaseEnder {
   endAtStartup(leaseId: string, ending: StartupEnding): Promise<void>;
 }
@@ -52,6 +44,7 @@ export interface LeaseReleaseLifecycle {
     options?: { readonly deferReclaim?: boolean },
   ): Promise<ReleasedLease>;
   endForMissingDevice(leaseId: string, reason: "expired" | "device-lost"): Promise<ReleasedLease>;
+  endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<ReleasedLease>;
   renew(leaseId: string, ttlMs?: number): Promise<LeaseRecord>;
 }
 
@@ -60,55 +53,25 @@ export interface LeaseReleaseRegistry {
 }
 
 export interface LeaseReleaseCoordinatorOptions {
-  /** Claims the reclaiming device for the duration of a backgrounded reclaim. */
   readonly claims: Pick<DeviceOperationClaims, "tryClaim">;
   readonly decisions: Pick<SerializedDecision, "run">;
   readonly lifecycle: LeaseReleaseLifecycle;
   readonly logger?: Logger;
-  /**
-   * Re-kicks acquisition once a backgrounded reclaim has fully settled *and* given
-   * up its claim. Load-bearing rather than belt-and-braces: see `#reclaimInBackground`.
-   */
   readonly notifyAvailability: () => void;
   readonly registry: LeaseReleaseRegistry;
-  readonly reclaim: Pick<ReclaimCoordinator, "reclaim">;
+  readonly reclaim: Pick<ReclaimCoordinator, "reclaim" | "reclaimReturned">;
 }
 
-/**
- * How a release sequences its driver-side reclaim against its own caller.
- *
- * `background` is the default for every release a client or a timer can reach:
- * the registry-only half (lease gone, device `reclaiming`) is what the caller
- * actually needs, and the purge behind it is the slow part. `await` exists for
- * the one caller that needs the device settled before it continues -- the
- * maintenance-authorized release an operator reset runs (see
- * `releaseAllDuringMaintenance`). `none` starts no reclaim at all: the device stays
- * `reclaiming` for a later start to recover, which is what a lease ended on a platform that
- * could not be listed needs (see `endAtStartup`).
- */
 type ReclaimMode = "await" | "background" | "none";
 
 /**
- * Coordinates lease-side commands. Lease commits happen in the serialized
- * decision section; reclaiming is intentionally outside it, and -- except under
- * maintenance -- outside the caller's await as well (see `ReclaimMode`).
- *
- * releaseAll preserves the snapshot-and-parallel behavior it always had. Concurrent
- * calls are not idempotent: overlapping snapshots can yield UnknownLeaseError.
+ * why: lease commits happen in the serialized decision section; reclaiming is deliberately outside it.
+ * Concurrent `releaseAll` calls are not idempotent: overlapping snapshots can yield UnknownLeaseError.
  */
 export class LeaseReleaseCoordinator
   implements LeaseReleaseCommands, LeaseExpirationAdmin, LeaseReleaseMaintenance, StartupLeaseEnder
 {
   readonly #activeWorkflows = new Set<Promise<void>>();
-  /**
-   * Every reclaim `#release` handed off instead of awaiting. Ordinary release
-   * callers never wait on this set -- that is the point of it -- but two callers
-   * that cannot proceed against a half-reclaimed device do: `beginMaintenance`
-   * (an operator reset must see settled devices) and `settleBackgroundReclaims`
-   * (graceful daemon shutdown). A daemon that dies without that drain leaves its
-   * in-flight reclaims for `StartupConverger#recoverInterruptedReclaims` to
-   * finish on the next start.
-   */
   readonly #backgroundReclaims = new Set<Promise<void>>();
   readonly #logger: Logger;
   readonly #maintenanceWaiters: (() => void)[] = [];
@@ -172,13 +135,50 @@ export class LeaseReleaseCoordinator
     });
   }
 
-  /**
-   * Awaits every reclaim currently running in the background. Nothing on a
-   * client's path calls this -- a graceful daemon shutdown does, so a `simlock
-   * daemon stop` still leaves the pool in the same settled shape an inline
-   * reclaim used to. An ungraceful death instead leaves those devices
-   * `reclaiming` for `StartupConverger#recoverInterruptedReclaims`.
-   */
+  /** why: a lease already gone is not an error: the release that took it came first. */
+  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
+  async endForAbsentDevice(
+    leaseId: string,
+    absentReason: AbsentReason,
+    proceed: () => boolean = () => true,
+  ): Promise<boolean> {
+    return this.#runNormal(() =>
+      this.options.decisions.run(async () => {
+        if (
+          !proceed() ||
+          !this.options.registry.snapshot.leases.some((lease) => lease.id === leaseId)
+        ) {
+          return false;
+        }
+        await this.options.lifecycle.endForAbsentDevice(leaseId, absentReason);
+        return true;
+      }),
+    );
+  }
+
+  /** why: under the maintenance admission every release takes, so no watcher write lands while an operator reset walks the devices. */
+  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
+  async admit<Result>(work: () => Promise<Result>): Promise<Result> {
+    return this.#runNormal(work);
+  }
+
+  /** why: the reclaim joins the background reclaims, so nuke's `beginMaintenance` and a graceful stop wait for it. */
+  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
+  async reclaimReturned(
+    deviceId: string,
+    osVersion?: string,
+    proceed: () => boolean = () => true,
+  ): Promise<boolean> {
+    return this.#runNormal(async () => {
+      const started = await this.options.reclaim.reclaimReturned(deviceId, osVersion, proceed);
+      if (started === undefined) return false;
+      const tracked = started.settled.then(() => undefined);
+      this.#backgroundReclaims.add(tracked);
+      void tracked.finally(() => this.#backgroundReclaims.delete(tracked));
+      return true;
+    });
+  }
+
   async settleBackgroundReclaims(): Promise<void> {
     while (this.#backgroundReclaims.size > 0) {
       await Promise.allSettled(this.#backgroundReclaims);
@@ -271,23 +271,7 @@ export class LeaseReleaseCoordinator
     await this.options.reclaim.reclaim(released);
   }
 
-  /**
-   * Claims the device for the reclaim's duration. Two readers depend on that claim
-   * to tell a live in-process reclaim apart from an abandoned one: `StartupConverger
-   * #recoverInterruptedReclaims`, which must not mistake a reclaim this process just
-   * started for one orphaned by a *previous* crash, and `simlock doctor`'s
-   * stalled-transition finding, which must not read a legitimately long erase as a
-   * driver call that never returned. Both exclude claimed devices for exactly this
-   * reason; a reclaim orphaned by a crash carries no claim in the new process, so
-   * neither check loses the case it exists for.
-   *
-   * The claim is released, and the failure logged rather than thrown, once the
-   * reclaim settles -- no caller is awaiting this promise, so a rejection here would
-   * otherwise be unhandled. A purge that fails at the driver is not that case: it is
-   * handled inside `ReclaimCoordinator#reclaim`, which quarantines the device
-   * instead of rejecting, and stays visible in `simlock status` and
-   * `device.purge-failed`.
-   */
+  /** why: the claim lasts as long as the reclaim, so startup recovery and doctor's stalled-transition check take a live reclaim for neither orphaned nor stalled. */
   #reclaimInBackground(released: ReleasedLease): void {
     const claim = this.options.claims.tryClaim(released.device.id, "reclaim");
     const reclaim = this.options.reclaim

@@ -61,6 +61,35 @@ describe("workerViewFields", () => {
     expect(() => workerViewFields(reads([{ ...device, physical: undefined }]))).toThrow();
   });
 
+  it("the status device entry and the worker view accept state absent and each absentReason, and refuse another reason", () => {
+    const absent = {
+      class: "phone",
+      id: "dev_7",
+      physical: true,
+      servesDefaultMode: false,
+      spec: { model: "iPhone 15 Pro", osVersion: "18.4", physical: true, platform: "ios" },
+      state: "absent",
+    };
+    const reads = (device: object) =>
+      ({
+        devices: [device],
+        status: {
+          capacity: CAPACITY,
+          daemon: { health: "running", mode: "worker" },
+          host: HOST,
+          leases: [],
+          queueDepth: 0,
+        },
+      }) as unknown as Parameters<typeof workerViewFields>[0];
+
+    for (const absentReason of ["locked", "untrusted", "not-present"] as const) {
+      const device = { ...absent, absentReason };
+      expect(() => workerViewFields(reads(device)), `absent (${absentReason})`).not.toThrow();
+      expect(workerViewFields(reads(device)).devices).toEqual([device]);
+    }
+    expect(() => workerViewFields(reads({ ...absent, absentReason: "unplugged" }))).toThrow();
+  });
+
   it("builds a starting worker's view from its health and host alone, with every other field absent", () => {
     const view = workerViewFields({
       status: { daemon: { health: "starting", mode: "worker" }, host: HOST },

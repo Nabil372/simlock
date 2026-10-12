@@ -1,8 +1,16 @@
 import type { EventBus } from "../bus/index.js";
 import { type Clock, type Logger, NoopLogger, type TimerHandle } from "../ports/index.js";
 import type { DeviceOperationClaim, DeviceOperationClaims } from "./device-operation-claims.js";
-import { type DeviceRecord, mayBeGranted, type Platform, type VirtualDevice } from "./domain.js";
+import {
+  type DeviceRecord,
+  type DeviceState,
+  mayBeGranted,
+  type PhysicalDevice,
+  type Platform,
+  type VirtualDevice,
+} from "./domain.js";
 import { type Driver, toDriverDevice } from "./driver.js";
+import { readPhysicalPresence } from "./physical-presence.js";
 import type { SerializedDecision } from "./serialized-decision.js";
 import { stableError } from "./stable-error.js";
 
@@ -25,7 +33,7 @@ export interface QuarantineRegistry {
 
 export interface QuarantinePurgeFailure {
   readonly deviceId: string;
-  readonly leaseId: string;
+  readonly leaseId?: string | undefined;
   readonly attemptedStrategy: "erase" | "snapshot" | "wipe" | "delete" | "uninstall";
   readonly duration: number;
   readonly error: string;
@@ -46,6 +54,8 @@ export interface QuarantineCoordinatorOptions {
   readonly drivers: QuarantineDriverCatalog;
   readonly eventBus: Pick<EventBus, "emit">;
   readonly notifyAvailability: () => void;
+  readonly physicalDeviceReady?: (deviceId: string) => void;
+  readonly probeIntervalMs?: number;
   readonly registry: QuarantineRegistry;
   readonly logger?: Logger;
 }
@@ -65,17 +75,19 @@ export class QuarantineCoordinator {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
     await this.options.decisions.run(async () => {
       await this.options.registry.enterQuarantine(failure.deviceId, nextRetryAt);
-      this.options.eventBus.emit(
-        "device.purge-failed",
-        {
-          attemptedStrategy: failure.attemptedStrategy,
-          deviceId: failure.deviceId,
-          duration: failure.duration,
-          error: failure.error,
-          leaseId: failure.leaseId,
-        },
-        "quarantine-coordinator",
-      );
+      if (failure.leaseId !== undefined) {
+        this.options.eventBus.emit(
+          "device.purge-failed",
+          {
+            attemptedStrategy: failure.attemptedStrategy,
+            deviceId: failure.deviceId,
+            duration: failure.duration,
+            error: failure.error,
+            leaseId: failure.leaseId,
+          },
+          "quarantine-coordinator",
+        );
+      }
       this.options.eventBus.emit(
         "device.quarantined",
         { deviceId: failure.deviceId, maxRetries: this.options.config.maxRetries, nextRetryAt },
@@ -85,20 +97,31 @@ export class QuarantineCoordinator {
     this.#arm(failure.deviceId, nextRetryAt);
   }
 
-  async enterFromStalledTransition(deviceId: string): Promise<void> {
+  /** why: the claim is taken here and released on every exit, so a reclaim the watcher has just started is never quarantined under it. */
+  async enterFromStalledTransition(deviceId: string, findingState?: DeviceState): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
-    await this.options.decisions.run(async () => {
-      await this.options.registry.enterQuarantine(deviceId, nextRetryAt);
+    const entered = await this.options.decisions.run(async () => {
+      const current = this.options.registry.snapshot.devices.find(
+        (candidate) => candidate.id === deviceId,
+      );
+      if (findingState !== undefined && current?.state !== findingState) return false;
+      const claim = this.options.claims.tryClaim(deviceId, "reclaim");
+      if (claim === undefined) return false;
+      try {
+        await this.options.registry.enterQuarantine(deviceId, nextRetryAt);
+      } finally {
+        claim.release();
+      }
       this.options.eventBus.emit(
         "device.quarantined",
         { deviceId, maxRetries: this.options.config.maxRetries, nextRetryAt },
         "quarantine-coordinator",
       );
+      return true;
     });
-    this.#arm(deviceId, nextRetryAt);
+    if (entered) this.#arm(deviceId, nextRetryAt);
   }
 
-  /** `include` skips devices a daemon start must not act on: a due retry drives the driver at once. */
   restore(include: (device: DeviceRecord) => boolean = () => true): void {
     for (const device of this.options.registry.snapshot.devices) {
       if (device.state !== "quarantined" || !include(device)) continue;
@@ -160,6 +183,10 @@ export class QuarantineCoordinator {
    * the claim would pass over the device it was sent for.
    */
   async #retryClaimed(device: DeviceRecord, claim: DeviceOperationClaim): Promise<void> {
+    if (device.physical && !(await this.#presentForRetry(device))) {
+      await this.#waitForPresence(device);
+      return;
+    }
     const attempts = (device.quarantineAttempts ?? 0) + 1;
     const driver = this.options.drivers.get(device.spec.platform);
     if (!device.physical && !mayBeGranted(device)) {
@@ -175,10 +202,20 @@ export class QuarantineCoordinator {
       return;
     }
 
+    await this.#recovered(device, result, attempts, claim);
+  }
+
+  async #recovered(
+    device: DeviceRecord,
+    result: Awaited<ReturnType<Driver["reclaim"]>>,
+    attempts: number,
+    claim: DeviceOperationClaim,
+  ): Promise<void> {
     await this.options.decisions.run(() =>
       this.options.registry.recoverFromQuarantine(device.id, result.state),
     );
     claim.release();
+    if (device.physical) this.options.physicalDeviceReady?.(device.id);
     this.options.eventBus.emit(
       "device.quarantine-recovered",
       {
@@ -190,6 +227,41 @@ export class QuarantineCoordinator {
       "quarantine-coordinator",
     );
     this.options.notifyAvailability();
+  }
+
+  /**
+   * why: a physical device that is not there cannot be reclaimed, and a retry that fails for want of
+   * it would only count toward unenrolling it. A read that fails, or a platform with no driver,
+   * is not presence.
+   */
+  async #presentForRetry(device: PhysicalDevice): Promise<boolean> {
+    try {
+      const driver = this.options.drivers.get(device.spec.platform);
+      const presence = await readPhysicalPresence(driver, [device.driverDeviceId]);
+      return presence.get(device.driverDeviceId) === true;
+    } catch (error: unknown) {
+      this.#logger.warn("quarantine presence read failed", {
+        deviceId: device.id,
+        step: "presence",
+        error: stableError(error),
+      });
+      return false;
+    }
+  }
+
+  /** why: the attempt count stays as it was; only the due time moves on, so `status` never shows one that has passed. */
+  async #waitForPresence(device: PhysicalDevice): Promise<void> {
+    const nextRetryAt =
+      this.options.clock.now() +
+      (this.options.probeIntervalMs ?? this.options.config.retryBackoffMs);
+    await this.options.decisions.run(() =>
+      this.options.registry.recordQuarantineRetryFailure(
+        device.id,
+        device.quarantineAttempts ?? 0,
+        nextRetryAt,
+      ),
+    );
+    this.#arm(device.id, nextRetryAt);
   }
 
   /** A spent fresh device already served its one lease, so a successful reclaim would put it back in the pool for a second one. */

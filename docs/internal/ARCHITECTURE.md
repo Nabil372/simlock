@@ -1273,6 +1273,9 @@ provisioning → ready → leased → reclaiming → ready/shutdown → deleted
                  ready/shutdown/deleted
 ```
 
+A physical device has no `provisioning` or `shutdown`, and adds `absent`
+(see the paragraph on `absent` under quarantine below).
+
 A device created under `lease.identity: fresh` serves one lease. Its lease end
 skips the purge: `reclaiming → shutdown` (driver shutdown), then
 `shutdown → deleted` (driver destroy). `mayBeGranted` in `domain.ts` keeps a
@@ -1319,12 +1322,20 @@ to quarantine than re-drive: the device may be mid-erase.
 
 `QuarantineCoordinator` retries the triggering operation of a device on a `Clock`-driven
 backoff (`warmPool.quarantine` config: retry count, backoff, multiplier, cap), a physical
-device's reclaim included.
+device's reclaim included. A physical device that is not present at a retry gets no
+reclaim: the retry is put off by `health.probeIntervalMs` and does not count (ADR 0022 §2).
+
+A physical device that is enrolled and not there is `absent`, not `quarantined`
+(ADR 0022 §2, §7, §8): the `PhysicalDeviceWatcher` moves a `ready` device there after
+`health.stableObservations` not-present reads, ends the lease of a `leased` one
+`device-lost` in the same write, and reclaims it when it is read present again;
+a physical reclaim that fails while the device is not present leaves it `absent`
+too. `quarantined` never moves to `absent`.
 A successful retry returns the device to `ready` (or `shutdown`) and it
 rejoins the warm pool; exhausting the retry budget destroys a virtual device
 (registry-only, never merely `shutdown`, since `shutdown` is reusable warm
 inventory to `AcquisitionPlanner` and would silently reintroduce a dirty
-device) and unenrols a physical one, which Simlock never destroys. `device.purge-failed` still fires as it always did; `device.quarantined`,
+device) and unenrols a physical one, which Simlock never destroys. `device.purge-failed` still fires for a virtual device, and for a physical one whose release-time purge fails; a returned physical device whose reclaim fails while it is present is quarantined without it (it has no lease id), and one whose reclaim fails while it is not present emits none and goes `absent`. `device.quarantined`,
 `device.quarantine-recovered`, and `device.quarantine-abandoned` are the
 follow-up facts (see [EVENTS.md](EVENTS.md)).
 
@@ -1473,7 +1484,7 @@ Three things still wait for the purge, deliberately:
 The trade the backgrounding makes is where a purge failure surfaces: the
 caller is gone, so it cannot be rejected to. It does not go missing — a driver
 purge failure is already `QuarantineCoordinator`'s job and stays visible as
-`device.purge-failed` plus a `quarantined` device — and anything unexpected
+`device.purge-failed` plus a `quarantined` device (a physical device read not present instead goes `absent`, with neither) — and anything unexpected
 beyond that is logged by the coordinator rather than left unhandled.
 
 ### Lease subsystem boundaries and wiring
@@ -1489,7 +1500,8 @@ lapsed lease, the kick it gives acquisition once a device is back),
 leasing implements it, and the daemon hands it over through `core.connect`; a
 core service called before `connect` fails with an error naming the missing
 port. The health monitor is optional: no other leasing part imports it, and
-`createLeasing` wires it or leaves it out. The direct transactional call chains
+`createLeasing` wires it or leaves it out. The `PhysicalDeviceWatcher` is always
+wired, whatever `health.enabled` says. The direct transactional call chains
 are:
 
 - `LeaseRequestBook` stores every lease request in the registry before the

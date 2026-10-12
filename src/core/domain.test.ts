@@ -294,21 +294,23 @@ describe("a physical device's state machine (ADR 0022 §2)", () => {
     });
   });
 
-  it.each(["ready", "leased", "reclaiming", "quarantined", "deleted"] as const)(
+  it.each(["ready", "leased", "reclaiming", "quarantined", "absent", "deleted"] as const)(
     "allows nothing out of %s beyond its table: every other physical state, shutdown and provisioning throw",
     (from) => {
       const allowed: Record<PhysicalState, readonly string[]> = {
+        absent: ["reclaiming", "ready", "deleted"],
         deleted: [],
-        leased: ["reclaiming"],
+        leased: ["reclaiming", "absent"],
         quarantined: ["ready", "deleted"],
-        ready: ["leased", "deleted"],
-        reclaiming: ["ready", "quarantined"],
+        ready: ["leased", "absent", "deleted"],
+        reclaiming: ["ready", "quarantined", "absent"],
       };
       for (const to of [
         "ready",
         "leased",
         "reclaiming",
         "quarantined",
+        "absent",
         "deleted",
         "shutdown",
         "provisioning",
@@ -344,6 +346,19 @@ describe("a physical device's state machine (ADR 0022 §2)", () => {
     const ready = transition({ ...physicalDevice, state: "reclaiming" }, "ready", { mode: "full" });
 
     expect(ready).not.toHaveProperty("mode");
+  });
+
+  it("records the absent reason only on a move into absent, and leaves no reason key when none was given", () => {
+    const leased = { ...physicalDevice, state: "leased" as const };
+
+    expect(transition(leased, "absent", { absentReason: "locked" })).toMatchObject({
+      absentReason: "locked",
+      state: "absent",
+    });
+    expect(transition(leased, "absent")).not.toHaveProperty("absentReason");
+    expect(
+      transition({ ...physicalDevice, state: "reclaiming" }, "ready", { absentReason: "locked" }),
+    ).not.toHaveProperty("absentReason");
   });
 
   it("drops a deferred reclaim on any exit from reclaiming, as a virtual device does", () => {
@@ -527,5 +542,50 @@ describe("noPhysicalMatch", () => {
         .details,
     ).toEqual({ class: "tablet", model: "iPad Pro", osVersion: "18", platform: "ios" });
     expect(noPhysicalMatch({ platform: "android" }).details).toEqual({ platform: "android" });
+  });
+});
+
+describe("a physical device's absent state (ADR 0022 §2, §8)", () => {
+  const absent = "absent" as unknown as PhysicalState;
+  const settle = (
+    device: Omit<PhysicalDevice, "state"> | Omit<VirtualDevice, "state">,
+    from: string,
+    to: string,
+  ) => {
+    try {
+      return transition(
+        { ...device, state: from } as unknown as VirtualDevice,
+        to as unknown as "ready",
+      ).state as string;
+    } catch (error) {
+      return error instanceof IllegalTransition ? "illegal" : "unexpected";
+    }
+  };
+
+  it("a physical record may move ready, leased or reclaiming to absent, and absent to reclaiming, ready or deleted; quarantined -> absent and any virtual move to absent throw IllegalTransition", () => {
+    for (const from of ["ready", "leased", "reclaiming"]) {
+      expect(settle(physicalDevice, from, absent), `${from} -> absent`).toBe("absent");
+    }
+    for (const to of ["reclaiming", "ready", "deleted"]) {
+      expect(settle(physicalDevice, absent, to), `absent -> ${to}`).toBe(to);
+    }
+
+    expect(() =>
+      transition(
+        { ...physicalDevice, state: "quarantined" } as unknown as VirtualDevice,
+        absent as unknown as "ready",
+      ),
+    ).toThrow(IllegalTransition);
+    for (const from of [
+      "provisioning",
+      "ready",
+      "leased",
+      "reclaiming",
+      "quarantined",
+      "shutdown",
+      "deleted",
+    ]) {
+      expect(settle(baseDevice, from, absent), `virtual ${from} -> absent`).toBe("illegal");
+    }
   });
 });

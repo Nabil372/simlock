@@ -1315,7 +1315,7 @@ describe("Doctor", () => {
       );
     });
 
-    it("emits device.stalled-transition-detected for a stalled device", async () => {
+    it("emits device.stalled-transition-detected from the doctor, once, for a stalled device and not for other findings", async () => {
       const clock = new FakeClock(10_000);
       const eventBus = new EventBus(clock);
       const registry = await Registry.load({
@@ -1338,7 +1338,9 @@ describe("Doctor", () => {
       });
       clock.advance(9_001);
 
-      await new Doctor({
+      await driver.provision({ physical: false, model: "Phone", osVersion: "1", platform: "ios" });
+
+      const report = await new Doctor({
         decisions: new SerializedDecision(),
         clock,
         config: config(),
@@ -1347,12 +1349,15 @@ describe("Doctor", () => {
         registry,
       }).reconcile();
 
-      expect(eventBus.replay()).toContainEqual(
+      expect(report.findings.some((finding) => finding.kind !== "stalled-transition")).toBe(true);
+      expect(
+        eventBus.replay().filter((entry) => entry.event === "device.stalled-transition-detected"),
+      ).toEqual([
         expect.objectContaining({
-          event: "device.stalled-transition-detected",
+          module: "doctor",
           payload: expect.objectContaining({ deviceId: device.id, state: "provisioning" }),
         }),
-      );
+      ]);
     });
 
     it("--fix quarantines a stalled provisioning device through QuarantineCoordinator", async () => {
@@ -2784,7 +2789,7 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
       platform: "ios",
     });
     driver.setManagedReality({ devices: [], processes: [] });
-    return { clock, driver, eventBus, registry };
+    return { clock, driver, eventBus, filesystem, registry };
   }
 
   const heldLease = {
@@ -2893,6 +2898,115 @@ describe("Doctor and physical devices (ADR 0022 §4)", () => {
       }),
     ]);
     expect(registry.snapshot.devices[0]?.state).toBe("quarantined");
+    quarantine.dispose();
+  });
+});
+
+describe("Doctor and a physical reclaim in flight (ADR 0022 §7, §8)", () => {
+  const reclaimingRecord = (id: string, extra: object = {}) => ({
+    createdAt: 1,
+    driverData: {},
+    driverDeviceId: `00008110-${id}`,
+    enrolledApps: [],
+    id,
+    physical: true,
+    spec: {
+      class: "phone",
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      physical: true,
+      platform: "ios",
+    },
+    state: "reclaiming",
+    ...extra,
+  });
+
+  async function harness(records: readonly object[]) {
+    const clock = new FakeClock(100_000);
+    const eventBus = new EventBus(clock);
+    const filesystem = new MemoryFilesystem();
+    await filesystem.writeFileAtomic(
+      "/state.json",
+      JSON.stringify({ devices: [], leases: [], physicalDevices: records }),
+    );
+    const registry = await Registry.load({
+      clock,
+      eventBus,
+      filesystem,
+      idGenerator: sequence(),
+      statePath: "/state.json",
+    });
+    const driver = new FakeDriver({
+      clock,
+      estimateMs: { boot: 2_000, provision: 1_000, reclaim: 1_000 },
+      platform: "ios",
+    });
+    driver.setManagedReality({ devices: [], processes: [] });
+    const claims = new DeviceOperationClaims();
+    const quarantine = new QuarantineCoordinator({
+      claims,
+      clock,
+      config: {
+        maxRetries: 3,
+        maxRetryBackoffMs: 300_000,
+        retryBackoffMs: 30_000,
+        retryBackoffMultiplier: 2,
+      },
+      decisions: new SerializedDecision(),
+      drivers: new DriverCatalog([driver]),
+      eventBus,
+      notifyAvailability: () => {},
+      registry,
+    });
+    const doctor = new Doctor({
+      claims,
+      decisions: new SerializedDecision(),
+      clock,
+      config: config({ minimumThresholdMs: 0, thresholdMultiplier: 1 }),
+      drivers: [driver],
+      eventBus,
+      quarantine,
+      registry,
+    });
+    return { claims, clock, doctor, eventBus, filesystem, quarantine, registry };
+  }
+
+  it("a physical reclaim interrupted by a killed daemon is aged from reclaimingSince by stalled-transition", async () => {
+    const { doctor, quarantine } = await harness([
+      reclaimingRecord("dev_old_start", { lastLeaseEndedAt: 99_000, reclaimingSince: 1_000 }),
+      reclaimingRecord("dev_new_start", { lastLeaseEndedAt: 1_000, reclaimingSince: 99_000 }),
+    ]);
+
+    const report = await doctor.reconcile();
+
+    expect(
+      report.findings
+        .filter((finding) => finding.kind === "stalled-transition")
+        .map((finding) => finding.deviceId),
+    ).toEqual(["dev_old_start"]);
+    quarantine.dispose();
+  });
+
+  it("doctor --fix on a stalled reclaiming device that is claimed by the time the fix runs writes nothing, emits no device.quarantined and arms no retry", async () => {
+    const { claims, clock, doctor, eventBus, filesystem, quarantine, registry } = await harness([
+      reclaimingRecord("dev_stalled", { lastLeaseEndedAt: 1_000, reclaimingSince: 1_000 }),
+    ]);
+    const before = await filesystem.readFile("/state.json");
+    let claimTaken = false;
+    eventBus.subscribe("device.stalled-transition-detected", () => {
+      claimTaken = claims.tryClaim("dev_stalled", "reclaim") !== undefined;
+    });
+
+    const report = await doctor.reconcile({ fix: true });
+
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({ deviceId: "dev_stalled", kind: "stalled-transition" }),
+    );
+    expect(claimTaken).toBe(true);
+    expect(registry.snapshot.devices[0]?.state).toBe("reclaiming");
+    expect(await filesystem.readFile("/state.json")).toBe(before);
+    expect(eventBus.replay().filter((event) => event.event === "device.quarantined")).toEqual([]);
+    expect(clock.pendingTimerCount).toBe(0);
     quarantine.dispose();
   });
 });

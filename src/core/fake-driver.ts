@@ -202,6 +202,8 @@ export class FakeDriver implements Driver {
   #managedReality: DriverReality | undefined;
   #physicalDevices: readonly FakePhysicalDevice[] | undefined;
   readonly #presentPhysical = new Set<string>();
+  readonly #absentReasons = new Map<string, "locked" | "untrusted" | "not-present">();
+  readonly #presentOsVersions = new Map<string, string>();
   readonly #heldPresenceReads = new Set<string>();
   readonly #pendingPresenceReads: (() => void)[] = [];
   readonly #scriptedPhysicalDevices: FakeDriverOptions["physicalDevices"];
@@ -555,15 +557,35 @@ export class FakeDriver implements Driver {
         this.#pendingPresenceReads.push(resolve);
       });
     }
-    return enrolledIds.map((driverDeviceId) => ({
-      driverDeviceId,
-      present: this.#presentPhysical.has(driverDeviceId),
-    }));
+    return enrolledIds.map((driverDeviceId) => {
+      if (this.#presentPhysical.has(driverDeviceId)) {
+        return {
+          driverDeviceId,
+          osVersion: this.#presentOsVersions.get(driverDeviceId) ?? "1.0",
+          present: true,
+        };
+      }
+      return {
+        driverDeviceId,
+        present: false,
+        reason: this.#absentReasons.get(driverDeviceId) ?? "not-present",
+      };
+    });
   }
 
-  setPhysicalPresence(driverDeviceId: string, present: boolean): void {
+  setPhysicalPresence(
+    driverDeviceId: string,
+    present: boolean,
+    detail: {
+      readonly reason?: "locked" | "untrusted" | "not-present";
+      readonly osVersion?: string;
+    } = {},
+  ): void {
     if (present) this.#presentPhysical.add(driverDeviceId);
     else this.#presentPhysical.delete(driverDeviceId);
+    this.#absentReasons.set(driverDeviceId, detail.reason ?? "not-present");
+    if (detail.osVersion === undefined) this.#presentOsVersions.delete(driverDeviceId);
+    else this.#presentOsVersions.set(driverDeviceId, detail.osVersion);
   }
 
   holdPresenceReads(...driverDeviceIds: readonly string[]): void {

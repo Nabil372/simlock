@@ -1,6 +1,7 @@
 import type { EventBus, EventMap } from "../bus/index.js";
 import type { Clock } from "../ports/index.js";
 import {
+  type AbsentReason,
   type DeviceRecord,
   type LeaseGrant,
   type LeaseRecord,
@@ -36,6 +37,11 @@ export interface LeaseLifecycleRegistry {
     initiator: string,
     announceLeaseEnd: (ended: ReleasedLease) => void,
   ): Promise<ReleasedLease>;
+  endLeaseAndMarkDeviceAbsent(
+    leaseId: string,
+    absentReason: AbsentReason,
+    announceLeaseEnd: (ended: ReleasedLease) => void,
+  ): Promise<ReleasedLease>;
 }
 
 type LeaseEndReason = "explicit" | "killed" | "expired" | "device-lost";
@@ -45,15 +51,9 @@ export interface LeaseLifecycleOptions {
   readonly eventBus: EventBus;
   readonly expiryScheduler: LeaseExpiryScheduler;
   readonly registry: LeaseLifecycleRegistry;
-  /**
-   * ADR 0004 §4: `defaultMs` is `lease.defaultTtlMs`, and it applies in exactly one place -- a
-   * grant whose request named no `ttlMs`. A renew never falls back to it; it re-applies the
-   * lease's own stored width instead.
-   */
   readonly ttl: { readonly defaultMs: number };
 }
 
-/** Registry-backed lease state changes, deliberately excluding reclaiming and queue wakeups. */
 export class LeaseLifecycle {
   constructor(private readonly options: LeaseLifecycleOptions) {}
 
@@ -158,12 +158,7 @@ export class LeaseLifecycle {
     return released;
   }
 
-  /**
-   * Ends a lease whose device a daemon start found gone, and marks the device missing in the same
-   * write (`device.deleted`, initiator `doctor`). The lease's fact, `lease.expired` for one whose
-   * deadline had passed and `lease.released` otherwise, is emitted after the commit and before the
-   * device's. Nothing is left `reclaiming`: there is nothing to wipe.
-   */
+  /** why: the lease's fact is emitted after the commit and before the device's `device.deleted`. */
   // fallow-ignore-next-line unused-class-member -- reached through LeaseReleaseCoordinator's lifecycle port.
   async endForMissingDevice(
     leaseId: string,
@@ -171,6 +166,13 @@ export class LeaseLifecycle {
   ): Promise<ReleasedLease> {
     return this.options.registry.endLeaseAndMarkDeviceMissing(leaseId, "doctor", (ended) =>
       this.#announceEnd(ended, reason),
+    );
+  }
+
+  // fallow-ignore-next-line unused-class-member -- reached through LeaseReleaseCoordinator's lifecycle port.
+  async endForAbsentDevice(leaseId: string, absentReason: AbsentReason): Promise<ReleasedLease> {
+    return this.options.registry.endLeaseAndMarkDeviceAbsent(leaseId, absentReason, (ended) =>
+      this.#announceEnd(ended, "device-lost"),
     );
   }
 

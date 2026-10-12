@@ -58,6 +58,7 @@ async function createHarness(
       async reclaim(released: ReleasedLease) {
         reclaims.push(released);
       },
+      reclaimReturned: async () => undefined,
     },
   });
   const reconciler = new LeaseReconciler({ clock, ender: coordinator, registry });
