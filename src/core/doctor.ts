@@ -114,7 +114,17 @@ export type DoctorFinding =
       readonly reason: "runtime-missing" | "unknown-model" | "over-limit";
       readonly message: string;
       readonly remedy: string;
+    }
+  | {
+      readonly kind: "agent-device-unavailable";
+      readonly message: string;
+      readonly remedy: string;
     };
+
+export type OptionalModuleFinding = Extract<
+  DoctorFinding,
+  { readonly kind: "agent-device-unavailable" }
+>;
 
 export type ProvenanceDrift = "erased" | "mark-mismatch" | "durable-mark-missing";
 
@@ -143,6 +153,7 @@ export interface DoctorOptions {
   readonly claims?: Pick<DeviceOperationClaims, "isClaimed">;
   readonly driverRejections?: readonly DriverRejection[];
   readonly logger?: Logger;
+  readonly optionalModules?: () => readonly OptionalModuleFinding[];
   readonly warmPool?: {
     readonly figures: WarmPoolReader["figures"];
     readonly runningCapacity: () => CapacityReader["runningCapacity"];
@@ -243,6 +254,7 @@ export class Doctor {
       ...(purgeOrphans ? await this.#purgeOrphans(findings, driversByPlatform) : findings),
       ...(await this.#collectPrerequisites(prerequisites)),
       ...this.#warmPoolFindings(),
+      ...this.#optionalModuleFindings(),
     ];
 
     const report = { findings: remaining };
@@ -553,6 +565,17 @@ export class Doctor {
       }),
     );
     return perCheck.flat();
+  }
+
+  #optionalModuleFindings(): readonly OptionalModuleFinding[] {
+    try {
+      return this.options.optionalModules?.() ?? [];
+    } catch (error) {
+      this.#logger.warn("Could not read optional module findings", {
+        error: errorMessage(error),
+      });
+      return [];
+    }
   }
 
   /**
@@ -1128,7 +1151,8 @@ function isDrift(finding: DoctorFinding): boolean {
   return (
     finding.kind !== "driver-advisory" &&
     finding.kind !== "prerequisite-missing" &&
-    finding.kind !== "warm-pool-target-unreachable"
+    finding.kind !== "warm-pool-target-unreachable" &&
+    finding.kind !== "agent-device-unavailable"
   );
 }
 

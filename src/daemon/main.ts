@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  agentDeviceFindings,
   AgentDeviceSupervisor,
   type AgentDeviceHealthProbe,
   NodeAgentDeviceHealthProbe,
@@ -283,6 +284,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     eventBus,
     logger,
     modelPreferences,
+    optionalModules: () => agentDeviceFindings(agentDevice.availability()),
     prerequisiteChecks,
     registry,
     systemStats,

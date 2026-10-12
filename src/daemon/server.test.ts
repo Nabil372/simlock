@@ -192,8 +192,9 @@ describe("DaemonServer", () => {
     [27, "cannot read config.get's lease.maxPerRequester"],
     [28, "cannot read config.get's lease.endWaitMs"],
     [29, "cannot read config.get's agentDevice"],
+    [30, "cannot read the agent-device-unavailable finding in doctor.run"],
   ])(
-    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 30, to a client on protocol %i, which %s",
+    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 31, to a client on protocol %i, which %s",
     async (version) => {
       const harness = await createHarness();
       const previous = await createClient(harness.socketPath);
@@ -203,7 +204,7 @@ describe("DaemonServer", () => {
       ).resolves.toMatchObject({
         error: {
           code: "PROTOCOL_VERSION_UNSUPPORTED",
-          details: { client: { min: version, max: version }, daemon: { min: 30, max: 30 } },
+          details: { client: { min: version, max: version }, daemon: { min: 31, max: 31 } },
         },
         ok: false,
       });

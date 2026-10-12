@@ -2540,4 +2540,101 @@ describe("startDaemon with the agent-device edge", () => {
     expect(runner.calls).toEqual([]);
     expect(processSupervisor.signals).toEqual([]);
   });
+
+  describe("doctor.run", () => {
+    const operator = {
+      manageEventSubscription: () => undefined,
+      principal: "operator",
+      role: "admin",
+    } as const;
+
+    type Report = {
+      readonly findings: readonly { readonly kind: string; readonly message?: string }[];
+    };
+
+    const agentDeviceFinding = (report: Report) =>
+      report.findings.find((finding) => finding.kind === "agent-device-unavailable");
+
+    it("reports agent-device-unavailable naming the found and needed versions, and an ordinary client is still granted a lease", async () => {
+      const setup = await setUp({ agentDevice: { command, enabled: true } });
+      const runner = new ScriptedProcessRunner([
+        {
+          match: { args: [realCli, "--version"], command: process.execPath },
+          result: { code: 0, stderr: "", stdout: "0.20.3\n" },
+        },
+      ]);
+      const { daemon } = await startEdge(setup, {
+        processRunner: runner,
+        processSupervisor: new FakeProcessSupervisor(),
+      });
+
+      await expect
+        .poll(
+          async () =>
+            agentDeviceFinding((await daemon.dispatch("doctor.run", {}, operator)) as Report),
+          {
+            timeout: 5_000,
+          },
+        )
+        .toMatchObject({
+          kind: "agent-device-unavailable",
+          message: expect.stringContaining("found 0.20.3, need 0.21.25 or later"),
+          remedy: expect.any(String),
+        });
+      await expect(daemon.dispatch("lease.request", lease, agent)).resolves.toMatchObject({
+        lease: { id: expect.any(String) },
+      });
+    }, 10_000);
+
+    it("reports agent-device-unavailable naming the command when agentDevice.command is found nowhere", async () => {
+      const setup = await setUp({
+        agentDevice: { command: "/opt/missing/agent-device", enabled: true },
+      });
+      const { daemon } = await startEdge(setup, {
+        processRunner: new ScriptedProcessRunner([]),
+        processSupervisor: new FakeProcessSupervisor(),
+      });
+
+      await expect
+        .poll(
+          async () =>
+            agentDeviceFinding((await daemon.dispatch("doctor.run", {}, operator)) as Report),
+          {
+            timeout: 5_000,
+          },
+        )
+        .toMatchObject({
+          kind: "agent-device-unavailable",
+          message: expect.stringContaining("/opt/missing/agent-device"),
+        });
+    }, 10_000);
+
+    it("reports no agent-device-unavailable with agentDevice.enabled false", async () => {
+      const setup = await setUp({ agentDevice: { enabled: false } });
+      const { daemon } = await startEdge(setup, {
+        processRunner: new ScriptedProcessRunner([]),
+        processSupervisor: new FakeProcessSupervisor(),
+      });
+
+      const report = (await daemon.dispatch("doctor.run", {}, operator)) as Report;
+
+      expect(agentDeviceFinding(report)).toBeUndefined();
+    });
+
+    it("reports no agent-device-unavailable while agent-device's /health never answers and the readiness budget has not run out", async () => {
+      const setup = await setUp({ agentDevice: { command, enabled: true } });
+      const runner = versionAndDaemon(setup.directory);
+      const { daemon } = await startEdge(setup, {
+        processRunner: runner,
+        processSupervisor: new FakeProcessSupervisor(),
+      });
+      await expect
+        .poll(() => runner.calls.some((call) => call.args[0] === entry), { timeout: 5_000 })
+        .toBe(true);
+
+      const report = (await daemon.dispatch("doctor.run", {}, operator)) as Report;
+
+      expect(agentDeviceFinding(report)).toBeUndefined();
+    });
+  });
 });
