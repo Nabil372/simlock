@@ -14,7 +14,7 @@ function openItBlocks(markdown: string): string[][] {
 }
 
 describe("the console doc's Open it section", () => {
-  it("shows simlock status's health line, then a Console line, as simlock status prints them", () => {
+  it("shows a Daemon: <health> (<mode>) block with a Console line under Open it", () => {
     const blocks = openItBlocks(readFileSync(consoleDoc, "utf8"));
 
     // why: simlock status opens with `Daemon: <health> (<mode>)`, not the `Daemon running`
