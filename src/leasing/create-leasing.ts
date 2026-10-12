@@ -162,11 +162,15 @@ export function createLeasing(options: LeasingOptions): Leasing {
   const releaseCoordinator: LeaseReleaseCoordinator = new LeaseReleaseCoordinator({
     claims: core.claims,
     decisions,
-    leaseEnd: {
-      clock: options.clock,
-      endWaitMs: options.config.lease.endWaitMs,
-      participants: options.leaseEndParticipants ?? [],
-    },
+    ...(options.leaseEndParticipants === undefined || options.leaseEndParticipants.length === 0
+      ? {}
+      : {
+          leaseEnd: {
+            clock: options.clock,
+            endWaitMs: options.config.lease.endWaitMs,
+            participants: options.leaseEndParticipants,
+          },
+        }),
     lifecycle: leases,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     // Called once a backgrounded reclaim has given up its claim; the warm pool can act on the

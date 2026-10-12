@@ -54,6 +54,7 @@ export interface LeaseReleaseRegistry {
 }
 
 export interface LeaseReleaseCoordinatorOptions {
+  /** why: absent when no participant is registered, so that path runs exactly as before. */
   readonly leaseEnd?: {
     readonly clock: Clock;
     readonly endWaitMs: number;
@@ -351,7 +352,7 @@ export class LeaseReleaseCoordinator
   }
 
   get #hasParticipants(): boolean {
-    return (this.options.leaseEnd?.participants.length ?? 0) > 0;
+    return this.options.leaseEnd !== undefined;
   }
 
   #cutShortWaits(): void {
@@ -369,9 +370,9 @@ export class LeaseReleaseCoordinator
     reason: EndedLease["reason"],
     waitable: boolean,
   ): ParticipantCalls | undefined {
-    const { clock, endWaitMs, participants } = this.options.leaseEnd ?? {};
-    if (clock === undefined || endWaitMs === undefined || participants === undefined) return;
-    if (participants.length === 0) return undefined;
+    const { leaseEnd } = this.options;
+    if (leaseEnd === undefined) return undefined;
+    const { clock, endWaitMs, participants } = leaseEnd;
     const ended: EndedLease = {
       deviceId: released.device.id,
       leaseId: released.lease.id,
