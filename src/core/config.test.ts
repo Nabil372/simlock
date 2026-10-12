@@ -99,6 +99,7 @@ describe("loadConfig", () => {
         identity: { ios: "reusable", android: "reusable" },
         requestRetentionMs: 600_000,
         maxRequestRecords: 10_000,
+        maxPerRequester: 1,
       },
       capacity: {
         strategy: "resource",
@@ -654,6 +655,34 @@ describe("loadConfig", () => {
     ).rejects.toThrow(path);
   });
 
+  it("reads lease.maxPerRequester, and defaults it to 1", async () => {
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    const unset = await loadConfig({ configPath, filesystem, systemStats: createStats() });
+    await filesystem.writeFileAtomic(configPath, JSON.stringify({ lease: { maxPerRequester: 3 } }));
+
+    const set = await loadConfig({ configPath, filesystem, systemStats: createStats() });
+
+    expect(unset.lease).toMatchObject({ maxPerRequester: 1 });
+    expect(set.lease).toMatchObject({ maxPerRequester: 3 });
+  });
+
+  it.each([[0], [-1], [1.5], ["2"]])(
+    "rejects lease.maxPerRequester %j, naming the key",
+    async (value) => {
+      const filesystem = new MemoryFilesystem();
+      await filesystem.mkdirp("/home/agent/.simlock");
+      await filesystem.writeFileAtomic(
+        configPath,
+        JSON.stringify({ lease: { maxPerRequester: value } }),
+      );
+
+      await expect(
+        loadConfig({ configPath, filesystem, systemStats: createStats() }),
+      ).rejects.toThrow("lease.maxPerRequester");
+    },
+  );
+
   it("reads lease.identity per platform and leaves the unset platform reusable", async () => {
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
@@ -733,6 +762,7 @@ describe("loadConfig", () => {
       expect(config.lease).toEqual({
         defaultTtlMs: 15 * 60_000,
         identity: { android: "reusable", ios: "reusable" },
+        maxPerRequester: 1,
         maxRequestRecords: 10_000,
         maxTtlMs: 4 * 60 * 60_000,
         requestRetentionMs: 10 * 60_000,
@@ -1639,6 +1669,15 @@ describe("loadConfig modes (ADR 0005)", () => {
     // merged, so a config file can be shared between a worker and a gateway with only `mode`
     // differing. The warning is what makes that visible rather than silent.
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Ignoring "lease"'));
+  });
+
+  it("reads lease.maxPerRequester in gateway mode without an ignored-key warning", async () => {
+    const warn = vi.fn();
+
+    const config = await load({ mode: "gateway", lease: { maxPerRequester: 2 } }, { warn });
+
+    expect(config.lease).toMatchObject({ maxPerRequester: 2 });
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("raises no unknown-key warning for eventLog.rotateBytes in a gateway config", async () => {
