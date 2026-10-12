@@ -112,6 +112,64 @@ function pickEntry(matches: readonly Raw[]): {
   return { ambiguous: false, entry: wired[0] ?? matches[0] };
 }
 
+const WIRED_FIELDS = ["udid", "platform", "deviceType", "osVersionNumber", "pairingState"] as const;
+
+type WiredFields = Readonly<Record<(typeof WIRED_FIELDS)[number], string>>;
+
+function requireStrings(
+  entry: Raw,
+  names: typeof WIRED_FIELDS,
+): WiredFields | { readonly missing: string } {
+  const found: Record<string, string> = {};
+  for (const name of names) {
+    const value = stringField(entry, name);
+    if (value === undefined) return { missing: name };
+    found[name] = value;
+  }
+  return found as WiredFields;
+}
+
+function transportRefusal(id: string, entry: Raw): PhysicalInspection | undefined {
+  const transport = fieldOf(entry, "transportType");
+  if (transport === "sameMachine" || fieldOf(entry, "reality") === "simulated") {
+    return refused("virtual-device", `${id} is a simulator, not a physical device.`);
+  }
+  if (typeof transport !== "string") return missing(id, "transportType");
+  if (transport !== "wired") {
+    return refused("network-only", `${id} is only reachable over the network: connect it by USB.`);
+  }
+  return undefined;
+}
+
+function deviceRefusal(
+  id: string,
+  entry: Raw,
+  fields: WiredFields,
+): PhysicalInspection | undefined {
+  const { deviceType, osVersionNumber, pairingState, platform } = fields;
+  if (platform !== "iOS" || (deviceType !== "iPhone" && deviceType !== "iPad")) {
+    return refused("unsupported-kind", `${id} is a ${deviceType} on ${platform}: not supported.`);
+  }
+  const mobileOnly = fieldOf(entry, "isMobileDeviceOnly");
+  if (mobileOnly !== undefined && typeof mobileOnly !== "boolean") {
+    return missing(id, "isMobileDeviceOnly");
+  }
+  const major = osMajor(osVersionNumber);
+  if (major === undefined) return missing(id, "osVersionNumber");
+  if (major < MIN_OS_MAJOR || mobileOnly === true) {
+    return refused("os-too-old", `${id} needs iOS 17 or later; it runs ${osVersionNumber}.`);
+  }
+  if (pairingState !== "paired") {
+    return refused("untrusted", `${id} is not trusted: accept "Trust This Computer" on it.`);
+  }
+  const developerMode = stringField(entry, "developerModeStatus");
+  if (developerMode === undefined) return missing(id, "developerModeStatus");
+  if (developerMode !== "enabled") {
+    return refused("developer-mode-off", `${id}: Developer Mode is off. Turn it on and retry.`);
+  }
+  return undefined;
+}
+
 export class IosPhysicalHandler {
   readonly #options: PhysicalHandlerOptions;
   #reads = 0;
@@ -147,49 +205,14 @@ export class IosPhysicalHandler {
   }
 
   async #checkEntry(id: string, entry: Raw): Promise<PhysicalInspection> {
-    const transport = fieldOf(entry, "transportType");
-    if (transport === "sameMachine" || fieldOf(entry, "reality") === "simulated") {
-      return refused("virtual-device", `${id} is a simulator, not a physical device.`);
-    }
-    if (typeof transport !== "string") return missing(id, "transportType");
-    if (transport !== "wired") {
-      return refused(
-        "network-only",
-        `${id} is only reachable over the network: connect it by USB.`,
-      );
-    }
-    const udid = stringField(entry, "udid");
-    const platform = stringField(entry, "platform");
-    const deviceType = stringField(entry, "deviceType");
-    const osVersion = stringField(entry, "osVersionNumber");
-    const pairing = stringField(entry, "pairingState");
-    if (udid === undefined) return missing(id, "udid");
-    if (platform === undefined) return missing(id, "platform");
-    if (deviceType === undefined) return missing(id, "deviceType");
-    if (osVersion === undefined) return missing(id, "osVersionNumber");
-    if (pairing === undefined) return missing(id, "pairingState");
+    const early = transportRefusal(id, entry);
+    if (early !== undefined) return early;
+    const fields = requireStrings(entry, WIRED_FIELDS);
+    if ("missing" in fields) return missing(id, fields.missing);
+    const refusal = deviceRefusal(id, entry, fields);
+    if (refusal !== undefined) return refusal;
 
-    if (platform !== "iOS" || (deviceType !== "iPhone" && deviceType !== "iPad")) {
-      return refused("unsupported-kind", `${id} is a ${deviceType} on ${platform}: not supported.`);
-    }
-    const mobileOnly = fieldOf(entry, "isMobileDeviceOnly");
-    if (mobileOnly !== undefined && typeof mobileOnly !== "boolean") {
-      return missing(id, "isMobileDeviceOnly");
-    }
-    const major = osMajor(osVersion);
-    if (major === undefined) return missing(id, "osVersionNumber");
-    if (major < MIN_OS_MAJOR || mobileOnly === true) {
-      return refused("os-too-old", `${id} needs iOS 17 or later; it runs ${osVersion}.`);
-    }
-    if (pairing !== "paired") {
-      return refused("untrusted", `${id} is not trusted: accept "Trust This Computer" on it.`);
-    }
-    const developerMode = stringField(entry, "developerModeStatus");
-    if (developerMode === undefined) return missing(id, "developerModeStatus");
-    if (developerMode !== "enabled") {
-      return refused("developer-mode-off", `${id}: Developer Mode is off. Turn it on and retry.`);
-    }
-
+    const { deviceType, osVersionNumber, udid } = fields;
     const lock = await this.#lockRead(udid);
     if (!lock.ok) return unreadable("devicectl device info lockState", lock.why);
     if (lock.locked) return refused("locked", `${id} is locked: unlock it and try again.`);
@@ -204,38 +227,39 @@ export class IosPhysicalHandler {
       driverDeviceId: udid,
       enrollable: true,
       model,
-      osVersion,
+      osVersion: osVersionNumber,
     };
   }
 
-  async listPresent(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
-    const absent = (driverDeviceId: string): PresentPhysical => ({
-      driverDeviceId,
-      present: false,
-      reason: "not-present",
-    });
-    const listed = await this.#list();
-    if (!listed.ok) return enrolledIds.map(absent);
-
-    return Promise.all(
-      enrolledIds.map(async (udid): Promise<PresentPhysical> => {
-        const { entry, ambiguous } = pickEntry(
-          listed.entries.filter((candidate) => sameText(stringField(candidate, "udid"), udid)),
-        );
-        if (ambiguous || entry === undefined) return absent(udid);
-        if (fieldOf(entry, "transportType") !== "wired") return absent(udid);
-        if (fieldOf(entry, "reality") === "simulated") return absent(udid);
-        if (fieldOf(entry, "pairingState") !== "paired") {
-          return { driverDeviceId: udid, present: false, reason: "untrusted" };
-        }
-        const osVersion = stringField(entry, "osVersionNumber");
-        if (osVersion === undefined) return absent(udid);
-        const lock = await this.#lockRead(udid);
-        if (!lock.ok) return absent(udid);
-        if (lock.locked) return { driverDeviceId: udid, present: false, reason: "locked" };
-        return { driverDeviceId: udid, osVersion, present: true };
-      }),
+  async #presence(udid: string, entries: readonly Raw[]): Promise<PresentPhysical> {
+    const absent: PresentPhysical = { driverDeviceId: udid, present: false, reason: "not-present" };
+    const { entry, ambiguous } = pickEntry(
+      entries.filter((candidate) => sameText(stringField(candidate, "udid"), udid)),
     );
+    if (ambiguous || entry === undefined) return absent;
+    if (fieldOf(entry, "transportType") !== "wired") return absent;
+    if (fieldOf(entry, "reality") === "simulated") return absent;
+    if (fieldOf(entry, "pairingState") !== "paired") {
+      return { driverDeviceId: udid, present: false, reason: "untrusted" };
+    }
+    const osVersion = stringField(entry, "osVersionNumber");
+    if (osVersion === undefined) return absent;
+    const lock = await this.#lockRead(udid);
+    if (!lock.ok) return absent;
+    if (lock.locked) return { driverDeviceId: udid, present: false, reason: "locked" };
+    return { driverDeviceId: udid, osVersion, present: true };
+  }
+
+  async listPresent(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
+    const listed = await this.#list();
+    if (!listed.ok) {
+      return enrolledIds.map((driverDeviceId) => ({
+        driverDeviceId,
+        present: false,
+        reason: "not-present",
+      }));
+    }
+    return Promise.all(enrolledIds.map((udid) => this.#presence(udid, listed.entries)));
   }
 
   async reclaim(device: PhysicalDriverDevice): Promise<ReclaimResult> {

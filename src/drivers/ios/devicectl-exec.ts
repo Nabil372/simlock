@@ -122,15 +122,19 @@ function isHostPathOption(argument: string): boolean {
   return false;
 }
 
+function splitOption(argument: string): { readonly name: string; readonly inline: boolean } {
+  const equals = argument.startsWith("--") ? argument.indexOf("=") : -1;
+  return equals === -1
+    ? { inline: false, name: argument }
+    : { inline: true, name: argument.slice(0, equals) };
+}
+
 function parseOptions(
   command: string,
   spec: CommandSpec,
   options: readonly string[],
 ): { readonly namesDevice: boolean } {
-  const valued = new Map<string, boolean>();
-  for (const aliases of [...spec.valued, ...COMMON_VALUED]) {
-    for (const alias of aliases) valued.set(alias, true);
-  }
+  const valued = new Set([...spec.valued, ...COMMON_VALUED].flat());
   const flags = new Set([...spec.flags, ...COMMON_FLAGS]);
   let namesDevice = false;
   let positional = 0;
@@ -140,29 +144,19 @@ function parseOptions(
       expectsValue = false;
       continue;
     }
-    if (argument.startsWith("--")) {
-      const equals = argument.indexOf("=");
-      const name = equals === -1 ? argument : argument.slice(0, equals);
-      if (valued.has(name)) {
-        if (name === "--device") namesDevice = true;
-        if (equals === -1) expectsValue = true;
-        continue;
+    if (!argument.startsWith("-") || argument === "-") {
+      positional += 1;
+      if (positional > spec.positional) {
+        refuse(`${command}: ${argument} is an extra argument; the app's own arguments go after --`);
       }
-      if (flags.has(name) && equals === -1) continue;
-      refuse(`${command}: ${argument} is not on the reviewed list`);
+      continue;
     }
-    if (argument.startsWith("-") && argument.length > 1) {
-      if (valued.has(argument)) {
-        if (argument === "-d") namesDevice = true;
-        expectsValue = true;
-        continue;
-      }
-      if (flags.has(argument)) continue;
+    const { name, inline } = splitOption(argument);
+    if (valued.has(name)) {
+      namesDevice ||= name === "-d" || name === "--device";
+      expectsValue = !inline;
+    } else if (!flags.has(name) || inline) {
       refuse(`${command}: ${argument} is not on the reviewed list`);
-    }
-    positional += 1;
-    if (positional > spec.positional) {
-      refuse(`${command}: ${argument} is an extra argument; the app's own arguments go after --`);
     }
   }
   if (expectsValue) refuse(`${command}: an option has no value`);
