@@ -678,53 +678,6 @@ export class FleetLeaseCoordinator {
     this.#enqueue(waiter);
   }
 
-  /**
-   * ADR §11: re-run on every worker-view change. Every already-queued waiter not currently in
-   * flight gets one more look, oldest first; one no eligible worker can take right now is passed over,
-   * not blocked on -- there is no early exit from this loop.
-   *
-   * H6 (round 3 review): `routing.select` reads the same unchanged `routingViews()` snapshot for every
-   * waiter in this loop, so a worker whose view over-reports free capacity relative to what it
-   * can actually grant right now used to look equally eligible to every one of them -- N queued
-   * waiters could all pick that one worker in a single pass, and every one past the first came
-   * back `NO_CAPACITY`, each triggering its own `#staleView` refresh. Self-limiting once the
-   * refresh lands (the module doc's "the dispatch race"), but an over-reporting view that never
-   * corrects itself between passes turns this into an RPC storm scaling with queue depth. Once a
-   * worker is claimed by a waiter this pass, it drops out of the pool the rest of the pass sees:
-   * at most one dispatch per worker per pass. A waiter left without a worker this way is not
-   * rejected -- it stays `queued` for the next pass. C1 (round 3 review): that next pass is
-   * guaranteed now, not merely hoped for -- `#attempt` runs one itself the moment *any* attempt
-   * settles (a grant via `#settleGrant`, or a terminal rejection), on top of the existing
-   * worker-view trigger, so a waiter passed over here always gets looked at again once whatever
-   * claimed its worker this pass is done with it, the same "passed over, not blocked on" contract
-   * this method already promises for a request a busy fleet cannot take yet. (A request no worker
-   * can serve at all is not passed over: the walk rejects it, ADR 0009 §4.) Before this, only a
-   * worker's own event stream (a `lease.rejected`/`lease.expired` push, or the 30s refresh tick)
-   * ever re-ran this method -- several of `#attempt`'s own terminal branches
-   * (`WORKER_UNREACHABLE`, `INTERNAL`, a target that disappeared between routing and dispatch)
-   * produce no such push at all, so a waiter passed over in the same pass as one of those had
-   * nothing left to schedule another look.
-   *
-   * `#dispatchDepth` guards against this method ever running re-entrantly on the same call stack
-   * (defensive: `#beginAttempt`'s own `#attempt` is `void`-async and every await point in it is
-   * genuinely asynchronous -- see `#raceTimeout` -- so a nested synchronous call back into this
-   * method should not be reachable today, but nothing about that is enforced by a type). A nested
-   * call is *deferred*, not dropped: it sets `#passRequested` and the running call walks again
-   * once it unwinds. Dropping it was C1's own stall reintroduced by the guard meant to prevent
-   * recursion -- the outer walk iterates a snapshot and has already claimed workers, so a waiter
-   * freed mid-pass would never be reconsidered (round 4 review, finding 6).
-   *
-   * `candidate` is the waiter `#admit` is admitting; it walks last and the return value says
-   * whether it was attempted. See `#dispatchPass`.
-   *
-   * The deferred passes above deliberately carry **no** candidate, and that is not a dropped
-   * one (round 5 review): a nested `#dispatch` can only be raised from inside a `#beginAttempt`,
-   * `#dispatchPass` re-reads `views.routingViews()` per waiter rather than once per pass, and the
-   * candidate walks last. So every view change a deferred pass exists to react to was already
-   * raised *before* the candidate's own iteration read the views, and was already visible to it.
-   * There is no state a second pass could show the candidate that its first look did not have,
-   * which is why re-offering it there would add a branch no test can fail for the right reason.
-   */
   #dispatch(candidate?: FleetWaiter): boolean {
     if (this.#dispatchDepth > 0) {
       // Round 4 review: a nested pass used to be *dropped*. The outer walk iterates a snapshot

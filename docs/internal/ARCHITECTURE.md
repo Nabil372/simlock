@@ -748,7 +748,10 @@ request any model of it, `UNKNOWN_MODEL` (its details carry `class` instead of
 `model`); none has the runtime or pairs it with the model, or with a model of
 the class, `RUNTIME_MISSING` with `downloadable: false` and `osVersion` the
 constraint as typed, `"default"` for an unnamed runtime (the
-last three with reason `unresolvable-spec`); a known worker can serve it but
+last three with reason `unresolvable-spec`; a physical request skips the
+catalog rows: no known worker has an enrolled device that fits it,
+`UNKNOWN_MODEL` with reason `unresolvable-spec`, and no taking worker has one,
+`NO_CAPACITY`); a known worker can serve it but
 none that takes requests can, `NO_CAPACITY` (`no-worker`); otherwise route or
 wait. A worker *takes requests* when it passes `takes-requests`; the gateway
 *knows* a worker when it is not `incompatible` and the gateway holds a catalog
