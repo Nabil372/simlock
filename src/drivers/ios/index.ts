@@ -17,7 +17,10 @@ import {
   DriverCrashError,
   type DriverEstimate,
   type DriverReality,
+  type PhysicalDriverDevice,
   type PhysicalInspection,
+  type ReclaimResult,
+  type VirtualDriverDevice,
   isPhysicalDriverDevice,
   type PresentPhysical,
   ensureOwnedRoot,
@@ -27,6 +30,7 @@ import {
   type ObservedDevice,
   OwnedRootError,
   type PassthroughCommand,
+  type PassthroughContext,
   PassthroughRefusedError,
   type ObservedRunState,
   removeListedComponent,
@@ -48,6 +52,8 @@ import type {
   ProcessRunner,
 } from "../../ports/index.js";
 import { runBoundedProcess, runInstallerProcess } from "../installer-process.js";
+import { devicectlExecCommand } from "./devicectl-exec.js";
+import { IosPhysicalHandler } from "./physical.js";
 import { labelsFor, resolveSlimCategories, slimSignature } from "./slim-labels.js";
 
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -84,18 +90,19 @@ const IOS_RUNTIME_ASSET_ROOT = "/System/Library/AssetsV2/com_apple_MobileAsset_i
 // failure mode #56 is about. The cost is that `Doctor`'s `provisioning` stall threshold widens
 // with it -- see the note there on why that is the cheaper of the two errors.
 const COLD_BOOT_ESTIMATE_MS = 60_000;
-// Measured, not guessed: a single `simctl erase` took ~34s in #43's investigation. Unlike
-// Android, iOS has no deferred-wipe path -- `erase` is synchronous and every reclaim pays it,
-// at either clean level, so this is the only reclaim number the driver has.
+// why: measured, not guessed: a single `simctl erase` took ~34s in #43's investigation. Unlike
+// Android, iOS has no deferred-wipe path -- `erase` is synchronous and every simulator reclaim
+// pays it, at either clean level, so this is the only simulator reclaim number the driver has.
+// A physical device reclaim uninstalls apps instead and has its own estimate below.
 const ERASE_ESTIMATE_MS = 34_000;
+const PHYSICAL_RECLAIM_ESTIMATE_MS = 90_000;
 const MARK_FILE_NAME = "simlock-mark.json";
 /**
- * The `simlock <tool>` wrapper this driver answers to. Published as a constant because a
- * driver that refused to start has no instance to ask, and `DriverRejection` carries the
- * name so `simlock simctl` can say why it is unavailable rather than reading as a missing
- * SDK.
+ * why: a driver that refused to start has no instance to ask, so the `simlock <tool>` names
+ * it answers to are a constant, and `DriverRejection` carries them so `simlock simctl` can
+ * say why it is unavailable rather than reading as a missing SDK.
  */
-export const IOS_PASSTHROUGH_TOOL = "simctl";
+export const IOS_PASSTHROUGH_TOOLS: readonly string[] = ["simctl", "devicectl"];
 
 /**
  * ADR 0015 §4: the models Simlock tries for each class on iOS when the operator names none
@@ -357,6 +364,7 @@ export class IosSimctlDriver implements Driver {
   readonly #onSlimmed: ((fact: SlimmedFact) => void) | undefined;
   readonly #onSlimSkipped: ((fact: SlimSkippedFact) => void) | undefined;
   readonly #processRunner: ProcessRunner;
+  readonly #physical: IosPhysicalHandler;
   readonly #resolvedSpecs = new Map<string, ResolvedIosSpec>();
   readonly #deviceRoot: string;
   readonly #rootOptions: EnsureOwnedRootOptions;
@@ -378,6 +386,12 @@ export class IosSimctlDriver implements Driver {
     this.#onSlimmed = options.onSlimmed;
     this.#onSlimSkipped = options.onSlimSkipped;
     this.#processRunner = options.processRunner;
+    this.#physical = new IosPhysicalHandler({
+      filesystem: options.filesystem,
+      idGenerator: options.idGenerator,
+      invoke: (argv, timeoutMs) => this.#invokeXcrun(argv, timeoutMs),
+      simlockHome: options.simlockHome,
+    });
     this.#deviceRoot = deviceRoot;
     this.#rootOptions = rootOptions;
     this.#slim = options.slim;
@@ -1215,10 +1229,8 @@ export class IosSimctlDriver implements Driver {
   async reclaim(
     device: DriverDevice,
     _options: { readonly clean: "standard" | "full" },
-  ): Promise<{ readonly state: "shutdown"; readonly strategy: "erase" }> {
-    if (isPhysicalDriverDevice(device)) {
-      throw new Error("a physical device cannot be reclaimed yet");
-    }
+  ): Promise<ReclaimResult> {
+    if (isPhysicalDriverDevice(device)) return this.#physical.reclaim(device);
     const data = iosDriverData(device);
     await this.#shutdown(data.udid);
     await this.#simctl(["erase", data.udid], COMMAND_TIMEOUT_MS);
@@ -1279,16 +1291,13 @@ export class IosSimctlDriver implements Driver {
     await this.#legacySimctl(["delete", udid], COMMAND_TIMEOUT_MS);
   }
 
+  // fallow-ignore-next-line unused-class-member -- called through the Driver interface by the leasing watcher.
   async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
-    return enrolledIds.map((driverDeviceId) => ({ driverDeviceId, present: false }));
+    return this.#physical.listPresent(enrolledIds);
   }
 
-  async inspectPhysical(_id: string): Promise<PhysicalInspection> {
-    return {
-      enrollable: false,
-      message: "this driver cannot read physical devices yet",
-      reason: "not-connected",
-    };
+  async inspectPhysical(id: string): Promise<PhysicalInspection> {
+    return this.#physical.inspect(id);
   }
 
   async listManaged(): Promise<DriverReality> {
@@ -1352,6 +1361,7 @@ export class IosSimctlDriver implements Driver {
           ? SLIM_BOOT_ESTIMATE_MS
           : COLD_BOOT_ESTIMATE_MS;
       case "reclaim":
+        if (spec.physical) return PHYSICAL_RECLAIM_ESTIMATE_MS;
         // `reclaimStrategy` returns `erase` for both clean levels, so there is nothing to
         // branch on here -- the clean level only matters to a driver that has a fast path.
         return ERASE_ESTIMATE_MS;
@@ -1527,13 +1537,61 @@ export class IosSimctlDriver implements Driver {
     return { SIMLOCK_IOS_DEVICE_SET: this.#deviceRoot };
   }
 
-  readonly passthroughTool = IOS_PASSTHROUGH_TOOL;
+  readonly passthroughTools = IOS_PASSTHROUGH_TOOLS;
 
-  /** The two globals that could disguise a refused verb are refused before the verb is resolved. */
-  passthrough(args: readonly string[]): PassthroughCommand {
+  async passthrough(
+    tool: string,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    args: readonly string[],
+    context?: PassthroughContext,
+  ): Promise<PassthroughCommand> {
+    if (tool === "devicectl") return this.#devicectlPassthrough(device, args, context);
+    if (tool !== "simctl") {
+      throw new PassthroughRefusedError(
+        tool,
+        `Refusing \`${tool}\`: the iOS driver does not wrap it.`,
+      );
+    }
+    if (device !== undefined && isPhysicalDriverDevice(device)) {
+      throw new PassthroughRefusedError(
+        tool,
+        "Refusing `simctl`: it serves simulators, and this lease holds a physical device. Use `devicectl`.",
+      );
+    }
     this.#assertProxyable(args);
     // No environment: simctl ignores every variable that could carry the device set.
-    return { args: ["simctl", "--set", this.#deviceRoot, ...args], command: "xcrun", env: {} };
+    return await Promise.resolve({
+      args: ["simctl", "--set", this.#deviceRoot, ...args],
+      command: "xcrun",
+      env: {},
+    });
+  }
+
+  #devicectlPassthrough(
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    args: readonly string[],
+    context: PassthroughContext | undefined,
+  ): PassthroughCommand {
+    const tool = "devicectl";
+    if (device === undefined) {
+      throw new PassthroughRefusedError(
+        tool,
+        "Refusing `simlock devicectl`: Simlock has no local devicectl wrapper. Run `xcrun devicectl` directly, or use `device.exec` on a lease.",
+      );
+    }
+    if (context?.platform !== undefined && context.platform !== this.platform) {
+      throw new PassthroughRefusedError(
+        tool,
+        `Refusing \`devicectl\`: it only serves a physical iOS device, and this lease is on the ${context.platform} platform.`,
+      );
+    }
+    if (!isPhysicalDriverDevice(device)) {
+      throw new PassthroughRefusedError(
+        tool,
+        "Refusing `devicectl`: it only serves a physical device, and this lease holds a simulator. Use `simctl`.",
+      );
+    }
+    return devicectlExecCommand(device.deviceId, args);
   }
 
   #assertProxyable(args: readonly string[]): void {
@@ -1564,7 +1622,7 @@ export class IosSimctlDriver implements Driver {
 
   #refuse(command: string, guidance: string): never {
     throw new PassthroughRefusedError(
-      this.passthroughTool,
+      "simctl",
       `Refusing \`simlock simctl ${command}\`: ${guidance}`,
     );
   }
@@ -1592,7 +1650,7 @@ export class IosSimctlDriver implements Driver {
       const flag = /^-+([^=]*)/.exec(argument)?.[1];
       if (flag !== undefined && CALLER_SUPPLIED_SCOPE_FLAGS.has(flag)) {
         throw new PassthroughRefusedError(
-          this.passthroughTool,
+          "simctl",
           `Refusing \`simlock simctl ${argument}\`: \`simlock simctl\` supplies the device set itself, and a caller-supplied \`--${flag}\` would point simctl somewhere Simlock does not manage. Drop the flag -- the command is already scoped -- or run \`xcrun simctl\` directly if you mean to leave Simlock's set.`,
         );
       }
@@ -1601,7 +1659,7 @@ export class IosSimctlDriver implements Driver {
       // unrecognized adb global is (`allowedGlobalArity`). Skipping it is exactly what let a
       // caller-supplied `--set`/`--profiles` hide behind an unrecognized flag's *value*.
       throw new PassthroughRefusedError(
-        this.passthroughTool,
+        "simctl",
         `Refusing \`simlock simctl ${argument}\`: \`simlock simctl\` supplies the device set itself, and does not recognize any caller-supplied argument ahead of the subcommand. Drop the flag -- the command is already scoped -- or run \`xcrun simctl\` directly if you mean to leave Simlock's set.`,
       );
     }

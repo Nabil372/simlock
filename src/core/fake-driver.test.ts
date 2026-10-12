@@ -4,6 +4,7 @@ import {
   DriverCrashError,
   type Driver,
   type PhysicalDriverDevice,
+  PassthroughRefusedError,
   UnknownModelError,
 } from "./index.js";
 import { FakeDriver, FakeDriverUnknownDeviceError } from "./fake-driver.js";
@@ -18,7 +19,60 @@ const VIRTUAL_DEVICE = {
   physical: false,
 } as const;
 
+type FakeDriverOptions = ConstructorParameters<typeof FakeDriver>[0];
+
+function passthroughFake(options: Partial<FakeDriverOptions>): FakeDriver {
+  return new FakeDriver({ clock: new FakeClock(), platform: "ios", ...options });
+}
+
 describe("FakeDriver", () => {
+  it("claims the tool names its options give in passthroughTools", () => {
+    const driver = passthroughFake({ passthroughTools: ["simctl", "devicectl"] });
+
+    expect(driver.passthroughTools).toEqual(["simctl", "devicectl"]);
+  });
+
+  it("resolves the scripted passthrough command, handing it the tool, device, args and context", async () => {
+    const seen: unknown[] = [];
+    const driver = passthroughFake({
+      passthrough: (tool: string, device: unknown, args: readonly string[], context?: unknown) => {
+        seen.push({ args, context, device, tool });
+        return { args: ["--set", "/root", ...args], command: "xcrun", env: {} };
+      },
+      passthroughTools: ["simctl"],
+    });
+
+    await expect(
+      driver.passthrough("simctl", VIRTUAL_DEVICE, ["list"], { hasTerminal: false }),
+    ).resolves.toEqual({ args: ["--set", "/root", "list"], command: "xcrun", env: {} });
+    expect(seen).toEqual([
+      { args: ["list"], context: { hasTerminal: false }, device: VIRTUAL_DEVICE, tool: "simctl" },
+    ]);
+  });
+
+  it("rejects a scripted refusal with its PassthroughRefusedError instead of throwing it", async () => {
+    const driver = passthroughFake({
+      passthrough: () => {
+        throw new PassthroughRefusedError("simctl", "Refusing `simlock simctl delete`");
+      },
+      passthroughTools: ["simctl"],
+    });
+
+    const returned = driver.passthrough("simctl", undefined, ["delete"]);
+
+    await expect(returned).rejects.toBeInstanceOf(PassthroughRefusedError);
+    await expect(returned).rejects.toMatchObject({ tool: "simctl" });
+  });
+
+  it("rejects with PassthroughRefusedError naming the tool when no passthrough was scripted", async () => {
+    const driver = passthroughFake({ passthroughTools: ["adb"] });
+
+    await expect(driver.passthrough("adb", undefined, ["devices"])).rejects.toMatchObject({
+      name: "PassthroughRefusedError",
+      tool: "adb",
+    });
+  });
+
   it("is exported from core/testing.ts and not from the public index", () => {
     expect(testing.FakeDriver).toBe(FakeDriver);
     expect("FakeDriver" in publicIndex).toBe(false);

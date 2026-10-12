@@ -205,8 +205,8 @@ export interface SimlockClient {
    * 7). Resolution only -- the caller is the process with a terminal, so it runs it. */
   resolvePassthrough(input: DriverPassthroughInput): Promise<PassthroughCommand>;
   /**
-   * Runs `simctl`/`adb` **on the daemon's machine** against a device this client's principal
-   * leases, streaming the output to `options.onOutput` as it arrives and resolving with the
+   * why: runs `simctl`, `adb` or `devicectl` **on the daemon's machine** against a device this
+   * client's principal leases, streaming the output to `options.onOutput` as it arrives and resolving with the
    * command's exit code (ADR 0005 §19a). The counterpart to `resolvePassthrough`: that one
    * hands back a command line for a caller sharing the machine, this one is for a caller that
    * does not. `stdin` is written once and closed -- there is no pseudo-terminal, so

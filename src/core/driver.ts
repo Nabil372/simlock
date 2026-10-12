@@ -352,9 +352,14 @@ export interface Driver {
   /** Android must reap the adb server it supervises by pid; nothing else can. */
   dispose?(): Promise<void>;
   /** Spelled `| undefined` so a driver that decides at construction can still say it has none. */
-  readonly passthroughTool?: string | undefined;
-  /** `device.exec` has no pseudo-terminal (ADR 0005 §19c), so a driver may refuse there what it allows locally. */
-  passthrough?(args: readonly string[], context?: PassthroughContext): PassthroughCommand;
+  readonly passthroughTools?: readonly string[] | undefined;
+  /** why: `device.exec` has no pseudo-terminal (ADR 0005 §19c), so a driver may refuse there what it allows locally. */
+  passthrough?(
+    tool: string,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    args: readonly string[],
+    context?: PassthroughContext,
+  ): Promise<PassthroughCommand>;
   /**
    * Looks for a registry device in the location this platform used before Simlock owned a
    * root, and reports it without touching it. Optional: a driver with no pre-root history
@@ -411,12 +416,14 @@ export interface PassthroughCommand {
 }
 
 /**
- * What the caller can give the command it is asking for. One field today: whether the process
- * that runs it has a terminal. A driver reads it to refuse what cannot work without one (a
- * bare `adb shell`), and nothing else -- it is not a general-purpose "who is asking".
+ * why: a driver cannot see the process that will run its command or the lease's platform, so
+ * the caller states `hasTerminal` (to refuse what needs one, a bare `adb shell`) and, on
+ * `device.exec`, the lease's `platform` (to refuse a tool that is another platform's). It is
+ * not a general-purpose "who is asking".
  */
 export interface PassthroughContext {
   readonly hasTerminal: boolean;
+  readonly platform?: Platform;
 }
 
 /**
@@ -476,12 +483,11 @@ interface DriverRefusal<Event extends DriverRejectionEvent> {
    */
   readonly reason: DriverRejectionReason;
   /**
-   * The `simlock <tool>` wrapper this driver would have answered to, when it has one.
-   * Carried because a passthrough that finds no driver is otherwise indistinguishable
+   * why: the `simlock <tool>` wrappers this driver would have answered to are carried because a passthrough that finds no driver is otherwise indistinguishable
    * from a host with no SDK, and safety rule 9 promises Simlock reports *why*. The core
    * only compares it to the requested tool name; the name itself is the driver's.
    */
-  readonly passthroughTool?: string;
+  readonly passthroughTools?: readonly string[];
   /** One line, for `doctor` output and the startup log. */
   readonly summary: string;
 }

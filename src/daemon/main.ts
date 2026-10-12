@@ -31,14 +31,14 @@ import { createLeasing } from "../leasing/index.js";
 import {
   AdbServerUnavailableError,
   AndroidDriver,
-  ANDROID_PASSTHROUGH_TOOL,
+  ANDROID_PASSTHROUGH_TOOLS,
   hostAbiFor,
   SdkMissingError,
   type AndroidEmulatorLaunchOptions,
   androidPrerequisites,
 } from "../drivers/android/index.js";
 import {
-  IOS_PASSTHROUGH_TOOL,
+  IOS_PASSTHROUGH_TOOLS,
   IosSimctlDriver,
   type SlimmedFact,
   iosPrerequisites,
@@ -996,7 +996,7 @@ async function discoverIosDriver(
       root: error.path,
       summary: error.message,
     });
-    return { rejection: rootRejection(error, IOS_PASSTHROUGH_TOOL) };
+    return { rejection: rootRejection(error, IOS_PASSTHROUGH_TOOLS) };
   }
 }
 
@@ -1043,7 +1043,7 @@ async function discoverAndroidDriver(
         root: error.path,
         summary: error.message,
       });
-      return { rejection: rootRejection(error, ANDROID_PASSTHROUGH_TOOL) };
+      return { rejection: rootRejection(error, ANDROID_PASSTHROUGH_TOOLS) };
     }
     if (error instanceof AdbServerUnavailableError) {
       logger.error("Skipped Android driver: adb server unavailable", {
@@ -1061,7 +1061,7 @@ async function discoverAndroidDriver(
 function adbServerRejection(error: AdbServerUnavailableError): DriverRejection {
   return {
     event: "driver.adb-server-rejected",
-    passthroughTool: ANDROID_PASSTHROUGH_TOOL,
+    passthroughTools: ANDROID_PASSTHROUGH_TOOLS,
     payload: { port: error.port, reason: error.reason },
     platform: "android",
     reason: error.reason,
@@ -1070,14 +1070,17 @@ function adbServerRejection(error: AdbServerUnavailableError): DriverRejection {
 }
 
 /**
- * The tool name is passed in rather than derived from `error.platform`: which wrapper a
+ * why: the tool names are passed in rather than derived from `error.platform`: which wrapper a
  * platform answers to is the driver module's business, and this file is the composition
  * root that already knows both driver classes (architecture rule 2).
  */
-function rootRejection(error: OwnedRootError, passthroughTool: string): DriverRejection {
+function rootRejection(
+  error: OwnedRootError,
+  passthroughTools: readonly string[],
+): DriverRejection {
   return {
     event: "driver.root-rejected",
-    passthroughTool,
+    passthroughTools,
     payload: { platform: error.platform, reason: error.reason, root: error.path },
     platform: error.platform,
     reason: error.reason,

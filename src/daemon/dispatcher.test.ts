@@ -23,6 +23,7 @@ import {
   RuntimeMissingError,
   type CatalogReader,
   type PassthroughResolver,
+  toDriverDevice,
 } from "../core/index.js";
 import { NoCapacityError } from "../leasing/index.js";
 import {
@@ -109,8 +110,8 @@ function fakePassthroughOptions(
   contextSink: unknown[] | undefined,
 ): Partial<FakeDriverOptions> {
   if (tool === undefined) return {};
-  return {
-    passthrough: (args: readonly string[], context?: unknown) => {
+  const options = {
+    passthrough: (_tool: string, _device: unknown, args: readonly string[], context?: unknown) => {
       contextSink?.push(context);
       // The refusal half of a real driver's passthrough, in the smallest form that
       // proves `device.exec` inherits it: `driver.passthrough` and `device.exec` call
@@ -127,8 +128,30 @@ function fakePassthroughOptions(
         env: { SIMLOCK_SCOPED: "1" },
       };
     },
-    passthroughTool: tool,
+    passthroughTools: [tool],
   };
+  return options;
+}
+
+interface RecordedPassthrough {
+  readonly args: readonly string[];
+  readonly context: unknown;
+  readonly device: unknown;
+  readonly tool: string;
+}
+
+function recordingResolver(
+  calls: RecordedPassthrough[],
+  answer: () => Promise<unknown> = () =>
+    Promise.resolve({ args: ["list", "devices"], command: "simctl", env: {} }),
+): PassthroughResolver {
+  const resolver = {
+    passthrough: (tool: string, device: unknown, args: readonly string[], context?: unknown) => {
+      calls.push({ args, context, device, tool });
+      return answer();
+    },
+  };
+  return resolver as unknown as PassthroughResolver;
 }
 
 /** A fake clock that can also be set back, as a wall clock can be. */
@@ -3013,6 +3036,138 @@ describe("Dispatcher: device.exec", () => {
     expect(runner.calls).toEqual([]);
   });
 
+  it("passes the lease's driver device to passthrough for device.exec and no device for driver.passthrough", async () => {
+    const calls: RecordedPassthrough[] = [];
+    const built = await buildDispatcher({
+      passthroughOverride: recordingResolver(calls),
+      processRunner: new ScriptedProcessRunner([
+        { match: { args: ["list", "devices"], command: "simctl" } },
+      ]),
+    });
+    const grant = (await built.dispatcher.dispatch(
+      "lease.request",
+      { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+      session({ principal: "tok_agent" }),
+    )) as { lease: { id: string } };
+    const lease = built.registry.snapshot.leases.find(
+      (candidate) => candidate.id === grant.lease.id,
+    );
+    const record = built.registry.snapshot.devices.find((device) => device.id === lease?.deviceId);
+    if (record === undefined) throw new Error("granted device is not in the registry");
+
+    const settled = await Promise.allSettled([
+      built.dispatcher.dispatch(
+        "device.exec",
+        { args: ["list", "devices"], leaseId: grant.lease.id, tool: "simctl" },
+        session({ principal: "tok_agent" }),
+      ),
+      built.dispatcher.dispatch(
+        "driver.passthrough",
+        { args: ["list", "devices"], tool: "simctl" },
+        session({ principal: "tok_agent" }),
+      ),
+    ]);
+
+    expect(calls.map((call) => call.device)).toEqual([toDriverDevice(record), undefined]);
+    expect(calls[0]?.device).toMatchObject({ deviceId: record.driverDeviceId, physical: false });
+    expect(settled.map((outcome) => outcome.status)).toEqual(["fulfilled", "fulfilled"]);
+  });
+
+  it("answers PASSTHROUGH_REFUSED on device.exec and driver.passthrough when passthrough rejects, and device.exec spawns nothing", async () => {
+    const calls: RecordedPassthrough[] = [];
+    const runner = new ScriptedProcessRunner([]);
+    const { dispatcher, leaseId } = await withLease({
+      passthroughOverride: recordingResolver(calls, () =>
+        Promise.reject(new PassthroughRefusedError("devicectl", "Refusing `simlock devicectl`.")),
+      ),
+      processRunner: runner,
+    });
+
+    const exec = await dispatcher
+      .dispatch(
+        "device.exec",
+        { args: ["list", "devices"], leaseId, tool: "devicectl" },
+        session({ principal: "tok_agent" }),
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    const direct = await dispatcher
+      .dispatch(
+        "driver.passthrough",
+        { args: ["list", "devices"], tool: "devicectl" },
+        session({ principal: "tok_agent" }),
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+
+    expect(calls.map((call) => call.tool)).toEqual(["devicectl", "devicectl"]);
+    expect(exec).toBeInstanceOf(PassthroughRefusedError);
+    expect(classifyError(exec)).toBe("PASSTHROUGH_REFUSED");
+    expect(direct).toBeInstanceOf(PassthroughRefusedError);
+    expect(classifyError(direct)).toBe("PASSTHROUGH_REFUSED");
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("answers UNKNOWN_LEASE and resolves no command when device.exec names no lease", async () => {
+    const calls: RecordedPassthrough[] = [];
+    const runner = new ScriptedProcessRunner([]);
+    const { dispatcher } = await withLease({
+      passthroughOverride: recordingResolver(calls),
+      processRunner: runner,
+    });
+
+    const error = await dispatcher
+      .dispatch(
+        "device.exec",
+        { args: ["list", "devices"], leaseId: "lse_gone", tool: "simctl" },
+        session({ principal: "tok_agent" }),
+      )
+      .then(
+        () => undefined,
+        (rejected: unknown) => rejected,
+      );
+
+    expect(classifyError(error)).toBe("UNKNOWN_LEASE");
+    expect(calls).toEqual([]);
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("answers UNKNOWN_LEASE and resolves no command when the lease's device record is gone", async () => {
+    const calls: RecordedPassthrough[] = [];
+    const runner = new ScriptedProcessRunner([]);
+    const built = await buildDispatcher({
+      passthroughOverride: recordingResolver(calls),
+      processRunner: runner,
+    });
+    const grant = (await built.dispatcher.dispatch(
+      "lease.request",
+      { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+      session({ principal: "tok_agent" }),
+    )) as { lease: { id: string } };
+    const snapshot = built.registry.snapshot;
+    expect(snapshot.leases.map((lease) => lease.id)).toEqual([grant.lease.id]);
+    vi.spyOn(built.registry, "snapshot", "get").mockReturnValue({ ...snapshot, devices: [] });
+
+    const error = await built.dispatcher
+      .dispatch(
+        "device.exec",
+        { args: ["list", "devices"], leaseId: grant.lease.id, tool: "simctl" },
+        session({ principal: "tok_agent" }),
+      )
+      .then(
+        () => undefined,
+        (rejected: unknown) => rejected,
+      );
+
+    expect(classifyError(error)).toBe("UNKNOWN_LEASE");
+    expect(calls).toEqual([]);
+    expect(runner.calls).toEqual([]);
+  });
+
   it("tells the driver there is no terminal, so it can refuse what needs one", async () => {
     // ADR 0005 §19c: the command runs here, on pipes. The driver is the only thing that knows
     // which of its own commands that rules out (a bare `adb shell`), so the fact travels to
@@ -3034,7 +3189,7 @@ describe("Dispatcher: device.exec", () => {
       session({ principal: "tok_agent" }),
     );
 
-    expect(seen).toEqual([{ hasTerminal: false }, undefined]);
+    expect(seen).toEqual([{ hasTerminal: false, platform: "ios" }, undefined]);
   });
 
   it("answers UNKNOWN_LEASE for an id that names no lease, rather than running the command", async () => {
@@ -3143,7 +3298,9 @@ describe("Dispatcher: device.exec", () => {
     // defect -- and its fix, in `NodeStreamingProcessHandle` -- is actually exercised, for
     // both transports at once.
     function realCommand(script: string): PassthroughResolver {
-      return { passthrough: () => ({ args: ["-e", script], command: process.execPath, env: {} }) };
+      return recordingResolver([], () =>
+        Promise.resolve({ args: ["-e", script], command: process.execPath, env: {} }),
+      );
     }
     // The 30 s per-test timeouts below are hang guards, not speed claims: the stalled-delivery
     // case waits out the real 5 s `EXIT_TO_CLOSE_MAX_DEFERRAL_MS` by design, and a 10 s guard

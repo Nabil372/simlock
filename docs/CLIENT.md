@@ -250,7 +250,7 @@ driver builds (the scoping flags for its own device root, `simctl --set` or
 the adb port it names exist where you are.
 
 `exec` runs it. The daemon resolves the same command through the same
-driver — the same scoping, and the same refusal list, so a verb the driver
+driver — the same scoping, and the same refusal rules, so a verb the driver
 will not proxy comes back as `PASSTHROUGH_REFUSED` from either method, and a
 `tool` no driver on that machine wraps as `UNKNOWN_PASSTHROUGH_TOOL` — spawns
 it on its own machine, and streams the output to `onOutput` as it arrives.
@@ -259,8 +259,9 @@ the command wrote, decoded as UTF-8 and forwarded unsplit, so a caller that
 wants lines assembles them itself. Nothing is buffered daemon-side and there is
 no size cap. The promise resolves with the command's own `exitCode`.
 
-`leaseId` is an ownership proof and nothing more: the *device* is named by the
-command's own arguments, which the daemon does not parse. An agent-role client
+`leaseId` is an ownership proof: for `simctl` and `adb` the *device* is named
+by the command's own arguments, which the daemon does not parse, and for
+`devicectl` the driver adds the lease's `--device` unless the arguments name one. An agent-role client
 is authorized against the lease it owns, exactly as for `renewLease` — a lease
 it does not own is `FORBIDDEN`, and an id that names no lease is
 `UNKNOWN_LEASE`.
@@ -728,9 +729,9 @@ doesn't end up holding the result. This is a known gap.
 
 ## Running a command on the leased device: `exec`
 
-`exec` runs one `simctl` / `adb` command against a device you hold a lease
-on, wherever that device actually is, and streams its output back as it
-arrives:
+`exec` runs one `simctl` / `adb` command (or, on a physical iPhone or iPad,
+one `devicectl` command) against a device you hold a lease on, wherever that
+device actually is, and streams its output back as it arrives:
 
 ```ts
 const { exitCode } = await client.exec(
@@ -789,12 +790,17 @@ Five things to know before building on it:
   is killed and the call rejects with `EXEC_TIMEOUT`.
 - **The refusals are the daemon's, not a client's.** A verb that would change
   a device's lifecycle behind the registry's back rejects with
-  `PASSTHROUGH_REFUSED`, and a `tool` outside `simctl`/`adb` with
-  `UNKNOWN_PASSTHROUGH_TOOL` — the same list `simlock simctl` /
-  `simlock adb` document. One refusal is particular to `exec`: a bare `adb
-  shell` with no command is `PASSTHROUGH_REFUSED` ("needs a terminal") rather
-  than a call that hangs until the timeout, since there is no pseudo-terminal
-  for it to attach to.
+  `PASSTHROUGH_REFUSED`, and a `tool` outside `simctl`/`adb`/`devicectl` with
+  `UNKNOWN_PASSTHROUGH_TOOL` — `simctl` and `adb` are the tools `simlock simctl` /
+  `simlock adb` wrap, and `devicectl` has no `simlock` command. `devicectl` runs only on a physical iOS lease, and
+  only the reviewed `device …` commands (install, uninstall, launch,
+  terminate, signal, and the `info` reads); anything else, and any option
+  that names a path on the worker (`--json-output`, `--log-output`,
+  `--destination`, `--file`, `--filter`), is `PASSTHROUGH_REFUSED`.
+  `simctl` on a physical lease is refused too. One refusal is particular to
+  `exec`: a bare `adb shell` with no command is `PASSTHROUGH_REFUSED`
+  ("needs a terminal") rather than a call that hangs until the timeout, since
+  there is no pseudo-terminal for it to attach to.
 
 ## A gateway is just a daemon, as far as this client knows
 

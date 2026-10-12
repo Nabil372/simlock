@@ -149,6 +149,7 @@ export function createTestEngine(options: TestEngineOptions): TestEngine {
       return core.capacityReader.ramBudget;
     },
     listCatalog: (platform) => core.catalog.listCatalog(platform),
-    passthrough: (tool, args, context) => core.catalog.passthrough(tool, args, context),
+    passthrough: (tool, device, args, context) =>
+      core.catalog.passthrough(tool, device, args, context),
   };
 }

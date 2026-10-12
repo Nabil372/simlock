@@ -724,7 +724,7 @@ against an ended lease answers `404 UNKNOWN_LEASE`.
 ### `POST /v1/leases/{id}/exec`
 
 Role: `agent` (own lease); `operator` must name the lease's requester — see
-below. Runs one `simctl`/`adb` command **on the machine that owns the
+below. Runs one `simctl`, `adb` or `devicectl` command **on the machine that owns the
 device** and streams its output back. This is what makes a leased device
 drivable from here at all — over HTTP against a lone worker, and through a
 gateway to whichever worker holds the lease, with the same request and the
@@ -736,21 +736,26 @@ machine's filesystem.
 { "tool": "simctl", "args": ["list", "devices"], "stdin": "y\n" }
 ```
 
-`tool` names a driver passthrough — `simctl` or `adb` on the machines this
-version runs on. The contract does not close that set; the drivers installed
-there do, and one they do not claim is `422 UNKNOWN_PASSTHROUGH_TOOL`. `args`
-is the argument vector, passed through unchanged. The daemon that owns the
-device resolves it through the same driver passthrough logic `simlock
-simctl` / `simlock adb` use locally — the same root scoping (`--set` for
-iOS, `-P` for Android, supplied by simlock and refused from the caller), and
-the same refusal list for verbs that would change a device's lifecycle
-behind the registry's back (`create`/`erase`/`delete`, `shutdown all`,
-`runtime delete`, `kill-server`, `emu kill`, …). A refused verb is `422
-PASSTHROUGH_REFUSED` here too and nothing is spawned for it. Nothing else
-about the arguments is parsed, and the *device* is named by them, not by the
-lease: the lease id is the ownership proof. A gateway in the path parses
-none of this either — it proxies the call to the owning worker and relays
-the stream back unchanged.
+`tool` names a driver passthrough — `simctl`, `adb` or `devicectl` on the
+machines this version runs on. `devicectl` serves a physical iOS lease only,
+runs the reviewed `device …` commands, and gets `--device <UDID>` added for the
+leased device when the arguments name none; `simctl` on a physical lease and `devicectl` on a simulator
+lease are `422 PASSTHROUGH_REFUSED`. The contract does not close that set;
+the drivers installed there do, and one they do not claim is `422 UNKNOWN_PASSTHROUGH_TOOL`. `args`
+is the argument vector. The daemon that owns the device resolves it through
+the same driver passthrough logic `simlock simctl` / `simlock adb` use
+locally — the same root scoping (`--set` for iOS, `-P` for Android, supplied
+by simlock and refused from the caller), and the same refusal list for verbs
+that would change a device's lifecycle behind the registry's back
+(`create`/`erase`/`delete`, `shutdown all`, `runtime delete`, `kill-server`,
+`emu kill`, …). A refused verb is `422 PASSTHROUGH_REFUSED` here too and
+nothing is spawned for it. For `simctl` and `adb` nothing else about the
+arguments is parsed, they are passed through unchanged, and the *device* is
+named by them, not by the lease: the lease id is the ownership proof. For
+`devicectl` the driver checks the arguments against the reviewed list above
+and adds `--device <UDID>` of the leased device unless they name one. A
+gateway in the path parses none of this — it proxies the call to the owning
+worker and relays the stream back unchanged.
 
 `stdin` (optional) is a single string, sent with the request, written to the
 command once, and the pipe is then closed — there is no incremental stdin
@@ -1453,7 +1458,7 @@ Every failure is the same shape the daemon protocol uses:
 | 403 | `FORBIDDEN` (role doesn't permit the route — including a `worker` token on any `/v1` route other than `/v1/uplink`, and an `agent`/`operator` token at `/v1/uplink`; a `/v1/lease-requests/*` route whose request another token sent; or `POST /v1/leases/{id}/renew`/`DELETE /v1/leases/{id}`/`POST /v1/leases/{id}/exec` naming another requester's still-live lease), `DOWNLOADS_DISABLED` (`POST /v1/components/install` under `downloads.policy: "never"`) |
 | 404 | `UNKNOWN_WORKER` (`POST`/`DELETE /v1/workers/{id}/drain` naming a worker the gateway does not know), `UNKNOWN_LEASE_REQUEST` (unknown request id), `UNKNOWN_LEASE` (unknown lease id, expired/released, **or `GET /v1/leases/{id}`/`GET /v1/leases/{id}/events` naming another requester's lease** — see [`GET /v1/leases/{id}`](#get-v1leasesid)) , `UNKNOWN_DEVICE` (`DELETE /v1/devices/{id}` naming a device that is not enrolled) |
 | 409 | `REQUESTER_ALREADY_LEASED` (body names the existing lease id; fleet-wide on a gateway), `LEASE_ID_TAKEN` (a `leaseId` an active lease or a waiting request holds; body carries `leaseId`; on a gateway, one of the gateway's own leases or requests, or a worker that refused it), `IDEMPOTENCY_CONFLICT` (an `Idempotency-Key` repeated with a different device or `leaseId`), `REQUEST_NOT_CANCELLABLE` (body names the lease id if the request had already been granted), `WORKER_CONNECTED` (`DELETE /v1/workers/{id}` while its uplink is open), `COMPONENT_NOT_OWNED`, `COMPONENT_IN_USE` (body carries `devices` and `foreignDevices`), `COMPONENT_BUSY` (the three refusals of `DELETE /v1/components/{platform}/{version}`), `DEVICE_BUSY` (`POST /v1/devices`, `DELETE /v1/devices/{id}` of a leased, reclaiming or held device; body carries `id` and `reason`) |
-| 422 | `UNKNOWN_MODEL`, `RUNTIME_MISSING`, `NO_DRIVER`, `DEVICE_NOT_ENROLLABLE` (`POST /v1/devices`; body carries `id`, `platform`, `reason`, and `canonicalId` when known), `PASSTHROUGH_REFUSED` (a refused `exec` verb, a caller-supplied `--set`/`-P`, a bare `adb shell`), `UNKNOWN_PASSTHROUGH_TOOL` |
+| 422 | `UNKNOWN_MODEL`, `RUNTIME_MISSING`, `NO_DRIVER`, `DEVICE_NOT_ENROLLABLE` (`POST /v1/devices`; body carries `id`, `platform`, `reason`, and `canonicalId` when known), `PASSTHROUGH_REFUSED` (a refused `exec` verb or `devicectl` command, a caller-supplied `--set`/`-P`, a bare `adb shell`), `UNKNOWN_PASSTHROUGH_TOOL` |
 | 501 | `UNSUPPORTED_IN_GATEWAY_MODE` (an operation that acts on one machine, asked of a gateway: `POST /v1/components/install`, `GET /v1/components`, `DELETE /v1/components/{platform}/{version}`, `POST /v1/devices`, `DELETE /v1/devices/{id}`), `UNSUPPORTED_IN_WORKER_MODE` (an operation on a gateway's workers, asked of a single host: `POST`/`DELETE /v1/workers/{id}/drain`, `DELETE /v1/workers/{id}`, `POST /v1/components/install` with `workers`) |
 | 503 | `NO_CAPACITY` (with `noWait: true`, or, on a gateway, when no worker that takes requests can serve the request; response carries `Retry-After`), `WORKER_UNREACHABLE` (a gateway could not reach the worker holding this lease or request) |
 | 504 | `EXEC_TIMEOUT` (a `device.exec` command outlived `exec.timeoutMs`), `DOWNLOAD_TIMEOUT` (a runtime download, waiting for another download included, outlived `downloads.timeoutMs`) |

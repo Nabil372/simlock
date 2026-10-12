@@ -1,9 +1,47 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FakeClock, type Logger } from "../ports/index.js";
-import { PassthroughRefusedError } from "./driver.js";
+import {
+  PassthroughRefusedError,
+  type PassthroughCommand,
+  type PassthroughContext,
+} from "./driver.js";
 import { FakeDriver } from "./fake-driver.js";
 import { DriverCatalog, NoDriverError, UnknownPassthroughToolError } from "./driver-catalog.js";
+
+type FakeDriverOptions = ConstructorParameters<typeof FakeDriver>[0];
+
+interface PassthroughFakeOptions {
+  readonly clock: FakeClock;
+  readonly passthrough?: (
+    tool: string,
+    device: unknown,
+    args: readonly string[],
+    context?: PassthroughContext,
+  ) => PassthroughCommand;
+  readonly passthroughTools: readonly string[];
+  readonly platform: "android" | "ios";
+}
+
+function fakeOptions(options: PassthroughFakeOptions): FakeDriverOptions {
+  return options;
+}
+
+/** why: a test hands the device as `unknown`, so a malformed device record can reach the catalog too. */
+function route(
+  catalog: DriverCatalog,
+  tool: string,
+  device: unknown,
+  args: readonly string[],
+  context?: PassthroughContext,
+): Promise<PassthroughCommand> {
+  return catalog.passthrough(
+    tool,
+    device as Parameters<DriverCatalog["passthrough"]>[1],
+    args,
+    context,
+  );
+}
 
 describe("DriverCatalog", () => {
   it("resolves a request through its registered driver", async () => {
@@ -162,50 +200,105 @@ describe("DriverCatalog", () => {
     await expect(catalog.listCatalog("android")).resolves.toEqual([]);
   });
 
-  it("routes a passthrough to the driver that claims its tool name", () => {
+  it("routes a passthrough to the driver whose passthroughTools holds the tool name", async () => {
     const clock = new FakeClock();
-    const ios = new FakeDriver({
-      clock,
-      passthrough: (args) => ({ args: ["--set", "/root", ...args], command: "xcrun", env: {} }),
-      passthroughTool: "simctl",
-      platform: "ios",
-    });
-    const android = new FakeDriver({
-      clock,
-      passthrough: () => ({ args: [], command: "adb", env: {} }),
-      passthroughTool: "adb",
-      platform: "android",
-    });
+    const seen: unknown[] = [];
+    const ios = new FakeDriver(
+      fakeOptions({
+        clock,
+        passthrough: (tool, device, args) => {
+          seen.push({ device, tool });
+          return { args: ["--set", "/root", ...args], command: "xcrun", env: {} };
+        },
+        passthroughTools: ["simctl", "devicectl"],
+        platform: "ios",
+      }),
+    );
+    const android = new FakeDriver(
+      fakeOptions({
+        clock,
+        passthrough: () => ({ args: [], command: "adb", env: {} }),
+        passthroughTools: ["adb"],
+        platform: "android",
+      }),
+    );
     const catalog = new DriverCatalog([ios, android]);
 
-    expect(catalog.passthrough("simctl", ["list", "devices"])).toEqual({
+    await expect(route(catalog, "simctl", undefined, ["list", "devices"])).resolves.toEqual({
       args: ["--set", "/root", "list", "devices"],
       command: "xcrun",
       env: {},
     });
+    await expect(route(catalog, "devicectl", undefined, ["list", "devices"])).resolves.toEqual({
+      args: ["--set", "/root", "list", "devices"],
+      command: "xcrun",
+      env: {},
+    });
+    expect(seen).toEqual([
+      { device: undefined, tool: "simctl" },
+      { device: undefined, tool: "devicectl" },
+    ]);
   });
 
-  it("lets a driver's refusal out untouched rather than translating it here", () => {
+  it("hands the lease's device and the tool name to the driver's passthrough", async () => {
     const clock = new FakeClock();
-    const driver = new FakeDriver({
-      clock,
-      passthrough: () => {
-        throw new PassthroughRefusedError("simctl", "Refusing `simlock simctl delete`");
-      },
-      passthroughTool: "simctl",
-      platform: "ios",
+    const seen: unknown[] = [];
+    const driver = new FakeDriver(
+      fakeOptions({
+        clock,
+        passthrough: (tool, device, args, context) => {
+          seen.push({ args, context, device, tool });
+          return { args: [], command: "xcrun", env: {} };
+        },
+        passthroughTools: ["simctl", "devicectl"],
+        platform: "ios",
+      }),
+    );
+    const device = { deviceId: "00008110-001A", driverData: {}, physical: true } as const;
+
+    await route(new DriverCatalog([driver]), "devicectl", device, ["device", "info", "apps"], {
+      hasTerminal: false,
     });
 
-    expect(() => new DriverCatalog([driver]).passthrough("simctl", ["delete", "ABCD"])).toThrow(
-      PassthroughRefusedError,
-    );
+    expect(seen).toEqual([
+      {
+        args: ["device", "info", "apps"],
+        context: { hasTerminal: false },
+        device,
+        tool: "devicectl",
+      },
+    ]);
   });
 
-  it("refuses a tool no registered driver answers to", () => {
+  it("lets a driver's refusal out as a rejection rather than translating it here", async () => {
     const clock = new FakeClock();
-    const catalog = new DriverCatalog([new FakeDriver({ clock, platform: "ios" })]);
+    const driver = new FakeDriver(
+      fakeOptions({
+        clock,
+        passthrough: () => {
+          throw new PassthroughRefusedError("simctl", "Refusing `simlock simctl delete`");
+        },
+        passthroughTools: ["simctl"],
+        platform: "ios",
+      }),
+    );
 
-    expect(() => catalog.passthrough("adb", ["devices"])).toThrow(UnknownPassthroughToolError);
+    await expect(
+      route(new DriverCatalog([driver]), "simctl", undefined, ["delete", "ABCD"]),
+    ).rejects.toBeInstanceOf(PassthroughRefusedError);
+  });
+
+  it("rejects a tool no registered driver answers to with UnknownPassthroughToolError", async () => {
+    const clock = new FakeClock();
+    const catalog = new DriverCatalog([
+      new FakeDriver(
+        fakeOptions({ clock, passthroughTools: ["simctl", "devicectl"], platform: "ios" }),
+      ),
+    ]);
+
+    await expect(route(catalog, "adb", undefined, ["devices"])).rejects.toBeInstanceOf(
+      UnknownPassthroughToolError,
+    );
   });
 
   describe("classDefaults", () => {

@@ -25,6 +25,7 @@ import {
   effectiveAllowDownload,
   RuntimeMissingError,
   transitionEnteredAt,
+  toDriverDevice,
   UnknownLeaseError,
   type CapacityReader,
   type WarmPoolReader,
@@ -498,22 +499,23 @@ export class Dispatcher {
     if (this.options.passthrough === undefined) {
       throw new DispatchError("INTERNAL", "Tool passthrough is unavailable");
     }
-    return this.options.passthrough.passthrough(input.tool, input.args);
+    return this.options.passthrough.passthrough(input.tool, undefined, input.args);
   };
 
   /**
-   * ADR 0005 §19a: the same command `driver.passthrough` would have handed back, run here
+   * why: ADR 0005 §19a: the same command `driver.passthrough` would have handed back, run here
    * instead of there. Everything a passthrough already decides is reused verbatim -- which
    * flag scopes the tool to this daemon's root, which verbs the driver refuses -- because it
-   * is the same call: `#driverPassthrough` above and this handler differ only in who spawns
-   * the result.
+   * is the same driver call: `#driverPassthrough` above passes no device, this handler passes
+   * the lease's device and the lease's platform, and it also spawns the result.
    *
-   * `leaseId` is proof of ownership and nothing else. It is checked against the registry here
-   * so an id that names no lease answers `UNKNOWN_LEASE` rather than running a command
-   * (`authorize`'s `ownsLease` deliberately lets an unknown id through so this handler can say
-   * that -- see `roles.ts`); the *device* the command touches is named by the command's own
-   * arguments, which this daemon does not parse. That is the same accident boundary ADR 0001
-   * draws for the local wrappers, reached over the wire.
+   * `leaseId` is checked against the registry here so an id that names no lease answers
+   * `UNKNOWN_LEASE` rather than running a command (`authorize`'s `ownsLease` deliberately lets
+   * an unknown id through so this handler can say that -- see `roles.ts`). Which device the
+   * command touches is the driver's answer: `simctl` and `adb` take it from the command's own
+   * arguments, which this daemon does not parse, and `devicectl` gets the lease's `--device`
+   * added when the arguments name none (`devicectl-exec.ts`). That is the same accident
+   * boundary ADR 0001 draws for the local wrappers, reached over the wire.
    *
    * Nothing is buffered: each chunk goes straight to `session.onOutput` as it arrives (§19e),
    * so a command that writes a gigabyte costs this process nothing, and a client sees the
@@ -530,14 +532,21 @@ export class Dispatcher {
       (candidate) => candidate.id === input.leaseId,
     );
     if (lease === undefined) throw new UnknownLeaseError(input.leaseId);
+    const record = this.options.registry.snapshot.devices.find(
+      (candidate) => candidate.id === lease.deviceId,
+    );
+    if (record === undefined) throw new UnknownLeaseError(input.leaseId);
 
-    // `hasTerminal: false` is the one thing this path tells the driver about its caller: the
-    // command runs here, with pipes and no pty (ADR 0005 §19c), so a driver may refuse
-    // something it allows a local `simlock <tool>` invocation -- a bare `adb shell` would
-    // otherwise sit on those pipes until `exec.timeoutMs` killed it.
-    const command = this.options.passthrough.passthrough(input.tool, input.args, {
-      hasTerminal: false,
-    });
+    // why: `hasTerminal: false` tells the driver its caller has no terminal: the command runs
+    // here, with pipes and no pty (ADR 0005 §19c), so a driver may refuse something it allows
+    // a local `simlock <tool>` invocation -- a bare `adb shell` would otherwise sit on those
+    // pipes until `exec.timeoutMs` killed it. `platform` is the leased device's own.
+    const command = await this.options.passthrough.passthrough(
+      input.tool,
+      toDriverDevice(record),
+      input.args,
+      { hasTerminal: false, platform: record.spec.platform },
+    );
     const handle = this.options.processRunner.spawnStreaming(command.command, command.args, {
       env: { ...this.options.execEnv, ...command.env },
       // Returned, not fired and forgotten: whatever the transport hands back is what pauses

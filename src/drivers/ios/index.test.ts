@@ -1296,26 +1296,6 @@ describe("IosSimctlDriver", () => {
     ]);
   });
 
-  it("refuses every ID as not-connected, with a message that it cannot read physical devices yet, and starts no process", async () => {
-    const runner = new ScriptedProcessRunner([]);
-    const driver = await createDriver(runner);
-    const callsBefore = runner.calls.length;
-
-    const reads = await Promise.all([
-      driver.inspectPhysical("00008110-001A2B3C4D5E"),
-      driver.inspectPhysical("not-an-id"),
-    ]);
-
-    for (const read of reads) {
-      expect(read).toEqual({
-        enrollable: false,
-        message: "this driver cannot read physical devices yet",
-        reason: "not-connected",
-      });
-    }
-    expect(runner.calls).toHaveLength(callsBefore);
-  });
-
   it("populates processes from booted managed devices only", async () => {
     const runner = new ScriptedProcessRunner([
       { match: listDevicesInvocation, result: { code: 0, stderr: "", stdout: listDevicesFixture } },
@@ -1624,39 +1604,10 @@ describe("IosSimctlDriver", () => {
     expect(driver.reclaimStrategy(PHYSICAL_DEVICE, { clean: "full" })).toBe("uninstall");
   });
 
-  it("answers each given ID not present from listPresentPhysical, starting no process", async () => {
-    const runner = new ScriptedProcessRunner([]);
-    const driver = await createDriver(runner);
-    const callsBefore = runner.calls.length;
-
-    const present = await driver.listPresentPhysical(["00008110-001A2B3C4D5E", "not-an-id"]);
-
-    expect(present).toEqual([
-      { driverDeviceId: "00008110-001A2B3C4D5E", present: false },
-      { driverDeviceId: "not-an-id", present: false },
-    ]);
-    expect(runner.calls).toHaveLength(callsBefore);
-  });
-
-  it("rejects reclaim of a physical device for being physical, not for its driver data, starting no process", async () => {
-    const runner = new ScriptedProcessRunner([]);
-    const driver = await createDriver(runner);
-    const callsBefore = runner.calls.length;
-
-    const failure = await driver
-      .reclaim(PHYSICAL_DEVICE, { clean: "standard" })
-      .catch((error: unknown) => error);
-
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).not.toMatch(/driver data/i);
-    expect((failure as Error).message).toBe("a physical device cannot be reclaimed yet");
-    expect(runner.calls).toHaveLength(callsBefore);
-  });
-
   it("scopes a simctl passthrough to the device set the way its own calls are scoped", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(driver.passthrough(["install", "booted", "./MyApp.app"])).toEqual({
+    await expect(simctlPassthrough(driver, ["install", "booted", "./MyApp.app"])).resolves.toEqual({
       args: ["simctl", "--set", deviceRoot, "install", "booted", "./MyApp.app"],
       command: "xcrun",
       env: {},
@@ -1668,16 +1619,18 @@ describe("IosSimctlDriver", () => {
     async (verb) => {
       const driver = await createDriver(new ScriptedProcessRunner([]));
 
-      expect(() => driver.passthrough([verb, "ABCD"])).toThrow(PassthroughRefusedError);
-      expect(() => driver.passthrough([verb, "ABCD"])).toThrow(/simlock release/);
-      expect(() => driver.passthrough([verb, "ABCD"])).toThrow(/simlock cleanup/);
+      await expect(simctlPassthrough(driver, [verb, "ABCD"])).rejects.toThrow(
+        PassthroughRefusedError,
+      );
+      await expect(simctlPassthrough(driver, [verb, "ABCD"])).rejects.toThrow(/simlock release/);
+      await expect(simctlPassthrough(driver, [verb, "ABCD"])).rejects.toThrow(/simlock cleanup/);
     },
   );
 
   it("finds the refused verb past a leading flag rather than only in first position", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["--verbose", "delete", "ABCD"])).toThrow(
+    await expect(simctlPassthrough(driver, ["--verbose", "delete", "ABCD"])).rejects.toThrow(
       PassthroughRefusedError,
     );
   });
@@ -1685,7 +1638,9 @@ describe("IosSimctlDriver", () => {
   it("proxies a refused word that is an argument rather than the subcommand", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(driver.passthrough(["spawn", "booted", "log", "erase"]).args).toContain("erase");
+    expect((await simctlPassthrough(driver, ["spawn", "booted", "log", "erase"])).args).toContain(
+      "erase",
+    );
   });
 
   it.each([
@@ -1701,8 +1656,10 @@ describe("IosSimctlDriver", () => {
       // the subcommand, so the refused verb behind it was never seen, and the wrapper
       // answered with `--set <simlockRoot>` prepended -- Simlock handing over the very path
       // that contains every other agent's devices.
-      expect(() => driver.passthrough(args)).toThrow(PassthroughRefusedError);
-      expect(() => driver.passthrough(args)).toThrow(/supplies the device set itself/);
+      await expect(simctlPassthrough(driver, args)).rejects.toThrow(PassthroughRefusedError);
+      await expect(simctlPassthrough(driver, args)).rejects.toThrow(
+        /supplies the device set itself/,
+      );
     },
   );
 
@@ -1716,22 +1673,24 @@ describe("IosSimctlDriver", () => {
     // `--set /evil` was never scanned for refusal and rode through to `xcrun simctl` unchecked.
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["-x", "/tmp", "--set", "/evil", "boot", "UDID"])).toThrow(
-      PassthroughRefusedError,
-    );
+    await expect(
+      simctlPassthrough(driver, ["-x", "/tmp", "--set", "/evil", "boot", "UDID"]),
+    ).rejects.toThrow(PassthroughRefusedError);
   });
 
   it("refuses to shut down every device in the set at once", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["shutdown", "all"])).toThrow(PassthroughRefusedError);
-    expect(() => driver.passthrough(["shutdown", "all"])).toThrow(/simlock release/);
+    await expect(simctlPassthrough(driver, ["shutdown", "all"])).rejects.toThrow(
+      PassthroughRefusedError,
+    );
+    await expect(simctlPassthrough(driver, ["shutdown", "all"])).rejects.toThrow(/simlock release/);
   });
 
   it("still proxies shutting a single device down by udid", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(driver.passthrough(["shutdown", "ABCD"]).args).toEqual([
+    expect((await simctlPassthrough(driver, ["shutdown", "ABCD"])).args).toEqual([
       "simctl",
       "--set",
       deviceRoot,
@@ -1743,13 +1702,15 @@ describe("IosSimctlDriver", () => {
   it("refuses to delete a runtime shared with Xcode and other tools", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["runtime", "delete", "26.5"])).toThrow(
+    await expect(simctlPassthrough(driver, ["runtime", "delete", "26.5"])).rejects.toThrow(
       PassthroughRefusedError,
     );
-    expect(() => driver.passthrough(["runtime", "delete", "26.5"])).toThrow(
+    await expect(simctlPassthrough(driver, ["runtime", "delete", "26.5"])).rejects.toThrow(
       /shared with Xcode and other tools/,
     );
-    expect(() => driver.passthrough(["runtime", "delete", "26.5"])).toThrow(/through Xcode/);
+    await expect(simctlPassthrough(driver, ["runtime", "delete", "26.5"])).rejects.toThrow(
+      /through Xcode/,
+    );
   });
 
   it("does not say in the runtime delete refusal that iOS runtimes cannot be downloaded", async () => {
@@ -1757,7 +1718,7 @@ describe("IosSimctlDriver", () => {
 
     let message = "";
     try {
-      driver.passthrough(["runtime", "delete", "26.5"]);
+      await simctlPassthrough(driver, ["runtime", "delete", "26.5"]);
     } catch (error) {
       message = (error as Error).message;
     }
@@ -1769,7 +1730,7 @@ describe("IosSimctlDriver", () => {
   it("points the runtime delete refusal at simlock component remove", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["runtime", "delete", "26.5"])).toThrow(
+    await expect(simctlPassthrough(driver, ["runtime", "delete", "26.5"])).rejects.toThrow(
       /use `simlock component remove ios <version>`/,
     );
   });
@@ -1777,7 +1738,7 @@ describe("IosSimctlDriver", () => {
   it("still proxies the runtime operations that only read", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(driver.passthrough(["runtime", "list"]).args).toContain("list");
+    expect((await simctlPassthrough(driver, ["runtime", "list"])).args).toContain("list");
   });
 
   it.skipIf(process.env.SIMLOCK_LIVE_IOS !== "1")(
@@ -4477,6 +4438,10 @@ describe("IosSimctlDriver toolVersions()", () => {
     await expect(driver.toolVersions()).rejects.toThrow();
   });
 });
+
+function simctlPassthrough(driver: IosSimctlDriver, args: readonly string[]) {
+  return driver.passthrough("simctl", undefined, args);
+}
 
 function createDriver(
   runner: ScriptedProcessRunner,
