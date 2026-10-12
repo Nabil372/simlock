@@ -1091,6 +1091,11 @@ describe("AgentDeviceSupervisor reaping a daemon a killed simlock left", () => {
       [900],
       [psRun(900, ownLine(internalEntry, "/other/home"))],
     ],
+    [
+      "a line with this home's marker but another entry than the recorded one",
+      [900],
+      [psRun(900, ownLine("/elsewhere/daemon.js"))],
+    ],
   ] as const)("removes the record and signals nothing for %s", async (_case, livePids, ps) => {
     const harness = await run({
       expectations: [...ps, versionRun(), daemonSpawn()],
@@ -1201,6 +1206,19 @@ describe("AgentDeviceSupervisor after the daemon is running", () => {
     expect(daemonSpawns(harness)).toHaveLength(2);
   });
 
+  it("reports start-failed for a child that exits 59 s after ready instead of starting it at once", async () => {
+    const { harness } = await runningFor(
+      { expectations: [versionRun(), daemonSpawn(), versionRun(), daemonSpawn()] },
+      59_000,
+    );
+
+    harness.children[0]?.exit(9);
+    await flush();
+
+    expect(unavailable(harness)).toMatchObject({ reason: "start-failed" });
+    expect(daemonSpawns(harness)).toHaveLength(1);
+  });
+
   it("retries a failed first start 30 s later and is running when that succeeds", async () => {
     const harness = await arrange({
       daemonJson: (index) => (index === 0 ? "none" : "ready"),
@@ -1216,6 +1234,7 @@ describe("AgentDeviceSupervisor after the daemon is running", () => {
 
     expect(daemonSpawns(harness)).toHaveLength(2);
     expect(harness.clock.now() - failedAt).toBeGreaterThanOrEqual(30_000);
+    expect(harness.clock.now() - failedAt).toBeLessThanOrEqual(30_500);
     expect(running(harness).generation).toBe(1);
   });
 
