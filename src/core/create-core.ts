@@ -19,7 +19,7 @@ import type {
 } from "./core-ports.js";
 import { DeviceOperationClaims } from "./device-operation-claims.js";
 import { DeviceProvisioner } from "./device-provisioner.js";
-import { Doctor } from "./doctor.js";
+import { Doctor, type OptionalModuleFinding } from "./doctor.js";
 import type { DeviceMode, Platform, TargetResolution, WaitingDemand } from "./domain.js";
 import type { DeviceRequest, Driver, DriverRejection, PrerequisiteCheck } from "./driver.js";
 import { DriverCatalog, type ModelPreferences } from "./driver-catalog.js";
@@ -61,6 +61,7 @@ interface CoreOptions {
   readonly logger?: Logger | undefined;
   /** ADR 0015 §4: the model names to try for each class, per platform, operator's list first. */
   readonly modelPreferences?: ModelPreferences | undefined;
+  readonly optionalModules?: (() => readonly OptionalModuleFinding[]) | undefined;
   /** The checks `doctor` runs per platform this host could run. None if omitted. */
   readonly prerequisiteChecks?: readonly PrerequisiteCheck[] | undefined;
   readonly registry: Registry;
@@ -283,6 +284,7 @@ export function createCore(options: CoreOptions): Core {
     eventBus: options.eventBus,
     leaseExpirer: { expire: async (leaseId) => port("leaseExpirer").expire(leaseId) },
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    ...(options.optionalModules === undefined ? {} : { optionalModules: options.optionalModules }),
     prerequisiteChecks: options.prerequisiteChecks ?? [],
     quarantine,
     registry,

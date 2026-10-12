@@ -254,6 +254,7 @@ export class Doctor {
       ...(purgeOrphans ? await this.#purgeOrphans(findings, driversByPlatform) : findings),
       ...(await this.#collectPrerequisites(prerequisites)),
       ...this.#warmPoolFindings(),
+      ...this.#optionalModuleFindings(),
     ];
 
     const report = { findings: remaining };
@@ -564,6 +565,17 @@ export class Doctor {
       }),
     );
     return perCheck.flat();
+  }
+
+  #optionalModuleFindings(): readonly OptionalModuleFinding[] {
+    try {
+      return this.options.optionalModules?.() ?? [];
+    } catch (error) {
+      this.#logger.warn("Could not read optional module findings", {
+        error: errorMessage(error),
+      });
+      return [];
+    }
   }
 
   /**
@@ -1139,7 +1151,8 @@ function isDrift(finding: DoctorFinding): boolean {
   return (
     finding.kind !== "driver-advisory" &&
     finding.kind !== "prerequisite-missing" &&
-    finding.kind !== "warm-pool-target-unreachable"
+    finding.kind !== "warm-pool-target-unreachable" &&
+    finding.kind !== "agent-device-unavailable"
   );
 }
 

@@ -1391,6 +1391,7 @@ async function runDoctor(
     writeDriverAdvisoryWarnings(environment, response);
     writeMissingPrerequisites(environment, response);
     writeUnreachableWarmTargets(environment, response);
+    writeAgentDeviceUnavailable(environment, response);
     writeResult(environment, response);
     return 0;
   } finally {
@@ -1437,6 +1438,16 @@ function writeUnreachableWarmTargets(environment: CliEnvironment, report: Doctor
     if (finding.kind !== "warm-pool-target-unreachable") continue;
     environment.stderr.write(
       `${finding.kind}  ${finding.target}: ${finding.message}; ${finding.remedy}\n`,
+    );
+  }
+}
+
+function writeAgentDeviceUnavailable(environment: CliEnvironment, report: DoctorReport): void {
+  const oneLine = (text: string): string => text.replace(/\s+/g, " ").slice(0, 500);
+  for (const finding of report.findings) {
+    if (finding.kind !== "agent-device-unavailable") continue;
+    environment.stderr.write(
+      `agent-device  fail  ${oneLine(finding.message)}; ${oneLine(finding.remedy)}\n`,
     );
   }
 }

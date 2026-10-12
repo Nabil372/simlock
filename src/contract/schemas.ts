@@ -689,6 +689,11 @@ const doctorFindingSchema = z.discriminatedUnion("kind", [
     message: z.string(),
     remedy: z.string(),
   }),
+  z.object({
+    kind: z.literal("agent-device-unavailable"),
+    message: z.string(),
+    remedy: z.string(),
+  }),
 ]);
 
 export const doctorReportSchema = z.object({ findings: z.array(doctorFindingSchema) });
