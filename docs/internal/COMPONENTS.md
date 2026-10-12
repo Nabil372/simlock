@@ -105,6 +105,16 @@ modules with.
 | `LeaseHealthMonitor` | `src/leasing/lease-health-monitor.ts` | Observing leased devices on a tick, rebooting a crashed one under its lease, giving the lease up as `device-lost` when recovery is exhausted. | Touch an unleased device. |
 | `PhysicalDeviceWatcher` | `src/leasing/physical-device-watcher.ts` | The presence tick (every `health.probeIntervalMs`, whatever `health.enabled` says), the grace-period count of not-present reads, `absent` and its reason, the device-lost ending of a lease on a device that is gone, and the return reclaim of a device that is back (ADR 0022 §7). | Retry quarantine, grant, or run a driver verb but the presence listing on a leased device. |
 
+## Agent-device edge
+
+`src/agent-device/` holds the agent-device daemon a worker runs beside its drivers (ADR 0023). It is entered only through `src/agent-device/index.ts`; the core, leasing and the drivers import nothing from it, and its non-test files import no `fs` or `child_process`.
+
+| Component | Where | Owns | Does not |
+|---|---|---|---|
+| `AgentDeviceSupervisor` | `src/agent-device/host/agent-device-supervisor.ts` | Starting, watching and stopping the one agent-device daemon: reaping one a killed simlock left (by a pid record and an identity check), the private state dir and policy file, the daemon's environment, readiness through `daemon.json`, the port and `/health`, restart on death, and the availability state (`off`, `starting`, `running`, `unavailable` with a reason and remedy). | Serve agent-device traffic; report to `simlock doctor`; decide which devices exist (the drivers' environments do). |
+| Install lookup, compatibility, daemon environment | `src/agent-device/host/install.ts`, `src/agent-device/shared/` | Finding the agent-device install and its daemon entry; the minimum versions and RPC protocol; the environment and policy data. | Run a process. |
+| `AgentDeviceHealthProbe` | `src/agent-device/host/health.ts` | The `GET /health` read, with a time limit. | Judge the answer. |
+
 ## Drivers
 
 | Component | Where | Owns | Does not |

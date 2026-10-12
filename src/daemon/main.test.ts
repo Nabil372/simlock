@@ -95,7 +95,7 @@ describe("the event file sink", () => {
       logger: new JsonLinesLogger({ clock, level: "debug", sink: new MemoryLogSink() }),
       statePath: join(directory, "state.json"),
       version: "1.2.3",
-    } as StartDaemonOptions);
+    });
     runningDaemons.push(daemon);
 
     expect(await readFile(join(directory, "events.jsonl.1"), "utf8")).toBe(`{"timestamp":500}\n`);
@@ -671,7 +671,7 @@ describe("startDaemon wires core and leasing together", () => {
       logger: new JsonLinesLogger({ clock, level: "debug", sink: new MemoryLogSink() }),
       statePath,
       version: "1.2.3",
-    } as StartDaemonOptions);
+    });
     runningDaemons.push(daemon);
 
     const names = (await readFile(join(directory, "events.jsonl"), "utf8"))
@@ -992,7 +992,7 @@ describe("startDaemon stopped while starting", () => {
       socketPath,
       statePath: join(directory, "state.json"),
       version: "1.2.3",
-    } as StartDaemonOptions);
+    });
 
     const client = await connectRetrying(socketPath);
     try {
@@ -1108,7 +1108,7 @@ describe("startDaemon stop with a warm target", () => {
       logger: new JsonLinesLogger({ clock, level: "debug", sink: new MemoryLogSink() }),
       statePath: join(directory, "state.json"),
       version: "1.2.3",
-    } as StartDaemonOptions);
+    });
     runningDaemons.push(daemon);
     await expect
       .poll(() => driver.calls.filter((call) => call.operation === "makeReady").length)
@@ -2401,7 +2401,7 @@ describe("startDaemon with the agent-device edge", () => {
       statePath: join(setup.directory, "state.json"),
       tcpProbe: new FakeTcpProbe(),
       version: "1.2.3",
-    } as StartDaemonOptions);
+    });
     runningDaemons.push(daemon);
     return { daemon, sink };
   }

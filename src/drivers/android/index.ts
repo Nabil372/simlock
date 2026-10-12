@@ -647,7 +647,8 @@ export class AndroidDriver implements Driver {
   }
 
   virtualLeaseEnvironment(): Readonly<Record<string, string>> {
-    return {};
+    // why: without this their `adb` talks to the shared server, which cannot see the emulator.
+    return { ANDROID_ADB_SERVER_PORT: String(this.#adbServerPort) };
   }
 
   leaseEnvironment(device: DriverDevice): Readonly<Record<string, string>> {
@@ -655,8 +656,7 @@ export class AndroidDriver implements Driver {
     if (isPhysicalDriverDevice(device)) {
       return { ANDROID_ADB_SERVER_PORT: "5037", ANDROID_SERIAL: device.deviceId };
     }
-    // Without this their `adb` talks to the shared server, which cannot see the emulator.
-    return { ANDROID_ADB_SERVER_PORT: String(this.#adbServerPort) };
+    return this.virtualLeaseEnvironment();
   }
 
   readonly passthroughTools = ANDROID_PASSTHROUGH_TOOLS;

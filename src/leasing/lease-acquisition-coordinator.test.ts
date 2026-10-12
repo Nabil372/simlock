@@ -63,6 +63,7 @@ const request = {
 function config(maxDevices = 1, maxRunning = 1): Config {
   return {
     mode: "worker",
+    agentDevice: { command: "agent-device", enabled: false },
     exec: { timeoutMs: 600_000 },
     diskPressure: { freeBytesThreshold: 10 * gibibyte },
     gateway: {

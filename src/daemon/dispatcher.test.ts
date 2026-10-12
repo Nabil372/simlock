@@ -3547,6 +3547,7 @@ function testConfig(
 ): Config {
   return {
     mode: "worker",
+    agentDevice: { command: "agent-device", enabled: false },
     gateway: {
       disconnectedRetentionMs: 24 * 60 * 60_000,
       execTimeoutMs: 11 * 60_000,

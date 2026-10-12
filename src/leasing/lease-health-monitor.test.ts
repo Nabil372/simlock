@@ -24,6 +24,7 @@ const spec = { physical: false, model: "iPhone 16", osVersion: "26.5", platform:
 function config(overrides: Partial<Config["health"]> = {}): Config {
   return {
     mode: "worker",
+    agentDevice: { command: "agent-device", enabled: false },
     exec: { timeoutMs: 600_000 },
     diskPressure: { freeBytesThreshold: 10 * gibibyte },
     gateway: {

@@ -1533,12 +1533,12 @@ export class IosSimctlDriver implements Driver {
   }
 
   virtualLeaseEnvironment(): Readonly<Record<string, string>> {
-    return {};
+    return { SIMLOCK_IOS_DEVICE_SET: this.#deviceRoot };
   }
 
   leaseEnvironment(device: DriverDevice): Readonly<Record<string, string>> {
     if (isPhysicalDriverDevice(device)) return { SIMLOCK_DEVICE_UDID: device.deviceId };
-    return { SIMLOCK_IOS_DEVICE_SET: this.#deviceRoot };
+    return this.virtualLeaseEnvironment();
   }
 
   readonly passthroughTools = IOS_PASSTHROUGH_TOOLS;

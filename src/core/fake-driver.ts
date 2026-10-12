@@ -636,7 +636,7 @@ export class FakeDriver implements Driver {
   }
 
   virtualLeaseEnvironment(): Readonly<Record<string, string>> {
-    return {};
+    return this.#leaseEnvironment;
   }
 
   leaseEnvironment(_device: DriverDevice): Readonly<Record<string, string>> {

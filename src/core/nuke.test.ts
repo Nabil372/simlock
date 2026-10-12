@@ -157,6 +157,7 @@ function sequence() {
 function config(): Config {
   return {
     mode: "worker",
+    agentDevice: { command: "agent-device", enabled: false },
     exec: { timeoutMs: 600_000 },
     diskPressure: { freeBytesThreshold: 1 },
     gateway: {

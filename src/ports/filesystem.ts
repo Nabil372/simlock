@@ -298,6 +298,7 @@ export class MemoryFilesystem implements Filesystem {
     options?: WriteFileAtomicOptions,
   ): Promise<void> {
     this.#failIfDefined(path);
+    path = this.#underResolvedParent(path);
     this.#requireDirectory(parentPath(path));
     this.#entries.set(path, {
       ...this.#newEntry({ kind: "file", contents }),
@@ -307,6 +308,7 @@ export class MemoryFilesystem implements Filesystem {
 
   async writeFileExclusive(path: string, contents: string): Promise<void> {
     this.#failIfDefined(path);
+    path = this.#underResolvedParent(path);
 
     if (this.#entries.has(path)) {
       throw errnoError("EEXIST", `File already exists: ${path}`);
@@ -411,6 +413,7 @@ export class MemoryFilesystem implements Filesystem {
 
   async mkdir(path: string, options: { readonly mode?: number } = {}): Promise<void> {
     this.#failIfDefined(path);
+    path = this.#underResolvedParent(path);
 
     if (this.#entries.has(path)) {
       throw errnoError("EEXIST", `File already exists: ${path}`);
@@ -587,6 +590,13 @@ export class MemoryFilesystem implements Filesystem {
     const entry = this.#entries.get(resolved);
 
     return entry?.kind === "symlink" ? this.#resolveLinks(entry.target, hops + 1) : resolved;
+  }
+
+  #underResolvedParent(path: string): string {
+    return joinMemoryPath(
+      this.#resolveLinks(parentPath(path), 0),
+      path.slice(path.lastIndexOf("/") + 1),
+    );
   }
 
   #requireDirectory(path: string): void {
