@@ -24,6 +24,7 @@ import type {
   ClientReleaseReason,
   DeviceModeReader,
   LeaseCommands,
+  LeaseEndParticipant,
   QueueControl,
 } from "./lease-ports.js";
 import { LeaseReleaseCoordinator } from "./lease-release-coordinator.js";
@@ -55,6 +56,7 @@ export interface LeasingOptions {
   readonly modelPreferences?: ModelPreferences | undefined;
   /** why: not started on build: a health probe would shell out while startup convergence does. */
   readonly healthMonitor?: boolean | undefined;
+  readonly leaseEndParticipants?: readonly LeaseEndParticipant[] | undefined;
 }
 
 export interface Leasing extends LeaseCommands, QueueControl, DeviceModeReader {

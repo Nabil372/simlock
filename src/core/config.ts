@@ -181,6 +181,7 @@ export interface Config {
      */
     readonly maxRequestRecords: number;
     readonly maxPerRequester: number;
+    readonly endWaitMs: number;
   };
   /**
    * ADR 0005 §19e. Platform-agnostic on purpose: it bounds the *daemon's* willingness to wait
@@ -678,6 +679,7 @@ function defaultConfig(
       requestRetentionMs: DEFAULT_LEASE_REQUEST_RETENTION_MS,
       maxRequestRecords: DEFAULT_LEASE_MAX_REQUEST_RECORDS,
       maxPerRequester: DEFAULT_LEASE_MAX_PER_REQUESTER,
+      endWaitMs: DEFAULT_EXEC_TIMEOUT_MS,
     },
     exec: { timeoutMs: DEFAULT_EXEC_TIMEOUT_MS },
     diskPressure: { freeBytesThreshold: 10 * 1024 ** 3 },

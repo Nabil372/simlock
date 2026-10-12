@@ -2,7 +2,13 @@ export { createLeasing } from "./create-leasing.js";
 export { NoCapacityError } from "./lease-acquisition-coordinator.js";
 export { LeaseHealthMonitor } from "./lease-health-monitor.js";
 export { type PhysicalDeviceWatcher } from "./physical-device-watcher.js";
-export { type DeviceModeReader, type LeaseCommands, type QueueControl } from "./lease-ports.js";
+export {
+  type DeviceModeReader,
+  type EndedLease,
+  type LeaseCommands,
+  type LeaseEndParticipant,
+  type QueueControl,
+} from "./lease-ports.js";
 export {
   IdempotencyConflictError,
   InMemoryLeaseRequestStore,
