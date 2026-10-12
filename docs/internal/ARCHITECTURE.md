@@ -826,13 +826,16 @@ stops renewing loses its lease on the worker's clock, gateway or no gateway.
 `driver.passthrough` resolves a root-scoped command string for the *caller*
 to spawn, which only works on the worker's own machine. `device.exec` (role
 `agent`) is the operation that works everywhere:
-`{ leaseId, tool: "simctl" | "adb", args, stdin?, requesterId? }`.
+`{ leaseId, tool: "simctl" | "adb" | "devicectl", args, stdin?, requesterId? }`.
 
 The **worker** resolves the command through the same driver passthrough logic
 — same root scoping, same refusal list for verbs that would change a device's
 lifecycle behind the registry's back (`PASSTHROUGH_REFUSED`, or
 `UNKNOWN_PASSTHROUGH_TOOL` for a `tool` it does not wrap) — and runs it
-through its `ProcessRunner`. Output streams back as request-scoped `output`
+through its `ProcessRunner`. `devicectl` is the exception to "same refusal
+list": the iOS driver checks it against an allowed list of reviewed commands
+and options and adds the lease's `--device` unless the arguments name one
+(`src/drivers/ios/devicectl-exec.ts`). Output streams back as request-scoped `output`
 pushes (`stream: "stdout" | "stderr"` plus a chunk, keyed by the frame id
 exactly like `progress`), and the operation resolves with `{ exitCode }`. The
 refusal list gains one entry this operation needs and the local passthrough

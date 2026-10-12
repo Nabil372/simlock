@@ -195,7 +195,8 @@ points at is the tool's business. So an agent token holding any one lease can
 run `adb -s <someone-else's-serial> shell …` or `simctl --udid <someone
 else's udid> …`, and the daemon will run it: the target device is in the same
 root, reachable from the same scoped `simctl`/`adb`, and the arguments are
-passed through unread. Ownership is proven for the *lease*, not re-derived
+passed through unread. (`devicectl` is the exception: the driver reads its
+arguments against an allowed list, but a `--device` the caller names stays.) Ownership is proven for the *lease*, not re-derived
 for every device id inside the argv.
 
 That is deliberate. Refusing `-s` / `-t` / `--udid` outright would break the
@@ -634,7 +635,8 @@ adds a second place a lease can end without the worker noticing at once.
 `device.exec` runs a command's *arguments* on the worker's own filesystem,
 with the daemon's own uid and its own `process.env` (ADR 0005 §19a). The
 driver's refusal list stops a verb that would change a device's lifecycle
-behind the registry's back, but it parses no argument grammar beyond that —
+behind the registry's back, and for `simctl` and `adb` it parses no argument
+grammar beyond that (`devicectl` is checked against an allowed list) —
 by design; see the next pitfall's own argument against trying.
 
 **The pitfall:** `adb pull <device-path> <worker-path>` passes every check

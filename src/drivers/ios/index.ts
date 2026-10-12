@@ -90,9 +90,10 @@ const IOS_RUNTIME_ASSET_ROOT = "/System/Library/AssetsV2/com_apple_MobileAsset_i
 // failure mode #56 is about. The cost is that `Doctor`'s `provisioning` stall threshold widens
 // with it -- see the note there on why that is the cheaper of the two errors.
 const COLD_BOOT_ESTIMATE_MS = 60_000;
-// Measured, not guessed: a single `simctl erase` took ~34s in #43's investigation. Unlike
-// Android, iOS has no deferred-wipe path -- `erase` is synchronous and every reclaim pays it,
-// at either clean level, so this is the only reclaim number the driver has.
+// why: measured, not guessed: a single `simctl erase` took ~34s in #43's investigation. Unlike
+// Android, iOS has no deferred-wipe path -- `erase` is synchronous and every simulator reclaim
+// pays it, at either clean level, so this is the only simulator reclaim number the driver has.
+// A physical device reclaim uninstalls apps instead and has its own estimate below.
 const ERASE_ESTIMATE_MS = 34_000;
 const PHYSICAL_RECLAIM_ESTIMATE_MS = 90_000;
 const MARK_FILE_NAME = "simlock-mark.json";

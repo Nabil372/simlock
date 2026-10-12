@@ -374,9 +374,9 @@ export const driverPassthrough = defineOperation({
 // ---- device.exec (ADR 0005 §19a) -------------------------------------------------------------
 
 /**
- * Runs `simctl`/`adb` **on the machine that owns the device** and streams the output back
+ * Runs `simctl`, `adb` or `devicectl` **on the machine that owns the device** and streams the output back
  * (ADR 0005 §19a). The difference from `driver.passthrough` is where the process runs, not
- * what it is: the same driver resolves the same scoped command with the same refusal list --
+ * what it is: the same driver resolves the same scoped command with the same refusals --
  * the daemon then spawns it itself instead of handing the caller a command line it could only
  * run if it happened to be on that machine. That is what makes a leased device reachable from
  * a remote HTTP agent today, and through a gateway later, without a second network path.
@@ -384,8 +384,9 @@ export const driverPassthrough = defineOperation({
  * `role: "agent"`, gated on the lease's requester: driving a device is an agent's job, but --
  * unlike `driver.passthrough`, which only builds a string -- this one actually runs a command
  * against a machine, so it is gated on the caller being who the lease was granted to (see the
- * `authorize` hook below). `leaseId` is that proof and nothing more: the command's own
- * arguments still name the device (a udid, a serial), and the daemon parses none of them.
+ * `authorize` hook below). `leaseId` is that proof: for `simctl` and `adb` the command's own
+ * arguments still name the device (a udid, a serial) and the daemon parses none of them; for
+ * `devicectl` the driver adds the lease's `--device` unless the arguments name one.
  *
  * A bare `adb shell` (nothing to run) is refused by the driver on this path, because there is
  * no terminal to attach it to and it would otherwise sit until `exec.timeoutMs` -- the same

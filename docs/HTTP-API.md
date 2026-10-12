@@ -724,7 +724,7 @@ against an ended lease answers `404 UNKNOWN_LEASE`.
 ### `POST /v1/leases/{id}/exec`
 
 Role: `agent` (own lease); `operator` must name the lease's requester — see
-below. Runs one `simctl`/`adb` command **on the machine that owns the
+below. Runs one `simctl`, `adb` or `devicectl` command **on the machine that owns the
 device** and streams its output back. This is what makes a leased device
 drivable from here at all — over HTTP against a lone worker, and through a
 gateway to whichever worker holds the lease, with the same request and the
@@ -739,21 +739,23 @@ machine's filesystem.
 `tool` names a driver passthrough — `simctl`, `adb` or `devicectl` on the
 machines this version runs on. `devicectl` serves a physical iOS lease only,
 runs the reviewed `device …` commands, and gets `--device <UDID>` added for the
-leased device; `simctl` on a physical lease and `devicectl` on a simulator
+leased device when the arguments name none; `simctl` on a physical lease and `devicectl` on a simulator
 lease are `422 PASSTHROUGH_REFUSED`. The contract does not close that set;
 the drivers installed there do, and one they do not claim is `422 UNKNOWN_PASSTHROUGH_TOOL`. `args`
-is the argument vector, passed through unchanged. The daemon that owns the
-device resolves it through the same driver passthrough logic `simlock
-simctl` / `simlock adb` use locally — the same root scoping (`--set` for
-iOS, `-P` for Android, supplied by simlock and refused from the caller), and
-the same refusal list for verbs that would change a device's lifecycle
-behind the registry's back (`create`/`erase`/`delete`, `shutdown all`,
-`runtime delete`, `kill-server`, `emu kill`, …). A refused verb is `422
-PASSTHROUGH_REFUSED` here too and nothing is spawned for it. Nothing else
-about the arguments is parsed, and the *device* is named by them, not by the
-lease: the lease id is the ownership proof. A gateway in the path parses
-none of this either — it proxies the call to the owning worker and relays
-the stream back unchanged.
+is the argument vector. The daemon that owns the device resolves it through
+the same driver passthrough logic `simlock simctl` / `simlock adb` use
+locally — the same root scoping (`--set` for iOS, `-P` for Android, supplied
+by simlock and refused from the caller), and the same refusal list for verbs
+that would change a device's lifecycle behind the registry's back
+(`create`/`erase`/`delete`, `shutdown all`, `runtime delete`, `kill-server`,
+`emu kill`, …). A refused verb is `422 PASSTHROUGH_REFUSED` here too and
+nothing is spawned for it. For `simctl` and `adb` nothing else about the
+arguments is parsed, they are passed through unchanged, and the *device* is
+named by them, not by the lease: the lease id is the ownership proof. For
+`devicectl` the driver checks the arguments against the reviewed list above
+and adds `--device <UDID>` of the leased device unless they name one. A
+gateway in the path parses none of this — it proxies the call to the owning
+worker and relays the stream back unchanged.
 
 `stdin` (optional) is a single string, sent with the request, written to the
 command once, and the pipe is then closed — there is no incremental stdin
