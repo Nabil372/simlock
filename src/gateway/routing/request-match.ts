@@ -13,6 +13,7 @@ import {
   type DeviceRequirement,
   type FittableSpec,
   fits,
+  fitsPhysical,
 } from "../../core/index.js";
 import type { WorkerView } from "../worker-registry.js";
 import type { RoutableRequest } from "./pipeline.js";
@@ -29,6 +30,7 @@ import type { RoutableRequest } from "./pipeline.js";
  * catalog's `images` lists an image of that tag.
  */
 export function matchRequest(worker: WorkerView, request: RoutableRequest): string | undefined {
+  if (request.physical === true) return undefined;
   const catalog = catalogOf(worker, request);
   return catalog === undefined ? undefined : servingModel(catalog, request);
 }
@@ -49,6 +51,7 @@ export function deviceFit(
   worker: WorkerView,
   request: RoutableRequest,
 ): ((spec: FittableSpec) => boolean) | undefined {
+  if (request.physical === true) return undefined;
   const catalog = catalogOf(worker, request);
   if (catalog === undefined) return undefined;
   const model = servingModel(catalog, request);
@@ -132,6 +135,25 @@ function pairedRuntimesOf(
   return runtimes.filter((runtime) =>
     (catalog.images ?? []).some((image) => image.tag === imageTag && image.runtime === runtime),
   );
+}
+
+// why: the one gateway read of a worker's enrolled devices: `enrolled` is any state but `deleted`, `pickable` is `ready` and not last read not present (no read yet counts as present).
+export function physicalMatch(
+  worker: WorkerView,
+  request: RoutableRequest,
+  which: "enrolled" | "pickable",
+): boolean {
+  return (worker.devices ?? []).some((device) => {
+    if (device.physical !== true || device.state === "deleted") return false;
+    if (which === "pickable" && (device.state !== "ready" || device.presence?.present === false)) {
+      return false;
+    }
+    const { spec } = device;
+    return fitsPhysical(
+      { spec, ...(device.class === undefined ? {} : { class: device.class }) },
+      request,
+    );
+  });
 }
 
 /** Whether the worker's catalog has an entry for the request's platform. */

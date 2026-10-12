@@ -82,9 +82,9 @@ export const FAKE_LEASE_ENVIRONMENT: Readonly<Record<Platform, Readonly<Record<s
     },
   };
 
-const PASSTHROUGH_TOOLS: Readonly<Record<Platform, string>> = {
-  android: "adb",
-  ios: "simctl",
+const PASSTHROUGH_TOOLS: Readonly<Record<Platform, readonly string[]>> = {
+  android: ["adb"],
+  ios: ["simctl", "devicectl"],
 };
 
 const IOS_REFUSED_VERBS = ["create", "erase", "delete"];
@@ -208,7 +208,7 @@ export class OutOfProcessFakeDriver implements Driver {
   constructor(options: OutOfProcessFakeDriverOptions) {
     this.platform = options.platform;
     this.deviceRoot = `/fake/${options.platform}`;
-    this.passthroughTools = [PASSTHROUGH_TOOLS[options.platform]];
+    this.passthroughTools = PASSTHROUGH_TOOLS[options.platform];
     // A real directory: the installer measures its free space before every install.
     this.componentFootprint = { bytes: 0, path: tmpdir() };
     this.#clock = options.clock;
@@ -587,12 +587,28 @@ export class OutOfProcessFakeDriver implements Driver {
 
   /** Script-free: a rule that depended on a prior script read would not hold for a test's first command. */
   async passthrough(
-    _tool: string,
-    _device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    requested: string,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
     args: readonly string[],
     context?: PassthroughContext,
   ): Promise<PassthroughCommand> {
-    const tool = PASSTHROUGH_TOOLS[this.platform];
+    const tool = PASSTHROUGH_TOOLS[this.platform].includes(requested)
+      ? requested
+      : (PASSTHROUGH_TOOLS[this.platform][0] ?? requested);
+    // why: a mirror of ADR 0022 §5, never evidence for the real drivers: devicectl serves only a physical lease and simctl only a virtual one.
+    const physical = device?.physical === true;
+    if (tool === "devicectl" && !physical) {
+      throw new PassthroughRefusedError(
+        tool,
+        "Refusing `devicectl`: it serves a physical iOS device, and this lease holds a simulator.",
+      );
+    }
+    if (tool === "simctl" && physical) {
+      throw new PassthroughRefusedError(
+        tool,
+        "Refusing `simctl`: it serves simulators, and this lease holds a physical device. Use `devicectl`.",
+      );
+    }
     // A mirror of the Android no-terminal rule, never evidence for the real driver's own rule.
     if (context?.hasTerminal === false && this.platform === "android" && isBareShell(args)) {
       throw new PassthroughRefusedError(
@@ -600,15 +616,22 @@ export class OutOfProcessFakeDriver implements Driver {
         "Refusing `simlock adb shell` with no command: an interactive shell needs a terminal.",
       );
     }
-    const refused = PASSTHROUGH_REFUSALS[this.platform](args);
+    const refused = tool === "devicectl" ? undefined : PASSTHROUGH_REFUSALS[this.platform](args);
     if (refused !== undefined) {
       throw new PassthroughRefusedError(
         tool,
         `Refusing \`simlock ${tool} ${refused}\`: use \`simlock release\` or \`simlock cleanup\` instead.`,
       );
     }
+    // why: a physical lease's argv names the leased device, so a test can see the tool was aimed at it.
+    const aimed =
+      device === undefined || !physical
+        ? args
+        : tool === "devicectl"
+          ? [...args, "--device", device.deviceId]
+          : ["-s", device.deviceId, ...args];
     return {
-      args: ["-e", PASSTHROUGH_PROGRAM, this.deviceRoot, ...args],
+      args: ["-e", PASSTHROUGH_PROGRAM, this.deviceRoot, ...aimed],
       command: process.execPath,
       env: { SIMLOCK_FAKE_PASSTHROUGH_PLATFORM: this.platform },
     };

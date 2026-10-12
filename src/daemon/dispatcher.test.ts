@@ -16,6 +16,7 @@ import {
   DriverCatalog,
   type HostFacts,
   HostFactsReader,
+  type LatestPresence,
   Nuke,
   PassthroughRefusedError,
   Registry,
@@ -226,9 +227,7 @@ async function buildDispatcher(
     readonly engine?: Pick<Parameters<typeof createTestEngine>[0], "defaultModes">;
     /** A `state.json` the registry loads, for a test that starts from records already on disk. */
     readonly state?: object;
-    readonly presence?: (
-      driverDeviceId: string,
-    ) => { present: true } | { present: false; reason: string } | undefined;
+    readonly presence?: (driverDeviceId: string) => LatestPresence | undefined;
   } = {},
 ) {
   const clock = overrides.clock ?? new FakeClock(1_000);
@@ -1411,7 +1410,7 @@ describe("Dispatcher: device mode on every surface", () => {
       },
       state: "ready",
     });
-    const reads = new Map<string, { present: true } | { present: false; reason: string }>([
+    const reads = new Map<string, LatestPresence>([
       ["UDID-READ", { present: false, reason: "locked" }],
       ["UDID-PRESENT", { present: true }],
     ]);

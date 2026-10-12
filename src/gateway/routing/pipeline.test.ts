@@ -22,11 +22,21 @@ function view(id: string): WorkerView {
 
 /** A rank that scores each worker from a table, so a test can state every score outright. */
 function rank(name: string, scores: Record<string, number>, settles = false): RankStage {
-  return { kind: "rank", name, score: (worker) => scores[worker.id] ?? 0, settles };
+  return {
+    appliesToPhysical: true,
+    kind: "rank",
+    name,
+    score: (worker) => scores[worker.id] ?? 0,
+    settles,
+  };
 }
 
 function only(...ids: string[]): FilterStage {
-  return { keeps: (worker) => ids.includes(worker.id), kind: "filter" };
+  return {
+    appliesToPhysical: true,
+    keeps: (worker) => ids.includes(worker.id),
+    kind: "filter",
+  };
 }
 
 describe("routing pipeline", () => {

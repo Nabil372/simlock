@@ -6,7 +6,6 @@ import {
   freeSlot,
   healthy,
   idleQueue,
-  physicalInterim,
   ramBudget,
   type RoutableRequest,
   type RoutingStage,
@@ -31,17 +30,11 @@ export interface RoutingPolicy {
   select(request: RoutableRequest, workers: readonly WorkerView[]): RoutingDecision | undefined;
 }
 
-const physicalStages = [
-  takesRequests,
-  healthy,
-  physicalInterim,
-] as const satisfies readonly RoutingStage[];
-
 function composeRoutingPolicy(stages: readonly RoutingStage[]): RoutingPolicy {
   return {
     assess,
     select(request, workers) {
-      const pick = runStages(request.physical === true ? physicalStages : stages, request, workers);
+      const pick = runStages(stages, request, workers);
       if (pick === undefined) return undefined;
       return {
         reason: pick.stage === warmHit.name ? "warm-hit" : "free-capacity",

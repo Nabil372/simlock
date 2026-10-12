@@ -46,6 +46,7 @@ import type { EventBus, EventMap } from "../bus/index.js";
 import type { LeaseGrant, LeaseRecord, SimlockAdminClient } from "../admin/index.js";
 import {
   isSimlockError,
+  requestedClass,
   requestedDevice,
   type AnySimlockError,
   type Platform,
@@ -752,7 +753,7 @@ export class FleetLeaseCoordinator {
    * The return says whether it was attempted, which `waiter.state` alone cannot tell `#admit`.
    */
   #dispatchPass(candidate?: FleetWaiter): boolean {
-    // The two lines are matched separately, so each claims its own set.
+    // why: a virtual pick holds a worker; a physical pick holds a worker for the same match only.
     const claimedThisPass = { physical: new Set<string>(), virtual: new Set<string>() };
     const attempted = new Set<FleetWaiter | undefined>();
     const waiters =
@@ -771,8 +772,10 @@ export class FleetLeaseCoordinator {
     waiter: FleetWaiter,
     claims: { readonly physical: Set<string>; readonly virtual: Set<string> },
   ): boolean {
-    const claimedThisPass =
-      lineOf(waiter.request) === "physical" ? claims.physical : claims.virtual;
+    const isPhysical = lineOf(waiter.request) === "physical";
+    const claimedThisPass = isPhysical ? claims.physical : claims.virtual;
+    const claimKey = (workerId: string): string =>
+      isPhysical ? `${workerId}\u0000${physicalMatchKey(waiter.request)}` : workerId;
     const refusals = this.#cannotServe.get(waiter);
     // A worker claimed this pass or one that answered `NO_CAPACITY` is busy, not unable, so it
     // stays in the table's view.
@@ -786,11 +789,11 @@ export class FleetLeaseCoordinator {
       return false;
     }
     const eligibleWorkers = views.filter(
-      (worker) => !claimedThisPass.has(worker.id) && !this.#refused(waiter, worker),
+      (worker) => !claimedThisPass.has(claimKey(worker.id)) && !this.#refused(waiter, worker),
     );
     const decision = this.options.routing.select(request, eligibleWorkers);
     if (decision === undefined) return false;
-    claimedThisPass.add(decision.workerId);
+    claimedThisPass.add(claimKey(decision.workerId));
     this.#beginAttempt(waiter, decision, forwardedModel(request, eligibleWorkers, decision));
     return true;
   }
@@ -882,6 +885,7 @@ export class FleetLeaseCoordinator {
         ...(waiter.request.model === undefined ? {} : { model: waiter.request.model }),
         ...(waiter.request.class === undefined ? {} : { class: waiter.request.class }),
         ...(waiter.request.mode === undefined ? {} : { mode: waiter.request.mode }),
+        ...(lineOf(waiter.request) === "physical" ? { physical: true as const } : {}),
         platform: waiter.request.platform,
         queuedMs: createdAt === undefined ? 0 : Math.max(0, this.options.clock.now() - createdAt),
         reason: decision.reason,
@@ -1081,8 +1085,13 @@ export class FleetLeaseCoordinator {
 
   /** Whether `worker` refused `waiter` and its view has not changed since. */
   #refused(waiter: FleetWaiter, worker: WorkerView): boolean {
-    const key = this.#refusals.get(waiter)?.get(worker.id);
-    return key !== undefined && key === viewLoadKey(worker);
+    const refusals = this.#refusals.get(waiter);
+    const key = refusals?.get(worker.id);
+    if (key === undefined) return false;
+    if (key === viewLoadKey(worker)) return true;
+    // why: a device unplugged and plugged back in returns the view to the key it was refused at; the refusal must end at the first change.
+    refusals?.delete(worker.id);
+    return false;
   }
 
   /**
@@ -1355,6 +1364,15 @@ function leaseIdTaken(leaseId: string): DispatchError {
 
 interface ModelName {
   readonly model?: string;
+}
+
+// why: keyed as the core's `fitsPhysical` compares: platform, model in any letter case or else the class (`phone` when absent), and the OS text.
+function physicalMatchKey(request: FleetWaiter["request"]): string {
+  const target =
+    request.model === undefined
+      ? `class:${requestedClass({ class: request.class })}`
+      : `model:${request.model.toLowerCase()}`;
+  return [request.platform, target, request.osVersion ?? ""].join("\u0000");
 }
 
 function routable(waiter: FleetWaiter): RoutableRequest {

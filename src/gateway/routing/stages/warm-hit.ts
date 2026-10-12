@@ -1,6 +1,6 @@
 import type { FittableSpec } from "../../../core/index.js";
 import type { WorkerView } from "../../worker-registry.js";
-import { deviceFit } from "../request-match.js";
+import { deviceFit, physicalMatch } from "../request-match.js";
 import type { RankStage } from "../pipeline.js";
 
 /**
@@ -16,9 +16,12 @@ import type { RankStage } from "../pipeline.js";
  * worker exists, no later stage looks at capacity.
  */
 export const warmHit: RankStage = {
+  appliesToPhysical: true,
   kind: "rank",
   name: "warm-hit",
   score(worker, request) {
+    // why: a physical request has no mode rule, and a device last read not present is skipped so the request never goes to a worker whose only match is unplugged.
+    if (request.physical === true) return physicalMatch(worker, request, "pickable") ? 1 : 0;
     const fitsRequest = deviceFit(worker, request);
     if (fitsRequest === undefined) return 0;
     const warm = (worker.devices ?? []).some(

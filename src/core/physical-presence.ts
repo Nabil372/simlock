@@ -5,6 +5,24 @@ export type PhysicalRead =
   | { readonly present: true; readonly osVersion?: string }
   | { readonly present: false; readonly reason: AbsentReason };
 
+export type LatestPresence =
+  | { readonly present: true }
+  | { readonly present: false; readonly reason: AbsentReason };
+
+/** why: every presence read goes through this module, so the one place that remembers the last
+ * answer per device is here; the worker view reports it as `presence` (ADR 0022). */
+const latest = new Map<string, LatestPresence>();
+
+export function latestPresence(driverDeviceId: string): LatestPresence | undefined {
+  return latest.get(driverDeviceId);
+}
+
+function remember(answer: ReadonlyMap<string, PhysicalRead>): void {
+  for (const [id, read] of answer) {
+    latest.set(id, read.present ? { present: true } : { present: false, reason: read.reason });
+  }
+}
+
 function reads(
   ids: readonly string[],
   entries: readonly PresentPhysical[],
@@ -31,7 +49,9 @@ export async function readPhysicalPresenceDetail(
   driver: Pick<Driver, "listPresentPhysical">,
   ids: readonly string[],
 ): Promise<ReadonlyMap<string, PhysicalRead>> {
-  return reads(ids, await driver.listPresentPhysical(ids));
+  const answer = reads(ids, await driver.listPresentPhysical(ids));
+  remember(answer);
+  return answer;
 }
 
 export async function readPhysicalPresence(
@@ -39,5 +59,6 @@ export async function readPhysicalPresence(
   ids: readonly string[],
 ): Promise<ReadonlyMap<string, boolean>> {
   const answer = reads(ids, await driver.listPresentPhysical(ids));
+  remember(answer);
   return new Map([...answer].map(([id, read]) => [id, read.present]));
 }

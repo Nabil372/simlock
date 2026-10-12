@@ -166,8 +166,10 @@
                   "SerializedDecision",
                   "findCatalogModel",
                   "fits",
+                  "fitsPhysical",
                   "modelClass",
                   "newLeaseRequestId",
+                  "noPhysicalMatch",
                   "pairedRuntimes"
                 ],
                 "message": "the gateway may import only the names its allow-list gives"

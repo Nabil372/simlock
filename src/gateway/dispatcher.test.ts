@@ -22,6 +22,7 @@ import {
   grantFixture,
   hostFixture,
   leaseFixture,
+  physicalDeviceFixture,
   ScriptedWorkerClient,
   statusFixture,
 } from "./test-support.js";
@@ -1522,7 +1523,7 @@ describe("GatewayDispatcher: the fleet queue's physical line", () => {
       capacity: { ...capacity, ios: { ...capacity.ios, maxRunning: 0 } },
       catalog: catalogFixture([{ models: ["iPhone 17"], platform: "ios", runtimes: ["26.0"] }])
         .platforms,
-      devices: [],
+      devices: [physicalDeviceFixture("dev_p", "leased", { model: "iPhone 17" })],
       health: "running",
       leases: [],
       queueDepth: 0,

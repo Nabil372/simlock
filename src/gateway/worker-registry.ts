@@ -113,6 +113,8 @@ export class WorkerRegistry {
    * worker listed when it last read it (ADR 0009 §4: a reconnecting worker stays known while its
    * new catalog is on the way). */
   readonly #lastCatalog = new Map<string, NonNullable<WorkerView["catalog"]>>();
+  // why: a restarting worker stays known for its enrolled devices, as for its catalog (ADR 0009 §4).
+  readonly #lastPhysicalDevices = new Map<string, NonNullable<WorkerView["devices"]>>();
   /** A `starting` refresh leaves `leases` off the view, which is "not known", not "none". */
   readonly #lastLeases = new Map<string, NonNullable<WorkerView["leases"]>>();
   /**
@@ -156,7 +158,13 @@ export class WorkerRegistry {
     // A view that has a catalog holds the last one read, so only a starting view differs.
     return this.views().map((view) => {
       const catalog = this.#lastCatalog.get(view.id);
-      return catalog === undefined ? view : { ...view, catalog };
+      const physical =
+        view.devices === undefined ? this.#lastPhysicalDevices.get(view.id) : undefined;
+      return {
+        ...view,
+        ...(catalog === undefined ? {} : { catalog }),
+        ...(physical === undefined || physical.length === 0 ? {} : { devices: physical }),
+      };
     });
   }
 
@@ -350,6 +358,12 @@ export class WorkerRegistry {
     this.#workers.set(workerId, next);
     if (snapshot.catalog !== undefined) this.#lastCatalog.set(workerId, snapshot.catalog);
     if (snapshot.leases !== undefined) this.#lastLeases.set(workerId, snapshot.leases);
+    if (snapshot.devices !== undefined) {
+      this.#lastPhysicalDevices.set(
+        workerId,
+        snapshot.devices.filter((device) => device.physical === true),
+      );
+    }
     if (grantedDevices !== undefined) this.#grantedDevices.set(workerId, grantedDevices);
     this.#warnOnLowerMaxTtl(existing, next);
     this.#notifyViewsChanged();
@@ -556,6 +570,7 @@ export class WorkerRegistry {
     this.#grantedDevices.delete(view.id);
     this.#lastCatalog.delete(view.id);
     this.#lastLeases.delete(view.id);
+    this.#lastPhysicalDevices.delete(view.id);
     if (clearDrain && this.#drained.delete(view.id)) {
       await this.options.drainStore?.save([...this.#drained]);
     }
