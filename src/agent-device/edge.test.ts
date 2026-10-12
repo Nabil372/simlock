@@ -354,6 +354,18 @@ async function requestedSpecs(rig: Rig, requester: string): Promise<readonly unk
     .map((payload) => payload.requestSpec);
 }
 
+async function grantedDevice(rig: Rig) {
+  const [device] = await devices(rig);
+  expect(device?.address).toBeDefined();
+  return device as { readonly address: string; readonly driverDeviceId?: string };
+}
+
+function receivedAllocate(rig: Rig, n: number): Record<string, unknown> {
+  const params = allocatesReceived(rig, n)[0]?.params;
+  expect(params).toBeDefined();
+  return params as Record<string, unknown>;
+}
+
 function allocatesReceived(rig: Rig, n?: number) {
   return rig.fake
     .rpcRequests("agent_device.lease.allocate")
@@ -693,39 +705,30 @@ describe("the agent-device front, through the whole worker daemon", () => {
 
   it("after the grant, the allocate the agent-device daemon receives names the granted device's address by `udid` on iOS and by `serial` on Android (the emulator serial, not the AVD name), and carries no `device`, `deviceKey` or `target`; the CLI gets the daemon's reply with the same lease ID", async () => {
     const ios = await setUp();
-    const iosAnswer = await allocate(ios, 1, {
-      device: "iPhone 17 Pro",
-      deviceKey: "saved",
-      target: "mobile",
-    });
-    expect((await envelopeOf(iosAnswer)).result).toMatchObject({ ok: true });
-    const [iosDevice] = await devices(ios);
-    const iosParams = allocatesReceived(ios, 1)[0]?.params;
+    const iosAnswer = await envelopeOf(
+      await allocate(ios, 1, { device: "iPhone 17 Pro", deviceKey: "saved", target: "mobile" }),
+    );
+    const iosDevice = await grantedDevice(ios);
+    const iosParams = receivedAllocate(ios, 1);
 
-    expect(iosDevice?.address).toBeDefined();
-    expect(iosParams?.["udid"]).toBe(iosDevice?.address);
+    expect(iosAnswer.result).toMatchObject({ lease: { leaseId: hex(1) }, ok: true });
+    expect(iosParams["udid"]).toBe(iosDevice.address);
     expect(iosParams).not.toHaveProperty("serial");
-    for (const dropped of ["device", "deviceKey", "target"])
+    for (const dropped of ["device", "deviceKey", "target"]) {
       expect(iosParams).not.toHaveProperty(dropped);
-    expect((await envelopeOf(iosAnswer)).result).toMatchObject({
-      lease: { leaseId: hex(1) },
-      ok: true,
-    });
+    }
 
     const android = await setUp({ drivers: (clock) => [androidDriver(clock)] });
-    const androidAnswer = await allocate(android, 2, { device: "Pixel 8", platform: "android" });
-    expect((await envelopeOf(androidAnswer)).result).toMatchObject({ ok: true });
-    const [androidDevice] = await devices(android);
-    const androidParams = allocatesReceived(android, 2)[0]?.params;
+    const androidAnswer = await envelopeOf(
+      await allocate(android, 2, { device: "Pixel 8", platform: "android" }),
+    );
+    const androidDevice = await grantedDevice(android);
+    const androidParams = receivedAllocate(android, 2);
 
-    expect(androidDevice?.address).toBeDefined();
-    expect(androidParams?.["serial"]).toBe(androidDevice?.address);
-    expect(androidParams?.["serial"]).not.toBe(androidDevice?.driverDeviceId);
+    expect(androidAnswer.result).toMatchObject({ lease: { leaseId: hex(2) }, ok: true });
+    expect(androidParams["serial"]).toBe(androidDevice.address);
+    expect(androidParams["serial"]).not.toBe(androidDevice.driverDeviceId);
     expect(androidParams).not.toHaveProperty("udid");
-    expect((await envelopeOf(androidAnswer)).result).toMatchObject({
-      lease: { leaseId: hex(2) },
-      ok: true,
-    });
   });
 
   it("with every matching device leased, allocate waits, and is granted and answered once that device is released and reclaimed", async () => {

@@ -32,7 +32,7 @@ export interface FakeAgentDeviceRequest {
   readonly params?: Readonly<Record<string, unknown>>;
 }
 
-export interface FakeAgentDeviceLease {
+interface FakeAgentDeviceLease {
   readonly leaseId: string;
   readonly tenant: string | undefined;
   readonly scope: {
@@ -61,6 +61,10 @@ function gate(): Gate {
     open = resolve;
   });
   return { open, promise };
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function envelope(id: unknown, result: unknown): Response {
@@ -99,6 +103,7 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     this.leaseMaxTtlMs = options.leaseMaxTtlMs ?? 4 * 60 * 60_000 + 10_000;
   }
 
+  // fallow-ignore-next-line unused-class-member -- reached through the AgentDeviceUpstream port by the host.
   current(): AgentDeviceUpstreamState {
     if (this.#unavailable !== undefined) {
       return { reason: this.#unavailable, state: "unavailable" };
@@ -144,10 +149,6 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     this.#commandGate = gate();
   }
 
-  letCommandGo(): void {
-    this.#commandGate?.open();
-  }
-
   streamNextCommand(chunks: readonly string[]): void {
     this.#streamChunks = chunks;
   }
@@ -164,6 +165,7 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     return this.requests.filter((request) => request.rpcMethod === rpcMethod);
   }
 
+  // fallow-ignore-next-line unused-class-member -- reached through the AgentDeviceUpstream port by the host.
   async fetch(request: Request): Promise<Response> {
     if (this.#unreachable) throw new TypeError("fetch failed");
     const url = new URL(request.url);
@@ -204,8 +206,7 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     };
     const params = body.params ?? {};
     const meta = (params["meta"] ?? {}) as Record<string, unknown>;
-    const tenantOf = (value: unknown) => (typeof value === "string" ? value : undefined);
-    const tenant = tenantHeader ?? tenantOf(params["tenantId"]) ?? tenantOf(meta["tenantId"]);
+    const tenant = tenantHeader ?? stringOrUndefined(params["tenantId"] ?? meta["tenantId"]);
     const method = body.method ?? "";
     this.requests.push({ method: request.method, params, path: "/rpc", rpcMethod: method, tenant });
     const kind = method.replace(/^agent[_-]device\./, "");
