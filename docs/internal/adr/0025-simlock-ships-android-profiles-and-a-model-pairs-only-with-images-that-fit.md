@@ -117,7 +117,9 @@ Each check applies only where the profile states the value it reads:
 profile with `OEM : User`, before Simlock's own `devices.xml` source is
 asked, so a custom name resolves to that entry. It prints only the name, id
 and tag; the driver adds the rest from the `devices.xml` profile of the same
-name. The device is still created by `avdmanager -d <id>`.
+name. The device is still created by `avdmanager -d <id>`. A custom entry
+with no readable `devices.xml` profile of its name gets no details: any
+level, Play Store allowed, not a tablet.
 
 What makes an image a Play Store image follows sdklib too: a
 `google_apis_playstore` tag; or `android-automotive-playstore` as its only
@@ -146,8 +148,9 @@ picked by today's order, applied to fitting images only: a host-native
 `google_apis` image, then any host-native image, then any `google_apis`
 image, then any.
 
-`allowDownload` works as today: for an exact version with no image
-installed, it installs that level's `google_apis` image. That is the only
+`allowDownload` works as today, through `downloadable`: the core installs a
+level only when `resolveSpec` refuses with `downloadable: true`, and then
+installs that level's `google_apis` image. That is the only
 image Simlock ever downloads. A `RUNTIME_MISSING` for an exact version says
 `downloadable: true` only when the level has no image installed at all and
 its `google_apis` image would fit the model; otherwise `downloadable: false`,
@@ -169,8 +172,11 @@ by model and OS as ADR 0015 §6 says, but the core resolves the model and
 level first (ADR 0015 §5), and only levels with a fitting image are picked.
 So a device made before this change is reused as it is when its level still
 fits its model, e.g. a Pixel 9 on API 36 built from the SDK's values. One on
-a level that no longer fits, e.g. a TV on a phone image, is never picked by a
-new lease; idle cleanup removes it as usual.
+a level that no longer fits, e.g. a TV on a phone image, is not picked by a
+lease that names its model and an exact level or no OS. A lease that names a
+class or an OS range matches idle devices by range, not by fit, so it can
+still pick such a device until idle cleanup removes it. The maintainer
+accepted this: it affects only devices made before the upgrade.
 
 ```mermaid
 sequenceDiagram
@@ -217,8 +223,12 @@ is not reported: the library copies the SDK's values, so the two agree.
 
 ### 7. What does not change
 
-- The gateway. Its catalog is still the union of each worker's own answer
-  (ADR 0008 §4), and each worker answers with `fits`.
+- The gateway's catalog. It is still the union of each worker's own answer
+  (ADR 0008 §4), and each worker answers with `fits`. One gateway rule
+  changes, on every platform: for a request that names a model and no OS,
+  the runtime a worker will pick is the newest it pairs with the model,
+  which is what both drivers do (it was `defaultRuntime` when paired, else
+  the only paired one).
 - iOS.
 - Events. Nothing here emits or changes one.
 - Simlock never writes to the SDK or `devices.xml`.
