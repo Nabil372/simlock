@@ -974,8 +974,7 @@ gateway forwards to a worker is **namespaced**,
 `gw:<gateway instance id>:<requester>`. So `simlock status` on the *worker*
 shows a fleet lease as `gw:7c1e…:agent-1` while the gateway shows it as
 plain `agent-1`. That is what keeps a local `agent-1` on that machine and a
-remote `agent-1` behind the gateway from colliding on the worker's own
-one-lease rule — and it means a lease's attribution says which fleet it came
+remote `agent-1` behind the gateway from being mistaken for each other on the worker — and it means a lease's attribution says which fleet it came
 from, not just who asked.
 
 **`simlock status` and `simlock list`** answer for the whole fleet: capacity

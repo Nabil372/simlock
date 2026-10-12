@@ -821,8 +821,7 @@ stops renewing loses its lease on the worker's clock, gateway or no gateway.
   keeps them from ever touching a lease this gateway did not issue.
 - **The requester id the gateway forwards is namespaced**:
   `gw:<gateway instance id>:<requester>`. A local agent on the worker machine
-  and a remote agent behind the gateway therefore can never collide on the
-  worker's own one-lease rule, and every lease on the worker is attributable
+  and a remote agent behind the gateway therefore can never be mistaken for each other on the worker, and every lease on the worker is attributable
   to the fleet it came from. The namespace is worker-side bookkeeping: the
   gateway reports the leases it issued under the client's own requester id.
 - **The gateway keeps no per-connection lease state** and releases nothing

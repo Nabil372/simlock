@@ -129,10 +129,10 @@ export class FleetLeaseIndex {
     return this.resolve(gatewayLeaseId)?.requesterId;
   }
 
-  /** ADR §14: the fleet-wide one-lease-per-requester check, keyed on `requesterId` (never
+  /** why: ADR §14 -- the fleet-wide one-lease-per-requester check, keyed on `requesterId` (never
    * `ownerId` -- see the module doc on the distinction). `undefined` means "no lease", so a
-   * caller gets the existing id to report (`RequesterAlreadyLeasedError`) in the same lookup
-   * that answers the boolean question. */
+   * caller gets the earliest existing lease id to report (`RequesterAlreadyLeasedError`). The
+   * admission decision itself rests on the lease count, not on this lookup. */
   existingLeaseId(requesterId: string): string | undefined {
     let earliest: FleetLeaseEntry | undefined;
     for (const id of this.#byRequester.get(requesterId) ?? []) {
