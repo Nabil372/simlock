@@ -161,19 +161,20 @@ export class LeaseReleaseCoordinator
     absentReason: AbsentReason,
     proceed: () => boolean = () => true,
   ): Promise<boolean> {
-    return this.#runNormal(() =>
-      this.options.decisions.run(async () => {
+    return this.#runNormal(async () => {
+      const ended = await this.options.decisions.run(async () => {
         if (
           !proceed() ||
           !this.options.registry.snapshot.leases.some((lease) => lease.id === leaseId)
         ) {
-          return false;
+          return undefined;
         }
-        const ended = await this.options.lifecycle.endForAbsentDevice(leaseId, absentReason);
-        this.#callParticipants(ended, "device-lost", false);
-        return true;
-      }),
-    );
+        return this.options.lifecycle.endForAbsentDevice(leaseId, absentReason);
+      });
+      if (ended === undefined) return false;
+      this.#callParticipants(ended, "device-lost", false);
+      return true;
+    });
   }
 
   /** why: under the maintenance admission every release takes, so no watcher write lands while an operator reset walks the devices. */
