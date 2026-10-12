@@ -537,10 +537,10 @@ export class Dispatcher {
     );
     if (record === undefined) throw new UnknownLeaseError(input.leaseId);
 
-    // `hasTerminal: false` is the one thing this path tells the driver about its caller: the
-    // command runs here, with pipes and no pty (ADR 0005 §19c), so a driver may refuse
-    // something it allows a local `simlock <tool>` invocation -- a bare `adb shell` would
-    // otherwise sit on those pipes until `exec.timeoutMs` killed it.
+    // why: `hasTerminal: false` tells the driver its caller has no terminal: the command runs
+    // here, with pipes and no pty (ADR 0005 §19c), so a driver may refuse something it allows
+    // a local `simlock <tool>` invocation -- a bare `adb shell` would otherwise sit on those
+    // pipes until `exec.timeoutMs` killed it. `platform` is the leased device's own.
     const command = await this.options.passthrough.passthrough(
       input.tool,
       toDriverDevice(record),

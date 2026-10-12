@@ -679,8 +679,8 @@ xcrun devicectl device info apps --device "$SIMLOCK_DEVICE_UDID"
 ```
 
 A remote agent runs `devicectl` through `device.exec` over HTTP or the client,
-which adds `--device <UDID>` for the leased device itself. There is no
-`simlock devicectl` command.
+which adds `--device <UDID>` for the leased device unless your arguments already
+name a device. There is no `simlock devicectl` command.
 
 Both ways describe paths and ports **on the machine that owns the device**.
 That is your own machine when you lease from a local worker, and somebody
