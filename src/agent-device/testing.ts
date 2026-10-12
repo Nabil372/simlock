@@ -14,10 +14,7 @@ export class FakeAgentDeviceHealth implements AgentDeviceHealthProbe {
     this.#answer = { error };
   }
 
-  neverAnswer(): void {
-    this.#answer = "never";
-  }
-
+  // fallow-ignore-next-line unused-class-member -- reached through the AgentDeviceHealthProbe port by the supervisor.
   async read(baseUrl: string): Promise<unknown> {
     this.reads.push(baseUrl);
     if (this.#answer === "never") return new Promise<never>(() => undefined);

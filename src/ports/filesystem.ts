@@ -513,7 +513,6 @@ export class MemoryFilesystem implements Filesystem {
   }
 
   /** Test-only: rewrites an existing entry's ownership or permission bits. */
-  // fallow-ignore-next-line unused-class-member -- test-only state the port itself cannot create.
   defineAttributes(
     path: string,
     attributes: { readonly uid?: number; readonly mode?: number },

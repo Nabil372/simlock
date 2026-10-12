@@ -3,6 +3,7 @@ import {
   type Filesystem,
   isMissingPathError,
   type Logger,
+  type PathDetails,
   type ProcessHandle,
   type ProcessResult,
   type ProcessRunner,
@@ -112,6 +113,35 @@ function messageOf(error: unknown): string {
 
 function describeExit(result: ProcessResult): string {
   return result.code === null ? "after a signal" : `with code ${result.code}`;
+}
+
+function endpointOf(
+  daemon: Record<string, unknown> | undefined,
+  pid: number,
+): { readonly httpPort: number; readonly token: string } | undefined {
+  if (daemon === undefined || daemon["pid"] !== pid) return undefined;
+  const { httpPort, token } = daemon;
+  return typeof httpPort === "number" && typeof token === "string"
+    ? { httpPort, token }
+    : undefined;
+}
+
+function judgeHealth(body: unknown, version: string): ReadyOutcome | undefined {
+  const health = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+  const protocol = health["rpcProtocolVersion"];
+  if (health["service"] !== "agent-device-daemon" || typeof protocol !== "number") {
+    return {
+      kind: "refused",
+      message: "/health did not answer as agent-device",
+      reason: "not-agent-device",
+    };
+  }
+  if (protocol === AGENT_DEVICE_RPC_PROTOCOL_VERSION) return undefined;
+  return {
+    kind: "refused",
+    message: `agent-device ${version} speaks RPC protocol ${protocol}, need ${AGENT_DEVICE_RPC_PROTOCOL_VERSION}`,
+    reason: "wrong-version",
+  };
 }
 
 export class AgentDeviceSupervisor {
@@ -230,23 +260,35 @@ export class AgentDeviceSupervisor {
     this.#stateDir = `${realHome}/agent-device`;
     this.#recordPath = `${realHome}/agent-device-daemon.json`;
     if (o.config.enabled) this.#availability = { state: "starting" };
+    if (!(await this.#reapStep(realHome))) return;
+    const found = await this.#checkInstall();
+    if (found === undefined || this.#stopped) return;
+    const env = await this.#prepareLaunch();
+    if (env === undefined) return;
+    const child = await this.#launch(found.entry, realHome, env);
+    if (child === undefined) return;
+    await this.#awaitReady(child, found.version);
+  }
 
+  async #reapStep(realHome: string): Promise<boolean> {
+    const o = this.#o;
     const reaped = await this.#reap(realHome);
-    if (this.#stopped) return;
+    if (this.#stopped) return false;
     if (!reaped.ok) {
-      if (!o.config.enabled) {
+      if (o.config.enabled) {
+        this.#fail("start-failed", reaped.message);
+      } else {
         o.logger.warn(reaped.message);
         this.#availability = { state: "off" };
-        return;
       }
-      this.#fail("start-failed", reaped.message);
-      return;
+      return false;
     }
-    if (!o.config.enabled) {
-      this.#availability = { state: "off" };
-      return;
-    }
+    if (!o.config.enabled) this.#availability = { state: "off" };
+    return o.config.enabled;
+  }
 
+  async #checkInstall(): Promise<{ readonly entry: string; readonly version: string } | undefined> {
+    const o = this.#o;
     const install = await findAgentDevice(
       o.filesystem,
       o.config.command,
@@ -254,64 +296,70 @@ export class AgentDeviceSupervisor {
     );
     if (!install.ok) {
       this.#fail(install.reason, install.message);
-      return;
+      return undefined;
     }
-    if (this.#stopped) return;
-
+    if (this.#stopped) return undefined;
     const version = await this.#readVersion(install.realPath);
     if (typeof version !== "string") {
       this.#fail("not-agent-device", version.message);
-      return;
+      return undefined;
     }
+    return this.#versionsAcceptable(version) ? { entry: install.entry, version } : undefined;
+  }
+
+  #versionsAcceptable(version: string): boolean {
     if (!isVersionAtLeast(version, MIN_AGENT_DEVICE_VERSION)) {
       this.#fail("wrong-version", `found ${version}, need ${MIN_AGENT_DEVICE_VERSION} or later`);
-      return;
+      return false;
     }
-    if (!isVersionAtLeast(o.nodeVersion, MIN_NODE_VERSION)) {
+    if (!isVersionAtLeast(this.#o.nodeVersion, MIN_NODE_VERSION)) {
       this.#fail(
         "wrong-version",
-        `agent-device needs Node ${MIN_NODE_VERSION} or later, simlock runs on Node ${o.nodeVersion}`,
+        `agent-device needs Node ${MIN_NODE_VERSION} or later, simlock runs on Node ${this.#o.nodeVersion}`,
         "node",
       );
-      return;
+      return false;
     }
-    if (this.#stopped) return;
+    return true;
+  }
 
-    const stateDirProblem = await this.#prepareStateDir();
-    if (stateDirProblem !== undefined) {
-      this.#fail("state-dir", stateDirProblem);
-      return;
+  async #prepareLaunch(): Promise<NodeJS.ProcessEnv | undefined> {
+    const problem = await this.#prepareStateDir();
+    if (problem !== undefined) {
+      this.#fail("state-dir", problem);
+      return undefined;
     }
-
     const policyPath = `${this.#stateDir}/policy.json`;
-    await o.filesystem.writeFileAtomic(policyPath, JSON.stringify(AGENT_DEVICE_POLICY));
-    const env = await this.#environment(policyPath);
+    await this.#o.filesystem.writeFileAtomic(policyPath, JSON.stringify(AGENT_DEVICE_POLICY));
+    return this.#environment(policyPath);
+  }
 
+  async #launch(
+    entry: string,
+    realHome: string,
+    env: NodeJS.ProcessEnv,
+  ): Promise<Child | undefined> {
+    const o = this.#o;
     let handle: ProcessHandle;
     try {
-      handle = o.processRunner.spawn(o.nodePath, [install.entry, `${MARKER}${realHome}`], {
+      handle = o.processRunner.spawn(o.nodePath, [entry, `${MARKER}${realHome}`], {
         env,
         stdio: "ignore",
       });
     } catch (error: unknown) {
       this.#fail("start-failed", `could not start agent-device: ${messageOf(error)}`);
-      return;
+      return undefined;
     }
     handle.unref();
     const child: Child = { exit: undefined, pid: handle.pid, readyAt: 0 };
-    handle.wait().then(
-      (result) => {
-        child.exit = result;
-        this.#onChildExit(child);
-      },
-      () => {
-        child.exit = { code: null, stderr: "", stdout: "" };
-        this.#onChildExit(child);
-      },
-    );
+    const exited = (result: ProcessResult) => {
+      child.exit = result;
+      this.#onChildExit(child);
+    };
+    handle.wait().then(exited, () => exited({ code: null, stderr: "", stdout: "" }));
 
     try {
-      const record: PidRecord = { entry: install.entry, pid: child.pid, startedAt: o.clock.now() };
+      const record: PidRecord = { entry, pid: child.pid, startedAt: o.clock.now() };
       await o.filesystem.writeFileAtomic(this.#recordPath, JSON.stringify(record));
     } catch (error: unknown) {
       await this.#stopFailedChild(
@@ -319,9 +367,12 @@ export class AgentDeviceSupervisor {
         "start-failed",
         `could not write the pid record: ${messageOf(error)}`,
       );
-      return;
+      return undefined;
     }
+    return child;
+  }
 
+  async #awaitReady(child: Child, version: string): Promise<void> {
     const signal = { aborted: false };
     const raced = await this.#race(this.#waitReady(child, version, signal), READY_TIMEOUT_MS);
     signal.aborted = true;
@@ -333,40 +384,51 @@ export class AgentDeviceSupervisor {
       );
       return;
     }
-    const outcome = raced.value;
-    if (outcome.kind === "cancelled") {
-      await this.#stopFailedChild(child, "start-failed", "stopped");
-      this.#availability = { state: "off" };
-      return;
-    }
-    if (outcome.kind === "exited") {
-      await this.#removeRecord();
-      this.#fail(
-        "start-failed",
-        `agent-device exited ${describeExit(child.exit as ProcessResult)} before it was ready`,
-      );
-      return;
-    }
-    if (outcome.kind === "refused") {
-      await this.#stopFailedChild(
-        child,
-        outcome.reason,
-        outcome.message,
-        outcome.reason === "wrong-version" ? "protocol" : undefined,
-      );
-      return;
-    }
+    await this.#settle(child, version, raced.value);
+  }
 
+  async #settle(child: Child, version: string, outcome: ReadyOutcome): Promise<void> {
+    switch (outcome.kind) {
+      case "cancelled":
+        await this.#stopFailedChild(child, "start-failed", "stopped");
+        this.#availability = { state: "off" };
+        return;
+      case "exited":
+        await this.#removeRecord();
+        this.#fail(
+          "start-failed",
+          `agent-device exited ${describeExit(child.exit as ProcessResult)} before it was ready`,
+        );
+        return;
+      case "refused":
+        await this.#stopFailedChild(
+          child,
+          outcome.reason,
+          outcome.message,
+          outcome.reason === "wrong-version" ? "protocol" : undefined,
+        );
+        return;
+      case "ready":
+        this.#markRunning(child, version, outcome);
+    }
+  }
+
+  #markRunning(
+    child: Child,
+    version: string,
+    ready: { readonly baseUrl: string; readonly token: string },
+  ): void {
+    const o = this.#o;
     this.#generation += 1;
     child.readyAt = o.clock.now();
     this.#child = child;
     this.#availability = {
-      baseUrl: outcome.baseUrl,
+      baseUrl: ready.baseUrl,
       generation: this.#generation,
       leaseMaxTtlMs: agentDeviceLeaseMaxTtlMs(o.leaseMaxTtlMs),
       platforms: o.platforms,
       state: "running",
-      token: outcome.token,
+      token: ready.token,
       version,
     };
     if (child.exit !== undefined) this.#onChildExit(child);
@@ -411,31 +473,36 @@ export class AgentDeviceSupervisor {
   }
 
   async #prepareStateDir(): Promise<string | undefined> {
-    const fs = this.#o.filesystem;
     const path = this.#stateDir;
     let details;
     try {
-      details = await fs.lstat(path);
+      details = await this.#o.filesystem.lstat(path);
     } catch (error: unknown) {
       if (!isMissingPathError(error)) return `${path} cannot be inspected: ${messageOf(error)}`;
+      return this.#createStateDir();
     }
-    if (details === undefined) {
-      try {
-        await fs.mkdir(path, { mode: 0o700 });
-      } catch (error: unknown) {
-        return `${path} cannot be created: ${messageOf(error)}`;
-      }
-      return undefined;
+    return this.#tightenStateDir(details);
+  }
+
+  async #createStateDir(): Promise<string | undefined> {
+    try {
+      await this.#o.filesystem.mkdir(this.#stateDir, { mode: 0o700 });
+    } catch (error: unknown) {
+      return `${this.#stateDir} cannot be created: ${messageOf(error)}`;
     }
+    return undefined;
+  }
+
+  async #tightenStateDir(details: PathDetails): Promise<string | undefined> {
+    const path = this.#stateDir;
     if (details.kind !== "directory") return `${path} is a ${details.kind}, not a directory`;
     const uid = process.getuid?.();
     if (uid !== undefined && details.uid !== uid) return `${path} is owned by another user`;
-    if (details.mode !== 0o700) {
-      try {
-        await fs.chmod(path, 0o700);
-      } catch (error: unknown) {
-        return `${path} cannot be set to mode 0700: ${messageOf(error)}`;
-      }
+    if (details.mode === 0o700) return undefined;
+    try {
+      await this.#o.filesystem.chmod(path, 0o700);
+    } catch (error: unknown) {
+      return `${path} cannot be set to mode 0700: ${messageOf(error)}`;
     }
     return undefined;
   }
@@ -479,50 +546,30 @@ export class AgentDeviceSupervisor {
     version: string,
     signal: { aborted: boolean },
   ): Promise<ReadyOutcome> {
-    const o = this.#o;
     for (;;) {
       await Promise.race([this.#sleep(POLL_MS), this.#stopRequested]);
-      if (signal.aborted) return { kind: "cancelled" };
-      if (this.#stopped) return { kind: "cancelled" };
+      if (signal.aborted || this.#stopped) return { kind: "cancelled" };
       if (child.exit !== undefined) return { kind: "exited" };
-      const daemon = await this.#readDaemonJson();
-      if (daemon === undefined || daemon.pid !== child.pid) continue;
-      const { httpPort, token } = daemon;
-      if (typeof httpPort !== "number" || typeof token !== "string") continue;
-      if (!(await o.tcpProbe.isListening(httpPort))) continue;
-      const baseUrl = `http://127.0.0.1:${httpPort}`;
-      let body: unknown;
-      try {
-        const read = await Promise.race([o.healthProbe.read(baseUrl), this.#stopRequested]);
-        if (read === "stopped") return { kind: "cancelled" };
-        body = read;
-      } catch {
-        continue;
-      }
-      if (signal.aborted) return { kind: "cancelled" };
-      const health = (typeof body === "object" && body !== null ? body : {}) as Record<
-        string,
-        unknown
-      >;
-      if (
-        health["service"] !== "agent-device-daemon" ||
-        typeof health["rpcProtocolVersion"] !== "number"
-      ) {
-        return {
-          kind: "refused",
-          message: "/health did not answer as agent-device",
-          reason: "not-agent-device",
-        };
-      }
-      if (health["rpcProtocolVersion"] !== AGENT_DEVICE_RPC_PROTOCOL_VERSION) {
-        return {
-          kind: "refused",
-          message: `agent-device ${version} speaks RPC protocol ${health["rpcProtocolVersion"]}, need ${AGENT_DEVICE_RPC_PROTOCOL_VERSION}`,
-          reason: "wrong-version",
-        };
-      }
-      return { baseUrl, kind: "ready", token };
+      const outcome = await this.#probe(child, version);
+      if (outcome !== undefined) return outcome;
     }
+  }
+
+  async #probe(child: Child, version: string): Promise<ReadyOutcome | undefined> {
+    const o = this.#o;
+    const endpoint = endpointOf(await this.#readDaemonJson(), child.pid);
+    if (endpoint === undefined) return undefined;
+    if (!(await o.tcpProbe.isListening(endpoint.httpPort))) return undefined;
+    const baseUrl = `http://127.0.0.1:${endpoint.httpPort}`;
+    let body: unknown;
+    try {
+      const read = await Promise.race([o.healthProbe.read(baseUrl), this.#stopRequested]);
+      if (read === "stopped") return { kind: "cancelled" };
+      body = read;
+    } catch {
+      return undefined;
+    }
+    return judgeHealth(body, version) ?? { baseUrl, kind: "ready", token: endpoint.token };
   }
 
   async #readDaemonJson(): Promise<Record<string, unknown> | undefined> {
@@ -630,20 +677,8 @@ export class AgentDeviceSupervisor {
     realHome: string,
     entry: string | undefined,
   ): Promise<"own" | "other" | "unknown"> {
-    let line: string;
-    try {
-      const raced = await this.#race(
-        this.#o.processRunner.run("ps", ["-ww", "-o", "args=", "-p", String(pid)], {
-          timeoutMs: PS_TIMEOUT_MS,
-        }),
-        PS_TIMEOUT_MS,
-      );
-      if (raced.timedOut || raced.value.code !== 0) return "unknown";
-      line = raced.value.stdout.split("\n")[0]?.trim() ?? "";
-    } catch {
-      return "unknown";
-    }
-    if (line === "") return "unknown";
+    const line = await this.#psLine(pid);
+    if (line === undefined) return "unknown";
     if (!line.endsWith(` ${MARKER}${realHome}`)) return "other";
     if (entry !== undefined && !line.includes(entry)) return "other";
     if (await this.#stateDirIsOurs()) {
@@ -651,6 +686,22 @@ export class AgentDeviceSupervisor {
       if (named !== undefined && named !== pid) return "other";
     }
     return "own";
+  }
+
+  async #psLine(pid: number): Promise<string | undefined> {
+    try {
+      const raced = await this.#race(
+        this.#o.processRunner.run("ps", ["-ww", "-o", "args=", "-p", String(pid)], {
+          timeoutMs: PS_TIMEOUT_MS,
+        }),
+        PS_TIMEOUT_MS,
+      );
+      if (raced.timedOut || raced.value.code !== 0) return undefined;
+      const line = raced.value.stdout.split("\n")[0]?.trim() ?? "";
+      return line === "" ? undefined : line;
+    } catch {
+      return undefined;
+    }
   }
 
   async #stateDirIsOurs(): Promise<boolean> {

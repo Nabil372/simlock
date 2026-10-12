@@ -71,6 +71,11 @@
         "reason": "Glue scripts for the delivery pipeline: git and transcript walks, option parsing, a Markdown shape check. They have no coverage pipeline, so CRAP is complexity squared; each is run against real PRs and transcripts when it changes, and none holds product logic."
       },
       {
+        "files": ["src/agent-device/host/agent-device-supervisor.test.ts"],
+        "maxCrap": 80,
+        "reason": "The supervisor's test arranges a process table, a clock, a filesystem and a scripted runner in one helper so each of its cases reads as one claim; the helper is branching setup, not logic under test."
+      },
+      {
         "files": ["e2e/fake-driver/fake-driver.ts"],
         "maxCrap": 45,
         "reason": "This file has no wired coverage pipeline (fallow estimates 0% here), so CRAP is complexity-squared alone. The three flagged functions (#resolveOsVersion/#assertOsVersionAvailable, #beforeCall, compareVersions) are simple, deterministic script-interpretation/comparison helpers already reduced from a critical/high toError+resolveSpec pair (cyclomatic 11 and 9) down to cyclomatic 5-6 moderate; the daemon-level e2e flows exercise them on every run but that coverage isn't visible to this metric."
