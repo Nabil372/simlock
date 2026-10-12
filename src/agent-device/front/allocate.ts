@@ -44,10 +44,10 @@ function notPlain(params: Record<string, unknown>): boolean {
   );
 }
 
-function planAllocate(params: Record<string, unknown>): Plan | FrontReply {
+function refusalFor(params: Record<string, unknown>): FrontReply | undefined {
   const fields = leaseCallFields(params);
-  const leaseId = leaseIdOf(fields.leaseId);
-  if (leaseId === undefined) {
+  const ttl = fields.ttlMs;
+  if (leaseIdOf(fields.leaseId) === undefined) {
     return refusal("refused: this agent-device is too old for simlock; upgrade it");
   }
   if (notPlain(params)) return refusal("refused: simlock leases only plain devices");
@@ -58,18 +58,22 @@ function planAllocate(params: Record<string, unknown>): Plan | FrontReply {
   if (present(fields.udid) || present(fields.serial)) {
     return refusal("refused: simlock picks the device");
   }
-  const ttl = fields.ttlMs;
   if (present(ttl) && !(typeof ttl === "number" && Number.isFinite(ttl) && ttl > 0)) {
     return refusal("refused: ttlMs must be a positive number of milliseconds");
   }
+  return undefined;
+}
+
+function planOf(params: Record<string, unknown>): Plan {
+  const fields = leaseCallFields(params);
   const device =
     typeof fields.device === "string" && fields.device !== "" ? fields.device : undefined;
   const klass = typeof fields.target === "string" ? CLASS_OF_TARGET[fields.target] : undefined;
   return {
-    leaseId,
-    platform: fields.platform,
+    leaseId: fields.leaseId as string,
+    platform: fields.platform as "ios" | "android",
     ...(device === undefined ? (klass === undefined ? {} : { class: klass }) : { model: device }),
-    ...(typeof ttl === "number" ? { ttlMs: Math.max(ttl, MIN_TTL_MS) } : {}),
+    ...(typeof fields.ttlMs === "number" ? { ttlMs: Math.max(fields.ttlMs, MIN_TTL_MS) } : {}),
   };
 }
 
@@ -228,30 +232,34 @@ export interface AllocateArguments {
   readonly leaseMaxTtlMs: number;
 }
 
+interface Granted {
+  readonly request: Request;
+  readonly identity: TokenIdentity;
+  readonly call: RpcRead & { readonly kind: "request" };
+  readonly plan: Plan;
+  readonly grant: Grant;
+  readonly address: string;
+}
+
 export async function allocate(
   context: FrontContext,
   { request, identity, call, leaseMaxTtlMs }: AllocateArguments,
 ): Promise<Response | undefined> {
-  const planned = planAllocate(call.params);
-  if ("message" in planned) return frontReply(planned, call);
-  const plan = planned;
+  const refused = refusalFor(call.params);
+  if (refused !== undefined) return frontReply(refused, call);
+  const plan = planOf(call.params);
   await context.map.refresh((who) => listLeases(context, who));
   if (request.signal.aborted) return undefined;
   const outcome = await requestLease(context, identity, plan, request.signal);
   if (outcome.kind === "gone") return undefined;
   if (outcome.kind === "failed") return frontReply(outcome.reply, call);
   const { grant } = outcome;
-  if (request.signal.aborted) {
-    await releaseSimlock(context, identity, plan.leaseId);
-    return undefined;
-  }
   const address = grant.device.address;
-  if (address === undefined || address === "") {
+  if (request.signal.aborted || address === undefined || address === "") {
     await releaseSimlock(context, identity, plan.leaseId);
-    return frontReply(
-      failure("simlock granted a device with no address; nothing was leased"),
-      call,
-    );
+    return request.signal.aborted
+      ? undefined
+      : frontReply(failure("simlock granted a device with no address; nothing was leased"), call);
   }
   const forwarded = new Request(request.url, {
     body: JSON.stringify(forwardedBody(call, plan, address, leaseMaxTtlMs)),
@@ -259,34 +267,43 @@ export async function allocate(
     method: "POST",
   });
   const reply = await exchange(context, forwarded, identity);
-  const clientGone = request.signal.aborted;
-  if (reply.reading.kind === "success") {
-    if (!clientGone) {
-      context.map.add(plan.leaseId, {
-        address,
-        deadline: grant.lease.ttlDeadline,
-        identity,
-        ttlMs: grant.lease.ttlMs,
-      });
-      return relay(reply);
-    }
-    const lease = reply.reading.result["lease"];
-    const named =
-      typeof lease === "object" && lease !== null ? (lease as Record<string, unknown>) : {};
-    const ended = await releaseAgentDevice(
-      context,
-      request,
-      identity,
-      plan.leaseId,
-      scopeOf(named),
-    );
-    if (ended.reading.kind === "success") await releaseSimlock(context, identity, plan.leaseId);
-    return undefined;
-  }
+  const made = { address, call, grant, identity, plan, request };
+  if (reply.reading.kind === "success") return keepOrRelease(context, made, reply, reply.reading);
   if (reply.reading.kind === "error") {
     await releaseSimlock(context, identity, plan.leaseId);
     return relay(reply);
   }
+  await settleNoReply(context, made);
+  return frontReply(failure("agent-device did not answer the allocate"), call);
+}
+
+async function keepOrRelease(
+  context: FrontContext,
+  { request, identity, plan, grant, address }: Granted,
+  reply: Parameters<typeof relay>[0],
+  reading: { readonly result: Record<string, unknown> },
+): Promise<Response | undefined> {
+  if (!request.signal.aborted) {
+    context.map.add(plan.leaseId, {
+      address,
+      deadline: grant.lease.ttlDeadline,
+      identity,
+      ttlMs: grant.lease.ttlMs,
+    });
+    return relay(reply);
+  }
+  const lease = reading.result["lease"];
+  const named =
+    typeof lease === "object" && lease !== null ? (lease as Record<string, unknown>) : {};
+  const ended = await releaseAgentDevice(context, request, identity, plan.leaseId, scopeOf(named));
+  if (ended.reading.kind === "success") await releaseSimlock(context, identity, plan.leaseId);
+  return undefined;
+}
+
+async function settleNoReply(
+  context: FrontContext,
+  { request, identity, call, plan }: Granted,
+): Promise<void> {
   const ended = await releaseAgentDevice(
     context,
     request,
@@ -298,7 +315,6 @@ export async function allocate(
     ended.reading.kind === "error" &&
     (ended.reading.code === undefined || !LEASE_GONE.has(ended.reading.code));
   if (!holds) await releaseSimlock(context, identity, plan.leaseId);
-  return frontReply(failure("agent-device did not answer the allocate"), call);
 }
 
 const LIST_TIMEOUT_MS = 5_000;
