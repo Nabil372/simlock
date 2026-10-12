@@ -4596,7 +4596,9 @@ describe("FleetLeaseCoordinator routes a physical request by the enrolled device
   });
 
   it("after a NO_CAPACITY refusal, a refresh in which the device's presence turns not present sends the request nowhere, and the next refresh in which it turns present sends it to that worker again", async () => {
-    const { client, clock, coordinator, workers } = oneWorker([iphone()]);
+    const { client, clock, coordinator, workers } = oneWorker([
+      iphone("dev_p", "ready", { present: true }),
+    ]);
     await start(coordinator, physicalRequest());
     expect(leaseRequests(client)).toHaveLength(1);
 

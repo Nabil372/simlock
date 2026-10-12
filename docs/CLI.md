@@ -859,18 +859,21 @@ gateway's own fleet-wide FIFO queue, reporting `queued` with a `queuePosition`
 exactly as a worker's queue does. A request no worker can serve does not wait;
 see [A request no worker can serve](#a-request-no-worker-can-serve) below.
 
-A `--physical` request is not judged against a worker's catalog or capacity.
-The gateway offers it to the workers that take requests, lowest worker id
-first, and each worker's own check answers: `UNKNOWN_MODEL` from every worker
-fails the request with it, and a busy worker keeps it waiting in the gateway's
-queue (or fails it with `NO_CAPACITY` under `--no-wait`). The gateway cannot yet
-see whether a worker's device is plugged in. A worker that refused a request
-because its device was not present is not asked again for it until that worker
-reports a change in its devices, leases, capacity, health or queues, so
-plugging the device back in does not by itself wake the request: with no
-`--timeout` and a quiet worker it can wait with no bound. The gateway's queue
-has a physical line of its own too, and its `status` carries
-`physicalQueueDepth` beside `queueDepth`.
+A `--physical` request is judged against the physical devices enrolled on
+each worker, not against a worker's catalog or free simulator capacity. It
+fails at once with `UNKNOWN_MODEL` when no worker has an enrolled device that
+matches (platform, `--device` in any letter case or else `--class`, and `--os`
+as an exact version or a range), and with `NO_CAPACITY` when the only match is
+on a drained or disconnected worker. Otherwise it is sent to a worker with a
+matching device that is `ready` and that the worker did not last read as not
+present, and waits in the gateway's queue until there is one (`NO_CAPACITY`
+under `--no-wait`). A worker that refused a request because its device was not
+present is asked again at the first worker-view refresh after the worker reads
+the device present: within one `health.probeIntervalMs` of that worker plus one
+30-second view refresh. A waiting request fails with `UNKNOWN_MODEL` once
+`simlock device remove`, run on the worker, removes its last enrolled match.
+The gateway's queue has a physical line of its own too, and its `status`
+carries `physicalQueueDepth` beside `queueDepth`.
 
 The gateway sends a request only to a worker that can serve it. `--device`
 matches a worker's model in any letter case and by any other name that
@@ -1437,7 +1440,10 @@ In `--json`, every device also carries `physical`: `false` for a simulator or
 emulator Simlock created, `true` for a real phone or tablet. A physical device
 has a `class` (`phone` or `tablet`) and no `mode`, and its line reads
 `Device dev_9: ready, physical phone` with the same markers after it.
-`list --devices --json` carries both too. Capacity figures, limits and the RAM
+`list --devices --json` carries both too. A physical device that has been read
+at least once also carries `presence` in `--json`: `{ "present": true }`, or
+`{ "present": false, "reason": "locked" | "untrusted" | "not-present" }`, the
+latest read of whether it is plugged in. Capacity figures, limits and the RAM
 budget count simulators and emulators only.
 
 Each platform's capacity line ends in `(at RAM budget)` when creating one more
