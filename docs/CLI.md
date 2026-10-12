@@ -77,11 +77,11 @@ command starts it again) to bring the platform up.
 | 2 | `UNSUPPORTED_IN_WORKER_MODE` | this command acts on a gateway's workers (`worker drain`, `undrain`, `remove`, or `component install --worker`/`--all-workers`) and the daemon answering is a single host; run it against the gateway, or for `component install` drop the worker flag to install on this host |
 | 2 | `WORKER_CONNECTED` | `worker remove` on a worker whose uplink is still open; `drain` it and let it disconnect first |
 | 2 | `UNKNOWN_REQUEST` | the daemon has no such operation — usually a client newer than the daemon |
-| 2 | `PASSTHROUGH_REFUSED` | a `simctl`/`adb` verb simlock refuses, a caller-supplied `--set`/`-P`, or a bare `adb shell` where there is no terminal to give it |
+| 2 | `PASSTHROUGH_REFUSED` | a `simctl`/`adb`/`devicectl` verb simlock refuses, a caller-supplied `--set`/`-P`, or a bare `adb shell` where there is no terminal to give it |
 | 2 | `UNKNOWN_PASSTHROUGH_TOOL` | a passthrough tool simlock does not wrap |
 | 2 | `IDEMPOTENCY_CONFLICT` | a lease request reused an idempotency key its requester already sent for a different device or `--lease-id`; use a new key |
 | 10 | `QUEUE_TIMEOUT` | timed out waiting for a device (`--timeout` elapsed) |
-| 10 | `EXEC_TIMEOUT` | a `simctl`/`adb` command run through `device.exec` outlived `exec.timeoutMs` and was killed |
+| 10 | `EXEC_TIMEOUT` | a `simctl`/`adb`/`devicectl` command run through `device.exec` outlived `exec.timeoutMs` and was killed |
 | 10 | `DOWNLOAD_TIMEOUT` | a runtime download, including the time spent waiting for another download on the same platform, outlived `downloads.timeoutMs` |
 | 11 | `NO_CAPACITY` | capacity reached and `--no-wait` was set, or, through a gateway, no worker that takes requests can serve the request |
 | 11 | `DEVICE_BUSY` | `device add` or `device remove` of a device that is leased, being reclaimed or held by another operation, such as another `device add`; try again once that ends |
@@ -143,7 +143,7 @@ implement them:
   listed here because `device.exec` is a new way to reach them.
 - `EXEC_TIMEOUT` joins `QUEUE_TIMEOUT` on `10`, the number that already means
   "a deadline elapsed". The two can never be confused, since only `lease`
-  produces one and only `simctl`/`adb` produce the other. What *can* collide
+  produces one and only `simctl`/`adb`/`devicectl` produce the other. What *can* collide
   is a passthrough tool that itself exits `10` — `simlock simctl` and
   `simlock adb` exit with the tool's own status — so for those two commands
   branch on the stderr `{"error":{"code":...}}` line, which only simlock
@@ -1038,8 +1038,8 @@ reaches the same operation as `POST /v1/leases/{id}/exec`; see
   authoritative) is killed and the command fails with `EXEC_TIMEOUT`
   (exit 10). Output is streamed, never buffered, so there is no size cap.
 
-Files do not travel with the command: `simctl install <path>` and `adb
-install <apk>` resolve their path on the **worker's** filesystem, so the
+Files do not travel with the command: `simctl install <path>`, `adb
+install <apk>` and `devicectl device install app <path>` resolve their path on the **worker's** filesystem, so the
 artifact has to be there already (a shared volume, a CI checkout on that
 machine).
 

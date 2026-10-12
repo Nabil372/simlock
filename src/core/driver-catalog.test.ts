@@ -23,12 +23,11 @@ interface PassthroughFakeOptions {
   readonly platform: "android" | "ios";
 }
 
-/** why: the fake's option shape is renamed by this task; the cast keeps the test compiling until then. */
 function fakeOptions(options: PassthroughFakeOptions): FakeDriverOptions {
-  return options as unknown as FakeDriverOptions;
+  return options;
 }
 
-/** why: the catalog's routed signature changes to (tool, device, args, context) and a promise. */
+/** why: a test hands the device as `unknown`, so a malformed device record can reach the catalog too. */
 function route(
   catalog: DriverCatalog,
   tool: string,
@@ -36,15 +35,12 @@ function route(
   args: readonly string[],
   context?: PassthroughContext,
 ): Promise<PassthroughCommand> {
-  const routed = catalog as unknown as {
-    passthrough(
-      tool: string,
-      device: unknown,
-      args: readonly string[],
-      context?: PassthroughContext,
-    ): Promise<PassthroughCommand>;
-  };
-  return (async () => routed.passthrough(tool, device, args, context))();
+  return catalog.passthrough(
+    tool,
+    device as Parameters<DriverCatalog["passthrough"]>[1],
+    args,
+    context,
+  );
 }
 
 describe("DriverCatalog", () => {

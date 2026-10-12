@@ -1004,6 +1004,15 @@ describe("IosSimctlDriver physical handler: presence", () => {
     expect(result).toEqual([{ driverDeviceId: UDID_A, osVersion: "18.4", present: true }]);
   });
 
+  it("listPresentPhysical answers a wired, paired, simulated entry not present not-present, with no lock read", async () => {
+    const lab = new Lab().list([listed(UDID_A, { reality: "simulated" })]);
+
+    const result = await (await lab.driver()).listPresentPhysical([UDID_A]);
+
+    expect(result).toEqual([{ driverDeviceId: UDID_A, present: false, reason: "not-present" }]);
+    expect(lab.calls()).toEqual([LIST_ARGV]);
+  });
+
   it("listPresentPhysical answers a locked iPhone not present locked, an unpaired one untrusted, and a Wi-Fi-only one and one not listed not-present", async () => {
     const lab = new Lab()
       .list([

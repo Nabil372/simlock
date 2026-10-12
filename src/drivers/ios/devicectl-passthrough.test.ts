@@ -24,26 +24,7 @@ const VIRTUAL_DEVICE = {
   physical: false,
 } as const;
 
-type ResolvedCommand = {
-  readonly args: readonly string[];
-  readonly command: string;
-  readonly env?: Readonly<Record<string, string>>;
-};
-
-type NewPassthrough = {
-  readonly passthroughTools: readonly string[];
-  passthrough(
-    tool: string,
-    device: unknown,
-    args: readonly string[],
-    context?: unknown,
-  ): Promise<ResolvedCommand>;
-};
-
-// why: the driver's task-440 signature does not exist yet; one cast keeps the file typechecking.
-function asNew(driver: IosSimctlDriver): NewPassthrough {
-  return driver as unknown as NewPassthrough;
-}
+type PassthroughDevice = Parameters<IosSimctlDriver["passthrough"]>[1];
 
 function createDriver(runner: ScriptedProcessRunner): Promise<IosSimctlDriver> {
   return IosSimctlDriver.create({
@@ -60,19 +41,19 @@ function createDriver(runner: ScriptedProcessRunner): Promise<IosSimctlDriver> {
 async function attempt(
   driver: IosSimctlDriver,
   tool: string,
-  device: unknown,
+  device: PassthroughDevice,
   args: readonly string[],
 ): Promise<
   | { readonly resolved: { args: readonly string[]; command: string; envKeys: string[] } }
   | { readonly rejected: unknown }
 > {
   try {
-    const command = await asNew(driver).passthrough(tool, device, args);
+    const command = await driver.passthrough(tool, device, args);
     return {
       resolved: {
         args: command.args,
         command: command.command,
-        envKeys: Object.keys(command.env ?? {}),
+        envKeys: Object.keys(command.env),
       },
     };
   } catch (error) {
@@ -243,7 +224,7 @@ describe("IosSimctlDriver passthrough", () => {
   it("names simctl and devicectl as its passthrough tools", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 
-    expect(asNew(driver).passthroughTools).toEqual(["simctl", "devicectl"]);
+    expect(driver.passthroughTools).toEqual(["simctl", "devicectl"]);
   });
 
   it("returns a promise from passthrough, and rejects a refusal with PassthroughRefusedError", async () => {
@@ -251,7 +232,7 @@ describe("IosSimctlDriver passthrough", () => {
 
     const allowed = (() => {
       try {
-        return asNew(driver).passthrough("devicectl", PHYSICAL_DEVICE, ALLOWED_PLAIN);
+        return driver.passthrough("devicectl", PHYSICAL_DEVICE, ALLOWED_PLAIN);
       } catch (error) {
         return error;
       }
@@ -261,7 +242,7 @@ describe("IosSimctlDriver passthrough", () => {
 
     const refused = (() => {
       try {
-        return asNew(driver).passthrough("devicectl", PHYSICAL_DEVICE, ["device", "reboot"]);
+        return driver.passthrough("devicectl", PHYSICAL_DEVICE, ["device", "reboot"]);
       } catch (error) {
         return error;
       }
@@ -477,7 +458,7 @@ describe("IosSimctlDriver passthrough", () => {
     it.each(HOST_PATH_OPTIONS)("refuses %s as another option's value", async (option) => {
       await expectRefused({
         allowed: ["device", "info", "apps", "--search", "kept"],
-        refused: ["device", "info", "apps", "--search", option, "x"],
+        refused: ["device", "info", "apps", "--search", option],
       });
     });
 
@@ -503,6 +484,36 @@ describe("IosSimctlDriver passthrough", () => {
         allowed: ["device", "info", "lockState", "-v"],
         refused: ["device", "info", "lockState", ...extra],
       });
+    });
+
+    it.each([
+      {
+        allowed: ["device", "info", "apps", "--search", "x"],
+        refused: ["device", "info", "apps", "--search"],
+        title: "a valued option with no value left",
+      },
+      {
+        allowed: ["device", "info", "apps", "--search", "x", "--", "y"],
+        refused: ["device", "info", "apps", "--search", "--", "y"],
+        title: "a valued option followed by --",
+      },
+      {
+        allowed: ["device", "process", "terminate", "-p", "12"],
+        refused: ["device", "process", "terminate", "-p"],
+        title: "a valued short option with no value left",
+      },
+      {
+        allowed: ["device", "info", "apps", "--include-all-apps"],
+        refused: ["device", "info", "apps", "--include-all-apps=x"],
+        title: "a flag with an inline value",
+      },
+      {
+        allowed: ["device", "info", "lockState", "--verbose"],
+        refused: ["device", "info", "lockState", "--verbose=1"],
+        title: "a common flag with an inline value",
+      },
+    ])("refuses $title", async ({ allowed, refused }) => {
+      await expectRefused({ allowed, message: /not allowed over exec/, refused });
     });
 
     it("refuses a second positional argument to device uninstall app", async () => {
@@ -572,6 +583,18 @@ describe("IosSimctlDriver passthrough", () => {
   });
 
   describe("simctl routing", () => {
+    it("refuses a tool it does not wrap, naming that tool, and starts nothing", async () => {
+      const runner = new ScriptedProcessRunner([]);
+      const driver = await createDriver(runner);
+
+      const outcome = await attempt(driver, "adb", undefined, ["devices"]);
+
+      expect(outcome).toMatchObject({
+        rejected: { message: "Refusing `adb`: the iOS driver does not wrap it.", tool: "adb" },
+      });
+      expect(runner.calls).toEqual([]);
+    });
+
     it.each([
       ["no device", undefined],
       ["a virtual device", VIRTUAL_DEVICE],

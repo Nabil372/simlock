@@ -3215,22 +3215,21 @@ interface PassthroughFakeOptions {
   readonly platform: "android" | "ios";
 }
 
-/** why: the fake's passthrough options are renamed and made async by this task; this one place adapts. */
+/** why: the tests here build their command from the arguments alone, so this one place drops the tool and the device. */
 function passthroughFake(options: PassthroughFakeOptions): FakeDriver {
   const { passthrough, ...rest } = options;
-  const adapted = {
+  return new FakeDriver({
     ...rest,
-    passthrough: (_tool: string, _device: unknown, args: readonly string[]) => passthrough(args),
-  };
-  return new FakeDriver(adapted as unknown as ConstructorParameters<typeof FakeDriver>[0]);
+    passthrough: (_tool, _device, args) => passthrough(args),
+  });
 }
 
-/** why: `DriverRejection.passthroughTool` becomes `passthroughTools`; the cast keeps this compiling until then. */
+/** why: a rejection names every tool its driver would have answered to. */
 function rejectionNaming(
   rejection: DriverRejection,
   passthroughTools: readonly string[],
 ): DriverRejection {
-  return { ...rejection, passthroughTools } as unknown as DriverRejection;
+  return { ...rejection, passthroughTools };
 }
 
 /**

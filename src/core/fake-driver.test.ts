@@ -19,24 +19,10 @@ const VIRTUAL_DEVICE = {
   physical: false,
 } as const;
 
-/** why: the fake's passthrough surface is renamed and made async by this task; this cast names the new shape once. */
-interface AsyncPassthroughFake {
-  readonly passthroughTools: readonly string[];
-  passthrough(
-    tool: string,
-    device: unknown,
-    args: readonly string[],
-    context?: unknown,
-  ): Promise<unknown>;
-}
+type FakeDriverOptions = ConstructorParameters<typeof FakeDriver>[0];
 
-function passthroughFake(options: object): AsyncPassthroughFake {
-  const built = new FakeDriver({
-    clock: new FakeClock(),
-    platform: "ios",
-    ...options,
-  } as unknown as ConstructorParameters<typeof FakeDriver>[0]);
-  return built as unknown as AsyncPassthroughFake;
+function passthroughFake(options: Partial<FakeDriverOptions>): FakeDriver {
+  return new FakeDriver({ clock: new FakeClock(), platform: "ios", ...options });
 }
 
 describe("FakeDriver", () => {

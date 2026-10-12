@@ -3964,7 +3964,7 @@ describe("AndroidDriver toolVersions()", () => {
   });
 });
 
-/** why: the driver's passthrough takes (tool, device, args, context) and returns a promise after this task; one adapter keeps every case below on the new shape. */
+/** why: every case below asks for the `adb` tool, so this one place names it and leaves the device and context optional. */
 async function passthroughOf(
   driver: object,
   args: readonly string[],

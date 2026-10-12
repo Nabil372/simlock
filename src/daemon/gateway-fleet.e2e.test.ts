@@ -42,7 +42,6 @@ import type { DispatchSession } from "./dispatch.js";
 import { startDaemon } from "./main.js";
 import type { DaemonServer } from "./server.js";
 
-/** why: the fake's passthrough options are renamed and made async by this task; this adapts in one place. */
 function passthroughOptions(command: PassthroughCommand): object {
   return { passthrough: () => command, passthroughTools: ["adb"] };
 }

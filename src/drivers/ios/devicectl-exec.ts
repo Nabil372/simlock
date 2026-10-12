@@ -198,7 +198,7 @@ export function devicectlExecCommand(udid: string, args: readonly string[]): Pas
   }
   const words = before.slice(0, 3);
   const command = words.join(" ");
-  const spec = words.length === 3 ? COMMANDS.get(command) : undefined;
+  const spec = COMMANDS.get(command);
   if (spec === undefined) {
     refuse(
       `${before.length === 0 ? "no command" : before.slice(0, 3).join(" ")} is not on the reviewed list`,

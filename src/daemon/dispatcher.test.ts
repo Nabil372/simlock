@@ -130,9 +130,7 @@ function fakePassthroughOptions(
     },
     passthroughTools: [tool],
   };
-  // why: the fake's option shape is renamed and its callback made async by this task, so the
-  // current FakeDriverOptions type cannot name it yet.
-  return options as unknown as Partial<FakeDriverOptions>;
+  return options;
 }
 
 interface RecordedPassthrough {
@@ -142,7 +140,6 @@ interface RecordedPassthrough {
   readonly tool: string;
 }
 
-/** why: `PassthroughResolver` still has the old shape until this task lands, so this resolver takes the new (tool, device, args, context) shape and records each call. */
 function recordingResolver(
   calls: RecordedPassthrough[],
   answer: () => Promise<unknown> = () =>
@@ -3127,6 +3124,38 @@ describe("Dispatcher: device.exec", () => {
       .dispatch(
         "device.exec",
         { args: ["list", "devices"], leaseId: "lse_gone", tool: "simctl" },
+        session({ principal: "tok_agent" }),
+      )
+      .then(
+        () => undefined,
+        (rejected: unknown) => rejected,
+      );
+
+    expect(classifyError(error)).toBe("UNKNOWN_LEASE");
+    expect(calls).toEqual([]);
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("answers UNKNOWN_LEASE and resolves no command when the lease's device record is gone", async () => {
+    const calls: RecordedPassthrough[] = [];
+    const runner = new ScriptedProcessRunner([]);
+    const built = await buildDispatcher({
+      passthroughOverride: recordingResolver(calls),
+      processRunner: runner,
+    });
+    const grant = (await built.dispatcher.dispatch(
+      "lease.request",
+      { model: "iPhone 17 Pro", osVersion: "26.5", platform: "ios" },
+      session({ principal: "tok_agent" }),
+    )) as { lease: { id: string } };
+    const snapshot = built.registry.snapshot;
+    expect(snapshot.leases.map((lease) => lease.id)).toEqual([grant.lease.id]);
+    vi.spyOn(built.registry, "snapshot", "get").mockReturnValue({ ...snapshot, devices: [] });
+
+    const error = await built.dispatcher
+      .dispatch(
+        "device.exec",
+        { args: ["list", "devices"], leaseId: grant.lease.id, tool: "simctl" },
         session({ principal: "tok_agent" }),
       )
       .then(

@@ -4439,18 +4439,8 @@ describe("IosSimctlDriver toolVersions()", () => {
   });
 });
 
-type NewPassthrough = {
-  passthrough(
-    tool: string,
-    device: unknown,
-    args: readonly string[],
-    context?: unknown,
-  ): Promise<{ args: readonly string[]; command: string; env?: Record<string, string> }>;
-};
-
-// why: the driver's task-440 signature does not exist yet; one cast keeps the file typechecking.
-async function simctlPassthrough(driver: IosSimctlDriver, args: readonly string[]) {
-  return (driver as unknown as NewPassthrough).passthrough("simctl", undefined, args);
+function simctlPassthrough(driver: IosSimctlDriver, args: readonly string[]) {
+  return driver.passthrough("simctl", undefined, args);
 }
 
 function createDriver(

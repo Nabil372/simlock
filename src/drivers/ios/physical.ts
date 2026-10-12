@@ -372,7 +372,6 @@ export class IosPhysicalHandler {
     try {
       await filesystem.mkdirp(directory);
       await filesystem.chmod(directory, 0o700);
-      await filesystem.rm(path);
       const outcome = await this.#options.invoke(
         ["devicectl", ...args, "--json-output", path],
         READ_LIMIT_MS,
