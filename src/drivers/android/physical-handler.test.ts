@@ -159,21 +159,28 @@ class PhoneAdb implements ProcessRunner {
 
   #answer(rest: readonly string[]): ProcessResult {
     const line = rest.join(" ");
-    if (line === "devices -l") return OK(this.devicesOutput);
-    const body = rest[0] === "-s" ? rest.slice(2).join(" ") : "";
-    if (body === "shell getprop ro.product.model") return OK(`${this.model}\n`);
-    if (body === "shell getprop ro.build.version.sdk") return OK(`${this.sdkLevel}\n`);
-    if (body === "shell am get-current-user") return OK(this.userOutput);
-    if (body.startsWith("shell pm list packages -3 --user ")) {
-      return OK(this.packagesOutput ?? this.installed.map((name) => `package:${name}\n`).join(""));
-    }
+    const body = rest[0] === "-s" ? rest.slice(2).join(" ") : line;
+    const fixed: Readonly<Record<string, string>> = {
+      "devices -l": this.devicesOutput,
+      "shell am get-current-user": this.userOutput,
+      "shell getprop ro.build.version.sdk": `${this.sdkLevel}\n`,
+      "shell getprop ro.product.model": `${this.model}\n`,
+    };
+    const answered = fixed[body];
+    if (answered !== undefined) return OK(answered);
+    if (body.startsWith("shell pm list packages -3 --user ")) return OK(this.#packageListing());
     const uninstall = /^shell pm uninstall --user \d+ (\S+)$/.exec(body);
-    if (uninstall !== null) {
-      const index = this.installed.indexOf(uninstall[1] ?? "");
-      if (index >= 0) this.installed.splice(index, 1);
-      return OK("Success\n");
-    }
-    return { code: 1, stderr: `fake adb: unexpected ${line}`, stdout: "" };
+    if (uninstall === null) return { code: 1, stderr: `fake adb: unexpected ${line}`, stdout: "" };
+    this.installed.splice(
+      0,
+      this.installed.length,
+      ...this.installed.filter((n) => n !== uninstall[1]),
+    );
+    return OK("Success\n");
+  }
+
+  #packageListing(): string {
+    return this.packagesOutput ?? this.installed.map((name) => `package:${name}\n`).join("");
   }
 
   spawn(command: string, args: readonly string[], options: ProcessRunOptions = {}): ProcessHandle {
