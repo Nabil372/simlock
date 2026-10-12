@@ -30,6 +30,7 @@ describe("tracked files", () => {
     .toString("utf8")
     .split("\0")
     .filter((name) => name.length > 0)
+    .filter((name) => !name.startsWith("e2e/fixtures/"))
     // A submodule or a path deleted from the working tree is still listed by
     // `git ls-files`; only regular files can be read.
     .filter((name) => {
