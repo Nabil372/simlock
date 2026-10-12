@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { catalogFixture, statusFixture } from "../test-support.js";
+import { noPhysicalMatch } from "../../core/index.js";
+import { catalogFixture, physicalDeviceFixture, statusFixture } from "../test-support.js";
 import type { WorkerView } from "../worker-registry.js";
 import { assess } from "./serviceability.js";
 
@@ -140,20 +141,6 @@ describe("assess", () => {
     expect(assess(REQUEST, [busy]).kind).toBe("route-or-wait");
   });
 
-  it("makes a physical request route-or-wait whatever model and runtime the catalogs list", () => {
-    const request = {
-      model: "iPhone 99",
-      osVersion: "99.0",
-      physical: true,
-      platform: "ios" as const,
-    };
-
-    expect(rejectionOf([view("wrk_a")], { ...request, physical: false }).code).toBe(
-      "UNKNOWN_MODEL",
-    );
-    expect(assess(request, [view("wrk_a")])).toStrictEqual({ kind: "route-or-wait" });
-  });
-
   it("says NO_CAPACITY, never UNKNOWN_MODEL, when the only worker connected for the first time and its catalog has not arrived", () => {
     const first = view("wrk_a", IOS, {
       catalog: [],
@@ -256,5 +243,127 @@ describe("assess", () => {
         "route-or-wait",
       );
     });
+  });
+});
+
+describe("assess for a physical request", () => {
+  const PHYSICAL = { physical: true as const, platform: "ios" as const };
+  const withDevices = (id: string, devices: WorkerView["devices"], overrides = {}) =>
+    view(id, IOS, { devices, ...overrides });
+
+  it.each(["ready", "leased", "reclaiming", "absent", "quarantined"] as const)(
+    "routes or waits a physical request whose only enrolled match is %s",
+    (state) => {
+      const views = [withDevices("wrk_a", [physicalDeviceFixture("dev_p", state)])];
+
+      expect(assess(PHYSICAL, views)).toStrictEqual({ kind: "route-or-wait" });
+    },
+  );
+
+  it("routes or waits a physical request whose only enrolled match is ready with presence not present", () => {
+    const presence = { present: false, reason: "not-present" } as const;
+    const views = [withDevices("wrk_a", [physicalDeviceFixture("dev_p", "ready", { presence })])];
+
+    expect(assess(PHYSICAL, views)).toStrictEqual({ kind: "route-or-wait" });
+  });
+
+  it("fails a physical request with UNKNOWN_MODEL when its only match is deleted, with the message and details noPhysicalMatch gives", () => {
+    const views = [withDevices("wrk_a", [physicalDeviceFixture("dev_p", "deleted")])];
+    const named = {
+      ...PHYSICAL,
+      class: "phone" as const,
+      model: "iPhone 15 Pro",
+      osVersion: ">=18 <19",
+    };
+
+    for (const request of [named, PHYSICAL]) {
+      expect(rejectionOf(views, request)).toEqual({
+        ...noPhysicalMatch(request),
+        code: "UNKNOWN_MODEL",
+        kind: "reject",
+        reason: "unresolvable-spec",
+      });
+    }
+    expect(rejectionOf(views, PHYSICAL).details).toStrictEqual({ platform: "ios" });
+    expect(rejectionOf(views, named).details).toStrictEqual({
+      class: "phone",
+      model: "iPhone 15 Pro",
+      osVersion: ">=18 <19",
+      platform: "ios",
+    });
+  });
+
+  it("fails a physical request with UNKNOWN_MODEL when no listed device matches its model, class or OS", () => {
+    const views = [withDevices("wrk_a", [physicalDeviceFixture("dev_p", "ready")])];
+
+    expect(assess({ ...PHYSICAL, model: "iPhone 15 pro" }, views).kind).toBe("route-or-wait");
+    for (const request of [
+      { ...PHYSICAL, model: "iPhone 99" },
+      { ...PHYSICAL, class: "tablet" as const },
+      { ...PHYSICAL, osVersion: ">=17 <18" },
+    ]) {
+      expect(rejectionOf(views, request).code).toBe("UNKNOWN_MODEL");
+    }
+  });
+
+  it("routes or waits a physical request whose worker's catalog lists no model or runtime for it but has an enrolled match", () => {
+    const catalogOnly: CatalogEntry = {
+      models: ["iPhone 16"],
+      platform: "ios",
+      runtimes: ["26.0"],
+    };
+    const worker = view("wrk_a", catalogOnly, {
+      devices: [physicalDeviceFixture("dev_p", "ready")],
+    });
+
+    expect(assess({ ...PHYSICAL, model: "iPhone 15 Pro", osVersion: "18.4" }, [worker])).toEqual({
+      kind: "route-or-wait",
+    });
+  });
+
+  it("answers a physical request NO_DRIVER when no known worker's catalog has the platform", () => {
+    const worker = withDevices("wrk_a", [
+      physicalDeviceFixture("dev_p", "ready", {
+        model: "Pixel 9",
+        osVersion: "34",
+        platform: "android",
+      }),
+    ]);
+
+    expect(rejectionOf([worker], { ...PHYSICAL, platform: "android" })).toMatchObject({
+      code: "NO_DRIVER",
+      details: { platform: "android" },
+    });
+  });
+
+  it("fails a physical request with UNKNOWN_MODEL when only an incompatible worker lists a match, and with NO_CAPACITY no-worker when only a disconnected worker does", () => {
+    const devices = [physicalDeviceFixture("dev_p", "ready")];
+    const other = view("wrk_b");
+
+    expect(
+      rejectionOf([withDevices("wrk_a", devices, { connection: "incompatible" }), other], PHYSICAL),
+    ).toMatchObject({ code: "UNKNOWN_MODEL", reason: "unresolvable-spec" });
+    expect(
+      rejectionOf([withDevices("wrk_a", devices, { connection: "disconnected" }), other], PHYSICAL),
+    ).toMatchObject({ code: "NO_CAPACITY", reason: "no-worker" });
+  });
+
+  it("fails a physical request with NO_CAPACITY no-worker when its only enrolled match is on a drained worker", () => {
+    const devices = [physicalDeviceFixture("dev_p", "ready")];
+
+    expect(
+      rejectionOf([withDevices("wrk_a", devices, { drained: true }), view("wrk_b")], PHYSICAL),
+    ).toMatchObject({ code: "NO_CAPACITY", reason: "no-worker" });
+  });
+
+  it("matches an iPad entry of class tablet to --class tablet, and not to a physical request naming neither class nor model", () => {
+    const views = [
+      withDevices("wrk_a", [
+        physicalDeviceFixture("dev_ipad", "ready", { class: "tablet", model: "iPad Pro 13-inch" }),
+      ]),
+    ];
+
+    expect(assess({ ...PHYSICAL, class: "tablet" }, views).kind).toBe("route-or-wait");
+    expect(rejectionOf(views, PHYSICAL).code).toBe("UNKNOWN_MODEL");
   });
 });
