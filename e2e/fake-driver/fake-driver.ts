@@ -89,6 +89,34 @@ const PASSTHROUGH_TOOLS: Readonly<Record<Platform, readonly string[]>> = {
 
 const IOS_REFUSED_VERBS = ["create", "erase", "delete"];
 
+// why: a mirror of ADR 0022 §5, never evidence for the real drivers: devicectl serves only a physical lease and simctl only a virtual one.
+function assertToolServesLease(tool: string, physical: boolean): void {
+  if (tool === "devicectl" && !physical) {
+    throw new PassthroughRefusedError(
+      tool,
+      "Refusing `devicectl`: it serves a physical iOS device, and this lease holds a simulator.",
+    );
+  }
+  if (tool === "simctl" && physical) {
+    throw new PassthroughRefusedError(
+      tool,
+      "Refusing `simctl`: it serves simulators, and this lease holds a physical device. Use `devicectl`.",
+    );
+  }
+}
+
+// why: a physical lease's argv names the leased device, so a test can see the tool was aimed at it.
+function aimedAt(
+  tool: string,
+  device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+  args: readonly string[],
+): readonly string[] {
+  if (device === undefined || !device.physical) return args;
+  return tool === "devicectl"
+    ? [...args, "--device", device.deviceId]
+    : ["-s", device.deviceId, ...args];
+}
+
 /** iOS refuses a lifecycle verb in first non-flag position, where a subcommand sits. */
 function refusedSimctlVerb(args: readonly string[]): string | undefined {
   const verb = args.find((argument) => !argument.startsWith("-"));
@@ -592,23 +620,10 @@ export class OutOfProcessFakeDriver implements Driver {
     args: readonly string[],
     context?: PassthroughContext,
   ): Promise<PassthroughCommand> {
-    const tool = PASSTHROUGH_TOOLS[this.platform].includes(requested)
-      ? requested
-      : (PASSTHROUGH_TOOLS[this.platform][0] ?? requested);
-    // why: a mirror of ADR 0022 §5, never evidence for the real drivers: devicectl serves only a physical lease and simctl only a virtual one.
+    const platformTools = PASSTHROUGH_TOOLS[this.platform];
+    const tool = platformTools.includes(requested) ? requested : (platformTools[0] ?? requested);
     const physical = device?.physical === true;
-    if (tool === "devicectl" && !physical) {
-      throw new PassthroughRefusedError(
-        tool,
-        "Refusing `devicectl`: it serves a physical iOS device, and this lease holds a simulator.",
-      );
-    }
-    if (tool === "simctl" && physical) {
-      throw new PassthroughRefusedError(
-        tool,
-        "Refusing `simctl`: it serves simulators, and this lease holds a physical device. Use `devicectl`.",
-      );
-    }
+    assertToolServesLease(tool, physical);
     // A mirror of the Android no-terminal rule, never evidence for the real driver's own rule.
     if (context?.hasTerminal === false && this.platform === "android" && isBareShell(args)) {
       throw new PassthroughRefusedError(
@@ -623,15 +638,8 @@ export class OutOfProcessFakeDriver implements Driver {
         `Refusing \`simlock ${tool} ${refused}\`: use \`simlock release\` or \`simlock cleanup\` instead.`,
       );
     }
-    // why: a physical lease's argv names the leased device, so a test can see the tool was aimed at it.
-    const aimed =
-      device === undefined || !physical
-        ? args
-        : tool === "devicectl"
-          ? [...args, "--device", device.deviceId]
-          : ["-s", device.deviceId, ...args];
     return {
-      args: ["-e", PASSTHROUGH_PROGRAM, this.deviceRoot, ...aimed],
+      args: ["-e", PASSTHROUGH_PROGRAM, this.deviceRoot, ...aimedAt(tool, device, args)],
       command: process.execPath,
       env: { SIMLOCK_FAKE_PASSTHROUGH_PLATFORM: this.platform },
     };
