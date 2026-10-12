@@ -158,7 +158,7 @@ export class LeaseLifecycle {
     return released;
   }
 
-  /** The lease's fact is emitted after the commit and before the device's `device.deleted`. */
+  /** why: the lease's fact is emitted after the commit and before the device's `device.deleted`. */
   // fallow-ignore-next-line unused-class-member -- reached through LeaseReleaseCoordinator's lifecycle port.
   async endForMissingDevice(
     leaseId: string,

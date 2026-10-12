@@ -128,8 +128,8 @@ interface Connection {
 }
 
 /**
- * Kept in the type rather than making every field optional: a gateway passes `dispatcher` instead
- * (ADR 0005 §32), and omitting `queue` from a worker's options stays a compile error.
+ * why: kept in the type rather than making every field optional: a gateway passes `dispatcher` instead,
+ * and omitting `queue` from a worker's options stays a compile error.
  */
 export interface DaemonServerEngineOptions {
   readonly capacity: CapacityReader;
@@ -161,7 +161,7 @@ export interface DaemonServerCommonOptions {
   readonly config: Config;
   readonly defaultRequesterId: string;
   /**
-   * The daemon serves without a platform whose driver refused to start (safety rule 9), so each
+   * why: the daemon serves without a platform whose driver refused to start (safety rule 9), so each
    * refusal lands as an event in the ring buffer here.
    */
   readonly driverRejections?: readonly DriverRejection[];
@@ -609,7 +609,7 @@ export class DaemonServer {
     this.#engine?.reaper.dispose();
     this.#engine?.healthMonitor?.dispose();
     this.#engine?.physicalDeviceWatcher?.dispose();
-    // ADR 0004 §3: a stop releases nothing; leases persist with their deadline. Only work already in
+    // why: a stop releases nothing; leases persist with their deadline. Only work already in
     // flight is drained, so `daemon stop` finishes on a settled pool. Disposal follows rather than
     // precedes it, so a retry timer armed by a reclaim that settles into quarantine is still cancelled.
     await this.options.settle?.();
@@ -618,7 +618,7 @@ export class DaemonServer {
       await connection.socket.close();
     }
     await this.options.host.stop();
-    // A daemon that lost the start race never persisted it, and `#stop()` is never reached on that
+    // why: a daemon that lost the start race never persisted it, and `#stop()` is never reached on that
     // instance.
     await this.options.adminSecret?.remove();
     this.#logger.info("Daemon stopped", { reason });

@@ -211,7 +211,7 @@ interface DeviceRecordFields {
   readonly driverData: unknown;
   readonly createdAt: number;
   readonly lastLeaseEndedAt?: number;
-  /** A record written before this field existed has none and counts as ready since `createdAt`. */
+  /** why: a record written before this field existed has none and counts as ready since `createdAt`. */
   readonly readyAt?: number;
   readonly shutdownAt?: number;
   readonly foreignStateDetectedAt?: number;
@@ -242,11 +242,11 @@ export interface VirtualDevice extends DeviceRecordFields {
   readonly spec: VirtualSpec;
   readonly state: VirtualState;
   readonly mode: DeviceMode;
-  /** A record written before this field existed loads as `reusable`. */
+  /** why: a record written before this field existed loads as `reusable`. */
   readonly leaseIdentity?: LeaseIdentity;
 }
 
-/** `mode` and `leaseIdentity` are declared `undefined` so code that reads them compiles for both types. */
+/** why: `mode` and `leaseIdentity` are declared `undefined` so code that reads them compiles for both types. */
 export interface PhysicalDevice extends DeviceRecordFields {
   readonly physical: true;
   readonly spec: PhysicalSpec;
@@ -261,7 +261,7 @@ export interface PhysicalDevice extends DeviceRecordFields {
 export type DeviceRecord = VirtualDevice | PhysicalDevice;
 
 /**
- * A physical record here means a broken invariant: the ID came from a virtual read, so the caller
+ * why: a physical record here means a broken invariant: the ID came from a virtual read, so the caller
  * must not go on to touch it.
  */
 export function assertVirtual(device: DeviceRecord): VirtualDevice {
@@ -400,7 +400,7 @@ export function isSettled(record: Pick<LeaseRequestRecord<unknown>, "state">): b
 }
 
 /**
- * `quarantined` counts against running capacity (a virtual device only) but is never grantable: it
+ * why: `quarantined` counts against running capacity (a virtual device only) but is never grantable: it
  * sits outside the `ready`/`shutdown` states every grant and eviction path selects on.
  */
 const legalTransitions: Readonly<Record<VirtualState, readonly VirtualState[]>> = {
@@ -413,7 +413,7 @@ const legalTransitions: Readonly<Record<VirtualState, readonly VirtualState[]>> 
   deleted: [],
 };
 
-/** `quarantined` never moves to `absent`: a gone quarantined device keeps its retries. */
+/** why: `quarantined` never moves to `absent`: a gone quarantined device keeps its retries. */
 const legalPhysicalTransitions: Readonly<Record<PhysicalState, readonly PhysicalState[]>> = {
   ready: ["leased", "absent", "deleted"],
   leased: ["reclaiming", "absent"],
@@ -527,7 +527,7 @@ function isPhysicalState(state: DeviceState): state is PhysicalState {
   return Object.hasOwn(legalPhysicalTransitions, state);
 }
 
-/** A record written before `reclaimingSince` existed falls back to `lastLeaseEndedAt` for when it entered `reclaiming`. */
+/** why: a record written before `reclaimingSince` existed falls back to `lastLeaseEndedAt` for when it entered `reclaiming`. */
 export function transitionEnteredAt(record: DeviceRecord): number | undefined {
   switch (record.state) {
     case "provisioning":

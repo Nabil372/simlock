@@ -65,7 +65,7 @@ export interface LeaseReleaseCoordinatorOptions {
 type ReclaimMode = "await" | "background" | "none";
 
 /**
- * Lease commits happen in the serialized decision section; reclaiming is deliberately outside it.
+ * why: lease commits happen in the serialized decision section; reclaiming is deliberately outside it.
  * Concurrent `releaseAll` calls are not idempotent: overlapping snapshots can yield UnknownLeaseError.
  */
 export class LeaseReleaseCoordinator
@@ -135,7 +135,7 @@ export class LeaseReleaseCoordinator
     });
   }
 
-  /** A lease already gone is not an error: the release that took it came first. */
+  /** why: a lease already gone is not an error: the release that took it came first. */
   // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async endForAbsentDevice(
     leaseId: string,
@@ -156,13 +156,13 @@ export class LeaseReleaseCoordinator
     );
   }
 
-  /** Under the maintenance admission every release takes, so no watcher write lands while an operator reset walks the devices. */
+  /** why: under the maintenance admission every release takes, so no watcher write lands while an operator reset walks the devices. */
   // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async admit<Result>(work: () => Promise<Result>): Promise<Result> {
     return this.#runNormal(work);
   }
 
-  /** The reclaim joins the background reclaims, so nuke's `beginMaintenance` and a graceful stop wait for it. */
+  /** why: the reclaim joins the background reclaims, so nuke's `beginMaintenance` and a graceful stop wait for it. */
   // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async reclaimReturned(
     deviceId: string,
@@ -271,7 +271,7 @@ export class LeaseReleaseCoordinator
     await this.options.reclaim.reclaim(released);
   }
 
-  /** The claim lasts as long as the reclaim, so startup recovery and doctor's stalled-transition check take a live reclaim for neither orphaned nor stalled. */
+  /** why: the claim lasts as long as the reclaim, so startup recovery and doctor's stalled-transition check take a live reclaim for neither orphaned nor stalled. */
   #reclaimInBackground(released: ReleasedLease): void {
     const claim = this.options.claims.tryClaim(released.device.id, "reclaim");
     const reclaim = this.options.reclaim

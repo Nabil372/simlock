@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** The colour is a second signal, never the only one, and never the accent (docs/internal/DESIGN.md). */
+/** why: the colour is a second signal, never the only one, and never the accent. */
 export type Tone = "ok" | "warn" | "error" | "idle";
 
 export function Status({ tone, children }: { readonly tone: Tone; readonly children: ReactNode }) {
@@ -34,7 +34,7 @@ const INSTALL_STATES: Tones = { downloading: "ok", waiting: "idle" };
 const WAITING_STAGES: Tones = { queued: "idle", starting: "ok" };
 
 /**
- * Wire input is a claim: a word from a newer daemon this console does not know still shows as
+ * why: wire input is a claim: a word from a newer daemon this console does not know still shows as
  * itself, in the neutral tone.
  */
 function statusOf(tones: Tones, word: string): { readonly word: string; readonly tone: Tone } {

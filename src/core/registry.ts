@@ -120,10 +120,10 @@ export interface CreateLeaseInput {
   readonly ownerId: string;
   readonly ttlMs: number;
   readonly ttlDeadline: number;
-  /** The caller has already refused an ID that is in use: one place enforces that rule. */
+  /** why: the caller has already refused an ID that is in use: one place enforces that rule. */
   readonly leaseId?: string;
   /**
-   * When given, the commit that adds the lease also marks the request `granted`, so no crash can
+   * why: when given, the commit that adds the lease also marks the request `granted`, so no crash can
    * fall between the two.
    */
   readonly request?: {
@@ -572,7 +572,7 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return ended;
   }
 
-  /** `announceLeaseEnd` runs after the commit and before `device.absence-detected`, so the lease's fact comes first. */
+  /** why: `announceLeaseEnd` runs after the commit and before `device.absence-detected`, so the lease's fact comes first. */
   // fallow-ignore-next-line unused-class-member -- called through LeaseLifecycle's registry port.
   async endLeaseAndMarkDeviceAbsent(
     leaseId: string,
@@ -1257,7 +1257,7 @@ function eventForTransition(
 }
 
 /**
- * Parsed as one group so `parseDevice`'s required-field check does not grow two branches per
+ * why: parsed as one group so `parseDevice`'s required-field check does not grow two branches per
  * field added.
  */
 const optionalDeviceNumberKeys = [

@@ -250,7 +250,7 @@ export class Doctor {
     this.options.eventBus.emit(
       "doctor.reconciled",
       {
-        // `driftFindings` means things `--fix` might correct (events rule 6: additive changes only);
+        // why: `driftFindings` means things `--fix` might correct;
         // advisory and prerequisite findings are not drift, so they stay out of this payload.
         driftFindings: remaining.filter(isDrift),
       },
@@ -635,7 +635,7 @@ export class Doctor {
   }
 
   /**
-   * Announced as soon as the read finds it, before `--fix` acts: a stall is not a commit, and the
+   * why: announced as soon as the read finds it, before `--fix` acts: a stall is not a commit, and the
    * fix re-reads the device under its claim, so a reclaim that starts in between is left alone.
    */
   #emitStalledEvents(findings: readonly DoctorFinding[]): void {
@@ -823,7 +823,7 @@ function registryDriftFindings(
     findings.push(missing);
   }
 
-  // `expected === undefined` means the registry is mid-transition: simlock is acting on the device
+  // why: `expected === undefined` means the registry is mid-transition: simlock is acting on the device
   // itself, so neither run state nor marks are compared.
   //
   // A device this daemon holds an operation claim on is excluded too: a lease-path boot from

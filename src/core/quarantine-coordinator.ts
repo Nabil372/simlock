@@ -97,7 +97,7 @@ export class QuarantineCoordinator {
     this.#arm(failure.deviceId, nextRetryAt);
   }
 
-  /** The claim is taken here and released on every exit, so a reclaim the watcher has just started is never quarantined under it. */
+  /** why: the claim is taken here and released on every exit, so a reclaim the watcher has just started is never quarantined under it. */
   async enterFromStalledTransition(deviceId: string, findingState?: DeviceState): Promise<void> {
     const nextRetryAt = this.options.clock.now() + this.options.config.retryBackoffMs;
     const entered = await this.options.decisions.run(async () => {
@@ -230,7 +230,7 @@ export class QuarantineCoordinator {
   }
 
   /**
-   * A physical device that is not there cannot be reclaimed, and a retry that fails for want of
+   * why: a physical device that is not there cannot be reclaimed, and a retry that fails for want of
    * it would only count toward unenrolling it. A read that fails, or a platform with no driver,
    * is not presence.
    */
@@ -249,7 +249,7 @@ export class QuarantineCoordinator {
     }
   }
 
-  /** The attempt count stays as it was; only the due time moves on, so `status` never shows one that has passed. */
+  /** why: the attempt count stays as it was; only the due time moves on, so `status` never shows one that has passed. */
   async #waitForPresence(device: PhysicalDevice): Promise<void> {
     const nextRetryAt =
       this.options.clock.now() +

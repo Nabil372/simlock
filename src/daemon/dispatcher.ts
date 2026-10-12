@@ -853,7 +853,7 @@ export class Dispatcher {
     readonly transitionAgeMs?: number;
     readonly stalled?: true;
   } {
-    // `reclaimingSince` only ages a transition: it stays off the wire (`transitionAgeMs` carries it).
+    // why: `reclaimingSince` only ages a transition: it stays off the wire (`transitionAgeMs` carries it).
     const { reclaimingSince: _internal, ...onTheWire } = device as DeviceRecord & {
       readonly reclaimingSince?: number;
     };

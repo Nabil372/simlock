@@ -42,7 +42,7 @@ export interface LeasingOptions {
   readonly eventBus: EventBus;
   readonly idGenerator: IdGenerator;
   /**
-   * A backgrounded reclaim has no caller left to reject to; without this its only trace is the
+   * why: a backgrounded reclaim has no caller left to reject to; without this its only trace is the
    * device's own registry state.
    */
   readonly logger?: Logger | undefined;
@@ -53,32 +53,32 @@ export interface LeasingOptions {
    */
   readonly defaultModes?: Readonly<Partial<Record<Platform, DeviceMode>>> | undefined;
   readonly modelPreferences?: ModelPreferences | undefined;
-  /** Not started on build: a health probe would shell out while startup convergence does. */
+  /** why: not started on build: a health probe would shell out while startup convergence does. */
   readonly healthMonitor?: boolean | undefined;
 }
 
 export interface Leasing extends LeaseCommands, QueueControl, DeviceModeReader {
   /**
-   * Building leasing does not connect them, so building one over a core never re-points that core's
+   * why: building leasing does not connect them, so building one over a core never re-points that core's
    * ports.
    */
   readonly corePorts: CorePorts;
   readonly requests: LeaseRequestBook<LeaseGrant>;
   readonly healthMonitor: LeaseHealthMonitor | undefined;
-  /** Wired whatever `health.enabled` says; the daemon arms it after startup convergence. */
+  /** why: wired whatever `health.enabled` says; the daemon arms it after startup convergence. */
   readonly physicalDeviceWatcher: PhysicalDeviceWatcher;
   expire(leaseId: string): Promise<void>;
   settleRequests(): Promise<void>;
-  /** Runs before core's `converge`, so no device convergence picks a device this is about to release. */
+  /** why: runs before core's `converge`, so no device convergence picks a device this is about to release. */
   reconcile(read: StartupRead): Promise<void>;
   announceQueueDepth(): void;
   /**
-   * Runs before `dispose`: a reclaim that settles into a purge failure arms a quarantine retry
+   * why: runs before `dispose`: a reclaim that settles into a purge failure arms a quarantine retry
    * timer, and cancelling first would strand it armed.
    */
   settle(): Promise<void>;
   /**
-   * Cancelling expires nothing and releases nothing (ADR 0004): `ttlDeadline` is persisted and
+   * why: cancelling expires nothing and releases nothing: `ttlDeadline` is persisted and
    * re-armed on the next start. Without this a lease's TTL timer keeps the process alive after
    * `daemon stop`.
    */

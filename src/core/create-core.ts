@@ -123,7 +123,7 @@ export interface Core {
   settle(): Promise<void>;
   drain(): Promise<void>;
   /**
-   * The first step of a graceful stop: closes the warm pool before leasing settles, so a reclaim
+   * why: closes the warm pool before leasing settles, so a reclaim
    * that commits meanwhile cannot start a creation `drain` would then wait for.
    */
   closeWarmPool(): void;

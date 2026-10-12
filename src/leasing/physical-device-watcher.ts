@@ -54,7 +54,7 @@ export class PhysicalDeviceWatcher {
     this.#logger = options.logger?.child("physical-device-watcher") ?? new NoopLogger();
   }
 
-  /** Not armed by the constructor: the daemon starts it once startup convergence has finished. */
+  /** why: not armed by the constructor: the daemon starts it once startup convergence has finished. */
   start(): void {
     if (this.#timer !== undefined) return;
     this.#arm();
@@ -71,7 +71,7 @@ export class PhysicalDeviceWatcher {
   }
 
   /**
-   * Notes the physical devices a killed daemon left `reclaiming`, once leasing's startup step has
+   * why: notes the physical devices a killed daemon left `reclaiming`, once leasing's startup step has
    * run. Only these are reclaimed without a state write: a device that entered `reclaiming` in
    * this process is under its own release, or has none and is doctor's.
    */
@@ -82,7 +82,7 @@ export class PhysicalDeviceWatcher {
   }
 
   /**
-   * A physical device was just committed `ready`: its not-present reads start again from zero, and
+   * why: a physical device was just committed `ready`: its not-present reads start again from zero, and
    * a read still in flight, begun before this, no longer counts for it.
    */
   reset(deviceId: string): void {
@@ -222,7 +222,7 @@ export class PhysicalDeviceWatcher {
     await this.options.releaser.endForAbsentDevice(leaseId, absentReason, this.#live);
   }
 
-  /** Written only if the device is still `ready` and nothing else holds it. */
+  /** why: written only if the device is still `ready` and nothing else holds it. */
   async #markAbsent(device: PhysicalDevice, absentReason: AbsentReason): Promise<void> {
     await this.options.releaser.admit(() =>
       this.options.decisions.run(async () => {

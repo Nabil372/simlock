@@ -316,7 +316,7 @@ export class ReclaimCoordinator {
   }
 
   /**
-   * Hands the purge failure to quarantine rather than readiness-checking the device back into
+   * why: hands the purge failure to quarantine rather than readiness-checking the device back into
    * circulation: a dirty device must never be leasable.
    */
   async #recoverPurgeFailure(
@@ -335,7 +335,7 @@ export class ReclaimCoordinator {
     });
   }
 
-  /** Absent, not quarantined, when the device is gone or unreadable: its reclaim runs again when it is back. */
+  /** why: Absent, not quarantined, when the device is gone or unreadable: its reclaim runs again when it is back. */
   async #absentAfterFailure(device: PhysicalDevice, error: unknown): Promise<boolean> {
     let absentReason: AbsentReason | undefined;
     try {
