@@ -2,6 +2,11 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  AgentDeviceSupervisor,
+  type AgentDeviceHealthProbe,
+  NodeAgentDeviceHealthProbe,
+} from "../agent-device/index.js";
 import { EVENT_FILE_NAME, EventBus, EventHistory, type EventBusLogger } from "../bus/index.js";
 import { fitHostFacts } from "../contract/index.js";
 import {
@@ -101,6 +106,7 @@ import { GatewayUplink } from "./gateway-uplink.js";
 import { createCredentialRoleResolver } from "./session.js";
 
 export interface StartDaemonOptions {
+  readonly agentDeviceHealth?: AgentDeviceHealthProbe;
   readonly clock?: Clock;
   readonly configOverrides?: ConfigOverrides;
   readonly configPath?: string;
@@ -398,6 +404,26 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     }
     leasing.announceQueueDepth();
   };
+  const agentDevice = new AgentDeviceSupervisor({
+    baseEnvironment: process.env,
+    clock,
+    config: config.agentDevice,
+    driverEnvironment: Object.assign(
+      {},
+      ...drivers.map((driver) => driver.virtualLeaseEnvironment()),
+    ),
+    filesystem,
+    healthProbe: options.agentDeviceHealth ?? new NodeAgentDeviceHealthProbe(),
+    home: dataDirectory,
+    leaseMaxTtlMs: config.lease.maxTtlMs,
+    logger: logger.child("agent-device"),
+    nodePath: process.execPath,
+    nodeVersion: process.versions.node,
+    platforms: drivers.map((driver) => driver.platform),
+    processRunner,
+    processSupervisor,
+    tcpProbe,
+  });
   const daemon = new DaemonServer({
     // Closes the warm pool the moment a stop is asked for, ahead of every await in the stop.
     beginStop: () => core.closeWarmPool(),
@@ -454,6 +480,9 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
       // Before the drivers: a running install is ended through its signal while its driver
       // can still stop the installer process.
       await components.close();
+      // why: before the drivers: the Android driver stops simlock's adb server, which this
+      // daemon's agent-device uses, and a client that finds no server forks its own.
+      await agentDevice.stop();
       const disposals = await Promise.allSettled(drivers.map((driver) => driver.dispose?.()));
       for (const [index, disposal] of disposals.entries()) {
         if (disposal.status === "rejected") {
@@ -492,6 +521,9 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     // what let a stale "Daemon started" log/event follow "Daemon stopping" (review finding B6).
     onSocketClaimed: () => {
       socketClaimed = true;
+      // why: not awaited, since simlock's start never waits for agent-device, and a daemon that lost
+      // the socket race never gets here, so it reaps nothing.
+      void agentDevice.start();
       // Dialled here, once the socket is claimed and `#readyPromise` is set. The gateway's first
       // `status.get` never parks (it still answers `starting` during convergence), but its
       // `events.subscribe` does park on startup readiness, so the refresh that follows the

@@ -349,6 +349,7 @@ export interface Driver {
   leaseEnvironment(
     device: VirtualDriverDevice | PhysicalDriverDevice,
   ): Readonly<Record<string, string>>;
+  virtualLeaseEnvironment(): Readonly<Record<string, string>>;
   /** Android must reap the adb server it supervises by pid; nothing else can. */
   dispose?(): Promise<void>;
   /** Spelled `| undefined` so a driver that decides at construction can still say it has none. */

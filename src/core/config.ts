@@ -250,6 +250,10 @@ export interface Config {
       readonly bootAnimation: boolean;
     };
   };
+  readonly agentDevice: {
+    readonly enabled: boolean;
+    readonly command: string;
+  };
   /**
    * ADR 0005 §3/§6. Both sides of the fleet live under one key, and which half is read depends
    * on `mode`:
@@ -718,6 +722,7 @@ function defaultConfig(
         bootAnimation: true,
       },
     },
+    agentDevice: { enabled: false, command: "agent-device" },
     gateway: {
       disconnectedRetentionMs: DEFAULT_DISCONNECTED_RETENTION_MS,
       execTimeoutMs: DEFAULT_GATEWAY_EXEC_TIMEOUT_MS,
@@ -870,6 +875,7 @@ function configValidators(strategy: CapacityStrategyName): Record<string, Valida
         bootAnimation: booleanValue,
       }),
     }),
+    agentDevice: objectValidator({ enabled: booleanValue, command: nonEmptyString }),
     stalledTransition: objectValidator({
       thresholdMultiplier: numberAtLeast(1),
       minimumThresholdMs: nonNegativeNumber,

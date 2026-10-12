@@ -1571,6 +1571,15 @@ describe("AndroidDriver", () => {
     expect(reality.processes).toEqual([expect.objectContaining({ deviceId: "simlock_running" })]);
   });
 
+  it("answers virtualLeaseEnvironment with simlock's adb port, and leaseEnvironment for a virtual device equals it", async () => {
+    const driver = await createDriver(await androidFilesystem(), new ScriptedProcessRunner([]));
+
+    expect(driver.virtualLeaseEnvironment()).toEqual({
+      ANDROID_ADB_SERVER_PORT: String(adbServerPort),
+    });
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual(driver.virtualLeaseEnvironment());
+  });
+
   it("hands a lease holder of a physical device its serial and the default adb server", async () => {
     const driver = await createDriver(await androidFilesystem(), new ScriptedProcessRunner([]));
 

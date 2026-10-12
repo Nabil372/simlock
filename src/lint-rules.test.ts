@@ -278,4 +278,51 @@ describe("import rules enforced by pnpm lint", () => {
     expectLintPass("src/daemon/main.ts", `import { x } from "../leasing/index.js";\n`);
     expectLintError("src/daemon/main.ts", `import { x } from "../leasing/wait-queue.js";\n`);
   });
+
+  it("fails a file under core, leasing, drivers/ios or drivers/android importing agent-device's index", () => {
+    expectLintError("src/core/x.ts", `import { x } from "../agent-device/index.js";\n`);
+    expectLintError("src/leasing/x.ts", `import { x } from "../agent-device/index.js";\n`);
+    expectLintError("src/drivers/ios/x.ts", `import { x } from "../../agent-device/index.js";\n`);
+    expectLintError(
+      "src/drivers/android/x.ts",
+      `import { x } from "../../agent-device/index.js";\n`,
+    );
+  });
+
+  it("fails a daemon file importing agent-device's supervisor file, and passes its index", () => {
+    expectLintError(
+      "src/daemon/x.ts",
+      `import { x } from "../agent-device/host/agent-device-supervisor.js";\n`,
+    );
+    expectLintPass("src/daemon/x.ts", `import { x } from "../agent-device/index.js";\n`);
+  });
+
+  it("passes agent-device's testing file in a daemon test file and in agent-device's own test, and fails it in a daemon file", () => {
+    expectLintPass("src/daemon/x.test.ts", `import { x } from "../agent-device/testing.js";\n`);
+    expectLintPass("src/agent-device/host/x.test.ts", `import { x } from "../testing.js";\n`);
+    expectLintError("src/daemon/x.ts", `import { x } from "../agent-device/testing.js";\n`);
+  });
+
+  it.each([
+    "src/agent-device/host/x.ts",
+    "src/agent-device/shared/x.ts",
+    "src/agent-device/index.ts",
+  ])(
+    "fails %s importing fs, node:fs, node:fs/promises, child_process or node:child_process",
+    (path) => {
+      for (const module of [
+        "fs",
+        "node:fs",
+        "node:fs/promises",
+        "child_process",
+        "node:child_process",
+      ]) {
+        expectLintError(path, `import { x } from "${module}";\n`);
+      }
+    },
+  );
+
+  it("passes an agent-device test file importing node:fs", () => {
+    expectLintPass("src/agent-device/host/x.test.ts", `import { x } from "node:fs";\n`);
+  });
 });
