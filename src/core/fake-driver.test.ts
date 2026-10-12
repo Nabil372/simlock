@@ -254,6 +254,19 @@ describe("FakeDriver", () => {
     });
   });
 
+  it("answers virtualLeaseEnvironment with its configured lease environment, and leaseEnvironment for a virtual device equals it", () => {
+    const driver = new FakeDriver({
+      clock: new FakeClock(),
+      leaseEnvironment: { SIMLOCK_IOS_DEVICE_SET: "/tmp/devices/ios" },
+      platform: "ios",
+    });
+
+    expect(driver.virtualLeaseEnvironment()).toEqual({
+      SIMLOCK_IOS_DEVICE_SET: "/tmp/devices/ios",
+    });
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual(driver.virtualLeaseEnvironment());
+  });
+
   it("reports a staged reality entry whatever it is named, the way a root does", () => {
     const driver = new FakeDriver({ clock: new FakeClock(), platform: "ios" });
     driver.setManagedReality({

@@ -1587,6 +1587,13 @@ describe("IosSimctlDriver", () => {
     expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual({ SIMLOCK_IOS_DEVICE_SET: deviceRoot });
   });
 
+  it("answers virtualLeaseEnvironment with the device set, and leaseEnvironment for a virtual device equals it", async () => {
+    const driver = await createDriver(new ScriptedProcessRunner([]));
+
+    expect(driver.virtualLeaseEnvironment()).toEqual({ SIMLOCK_IOS_DEVICE_SET: deviceRoot });
+    expect(driver.leaseEnvironment(VIRTUAL_DEVICE)).toEqual(driver.virtualLeaseEnvironment());
+  });
+
   it("hands a lease holder of a physical device its UDID and no simulator device set", async () => {
     const driver = await createDriver(new ScriptedProcessRunner([]));
 

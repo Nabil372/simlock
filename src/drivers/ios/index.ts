@@ -1532,6 +1532,10 @@ export class IosSimctlDriver implements Driver {
     ];
   }
 
+  virtualLeaseEnvironment(): Readonly<Record<string, string>> {
+    return {};
+  }
+
   leaseEnvironment(device: DriverDevice): Readonly<Record<string, string>> {
     if (isPhysicalDriverDevice(device)) return { SIMLOCK_DEVICE_UDID: device.deviceId };
     return { SIMLOCK_IOS_DEVICE_SET: this.#deviceRoot };

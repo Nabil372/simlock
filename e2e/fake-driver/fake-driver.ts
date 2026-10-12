@@ -601,6 +601,10 @@ export class OutOfProcessFakeDriver implements Driver {
     return this.#lastKnownEstimateMs?.[estimate.operation] ?? 0;
   }
 
+  virtualLeaseEnvironment(): Readonly<Record<string, string>> {
+    return {};
+  }
+
   leaseEnvironment(
     device: VirtualDriverDevice | PhysicalDriverDevice,
   ): Readonly<Record<string, string>> {

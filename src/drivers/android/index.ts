@@ -646,6 +646,10 @@ export class AndroidDriver implements Driver {
     });
   }
 
+  virtualLeaseEnvironment(): Readonly<Record<string, string>> {
+    return {};
+  }
+
   leaseEnvironment(device: DriverDevice): Readonly<Record<string, string>> {
     // A physical device is on the default adb server, not Simlock's emulator server.
     if (isPhysicalDriverDevice(device)) {
