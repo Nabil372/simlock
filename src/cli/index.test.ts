@@ -1375,7 +1375,7 @@ describe("CLI: daemon status (ADR 0003 §11)", () => {
       {
         kind: "agent-device-unavailable" as const,
         message: `found 0.20.3,\n  need ${"x".repeat(600)}`,
-        remedy: "install agent-device 0.21.25 or later,\nthen restart the daemon",
+        remedy: `install agent-device 0.21.25 or later,\nthen ${"y".repeat(600)}`,
       },
       {
         kind: "warm-pool-target-unreachable" as const,
@@ -1414,7 +1414,7 @@ describe("CLI: daemon status (ADR 0003 §11)", () => {
     const index = lines.findIndex((line) => line.startsWith("agent-device  fail  "));
     expect(index).toBeGreaterThan(-1);
     expect(lines[index]).toBe(
-      `agent-device  fail  found 0.20.3, need ${"x".repeat(500 - "found 0.20.3, need ".length)}; install agent-device 0.21.25 or later, then restart the daemon`,
+      `agent-device  fail  found 0.20.3, need ${"x".repeat(500 - "found 0.20.3, need ".length)}; ${("install agent-device 0.21.25 or later, then " + "y".repeat(600)).slice(0, 500)}`,
     );
     expect(lines.filter((line) => line.startsWith("agent-device"))).toHaveLength(1);
     for (const earlier of ["Warning [ios]", "Missing [ios]", "warm-pool-target-unreachable"]) {

@@ -2697,7 +2697,7 @@ describe("Doctor: optional module findings", () => {
         ? {}
         : { optionalModules: options.optionalModules }),
     });
-    return { doctor, eventBus, registry };
+    return { doctor, driver, eventBus, registry };
   }
 
   it("returns each finding optionalModules gives, with its kind, message and remedy unchanged, after a warm-pool-target-unreachable finding returned by the same run", async () => {
@@ -2766,19 +2766,26 @@ describe("Doctor: optional module findings", () => {
 
   it("calls optionalModules only after fix and purge have run, with fix and purgeOrphans on, and reports its finding", async () => {
     let stateWhenCalled: string | undefined;
+    let destroysWhenCalled: number | undefined;
     let registryRef: Awaited<ReturnType<typeof setup>>["registry"] | undefined;
+    let driverRef: Awaited<ReturnType<typeof setup>>["driver"] | undefined;
     const harness = await setup({
       missing: true,
       optionalModules: () => {
         stateWhenCalled = registryRef?.snapshot.devices[0]?.state;
+        destroysWhenCalled = driverRef?.calls.filter((call) => call.operation === "destroy").length;
         return [unavailable];
       },
+      orphan: true,
     });
     registryRef = harness.registry;
+    driverRef = harness.driver;
 
     const report = await harness.doctor.reconcile({ fix: true, purgeOrphans: true });
 
     expect(stateWhenCalled).toBe("deleted");
+    // why: the purge destroys the orphan, so a call made before it would count no destroy.
+    expect(destroysWhenCalled).toBe(1);
     expect(report.findings.map((finding) => finding.kind)).toEqual([
       "registry-device-missing",
       "agent-device-unavailable",
