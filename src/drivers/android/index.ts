@@ -509,6 +509,7 @@ export class AndroidDriver implements Driver {
       adb: sdk.adb,
       baseEnv: options.env,
       filesystem: options.filesystem,
+      isBareShell,
       processRunner: options.processRunner,
       tcpProbe: options.tcpProbe,
     });

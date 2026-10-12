@@ -68,10 +68,16 @@ export class AndroidPhysicalHandler {
   readonly #adb: string;
   readonly #env: NodeJS.ProcessEnv;
   readonly #processRunner: ProcessRunner;
+  readonly #isBareShell: (args: readonly string[]) => boolean;
 
   constructor(
-    options: Omit<DefaultAdbServerGateOptions, "env"> & { readonly baseEnv: NodeJS.ProcessEnv },
+    options: Omit<DefaultAdbServerGateOptions, "env"> & {
+      readonly baseEnv: NodeJS.ProcessEnv;
+      // why: the driver's own test, so one place decides what the interactive shell is.
+      readonly isBareShell: (args: readonly string[]) => boolean;
+    },
   ) {
+    this.#isBareShell = options.isBareShell;
     this.#adb = options.adb;
     this.#processRunner = options.processRunner;
     const env: NodeJS.ProcessEnv = { ...options.baseEnv };
@@ -181,7 +187,7 @@ export class AndroidPhysicalHandler {
     args: readonly string[],
     context: PassthroughContext | undefined,
   ): Promise<PassthroughCommand> {
-    assertProxyable(args, context);
+    this.#assertProxyable(args, context);
     const answer = await this.#gate.check();
     if (!answer.open) {
       throw new PassthroughRefusedError(
@@ -195,6 +201,13 @@ export class AndroidPhysicalHandler {
       env: { ANDROID_ADB_SERVER_PORT: PORT },
       unsetEnv: STRIPPED_ENV_KEYS,
     };
+  }
+
+  #assertProxyable(args: readonly string[], context: PassthroughContext | undefined): void {
+    const reason = refusalReason(args, context, this.#isBareShell);
+    if (reason !== undefined) {
+      throw new PassthroughRefusedError("adb", `Refusing \`adb ${args.join(" ")}\`: ${reason}`);
+    }
   }
 
   #refusal(ran: Ran, read: string): Refusal {
@@ -313,6 +326,7 @@ function unenrollable(matching: readonly ListedTransport[]): Refusal | undefined
 function refusalReason(
   args: readonly string[],
   context: PassthroughContext | undefined,
+  isBareShell: (args: readonly string[]) => boolean,
 ): string | undefined {
   const [subcommand = "", target = ""] = args;
   if (subcommand.startsWith("-")) {
@@ -324,15 +338,8 @@ function refusalReason(
   if (subcommand === "reboot" && REFUSED_REBOOT_TARGETS.has(target)) {
     return "it takes the phone off adb.";
   }
-  if (context?.hasTerminal === false && args.length === 1 && subcommand === "shell") {
+  if (context?.hasTerminal === false && isBareShell(args)) {
     return "an interactive shell needs a terminal, and this one runs with none. Pass the command to run.";
   }
   return undefined;
-}
-
-function assertProxyable(args: readonly string[], context: PassthroughContext | undefined): void {
-  const reason = refusalReason(args, context);
-  if (reason !== undefined) {
-    throw new PassthroughRefusedError("adb", `Refusing \`adb ${args.join(" ")}\`: ${reason}`);
-  }
 }

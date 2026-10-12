@@ -1969,9 +1969,9 @@ operation (`busy`) is `DEVICE_BUSY`.
 
 Enrolling emits `device.enrolled` and removing emits `device.deleted` with
 `initiator` `operator`; see [EVENTS.md](EVENTS.md). The iOS driver reads a
-wired iPhone or iPad through `devicectl` and enrols it; the Android driver does
-not read physical devices yet and refuses every ID as `not-connected`. A missing `--platform`, a second ID or an unknown option is a
-usage error (exit 2).
+wired iPhone or iPad through `devicectl` and enrols it; the Android driver reads
+a USB-connected phone through `adb` and enrols it. A missing `--platform`, a
+second ID or an unknown option is a usage error (exit 2).
 
 ## `simlock cleanup [--dry-run] [--rule <name>]`
 

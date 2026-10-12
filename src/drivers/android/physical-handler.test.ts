@@ -12,6 +12,7 @@ import {
   type ProcessRunner,
   type ProcessRunOptions,
   type ProcessStreamOptions,
+  ProcessSpawnError,
   ScriptedProcessRunner,
   type StreamingProcessHandle,
 } from "../../ports/index.js";
@@ -110,6 +111,7 @@ class PhoneAdb implements ProcessRunner {
   readonly installed: string[] = ["com.example.kept", "com.example.stray", "com.example.other"];
   versionOutput = ADB_VERSION_41;
   versionCode: number | null = 0;
+  versionFailure: Error | undefined;
   devicesOutput = `List of devices attached\n${USB_LINE}\n\n`;
   userOutput = "0\n";
   packagesOutput: string | undefined;
@@ -142,6 +144,7 @@ class PhoneAdb implements ProcessRunner {
     this.calls.push({ args: [...args], command, options });
     this.log.push(`adb:${args.join(" ")}`);
     if (args[0] === "version") {
+      if (this.versionFailure !== undefined) throw this.versionFailure;
       return { code: this.versionCode, stderr: "", stdout: this.versionOutput };
     }
     if (args[0] === "devices") {
@@ -731,6 +734,41 @@ describe("Android physical handler: the protocol gate", () => {
   });
 });
 
+describe("Android physical handler: the gate on a failing adb version", () => {
+  it("says Simlock's version is unreadable, and does not reject, when stat throws", async () => {
+    const base = await androidFilesystem();
+    let broken = false;
+    const filesystem = new Proxy(base, {
+      get(target, property) {
+        if (property === "stat" && broken) {
+          return async () => {
+            throw new Error("EACCES");
+          };
+        }
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === "function" ? (value as () => unknown).bind(target) : value;
+      },
+    });
+    const { driver } = await world({ filesystem });
+    broken = true;
+
+    const advisories = await advisoriesOf(driver);
+
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]?.message).toMatch(/Simlock's adb version is unreadable/);
+  });
+
+  it("says Simlock's version is unreadable, and does not reject, when adb version cannot spawn", async () => {
+    const { driver, runner } = await world();
+    runner.versionFailure = new ProcessSpawnError(adb, ["version"]);
+
+    const advisories = await advisoriesOf(driver);
+
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]?.message).toMatch(/Simlock's adb version is unreadable/);
+  });
+});
+
 describe("Android physical handler: advisories", () => {
   it("returns adb-protocol-mismatch naming both protocol numbers on a mismatch", async () => {
     const { driver } = await world({ serverReply: VERSION_REPLY_40 });
@@ -759,7 +797,7 @@ describe("Android physical handler: advisories", () => {
 
     expect(advisories).toHaveLength(1);
     expect(advisories[0]?.code).toBe("adb-protocol-mismatch");
-    expect(advisories[0]?.message).toMatch(/unreadable/i);
+    expect(advisories[0]?.message).toMatch(/the adb server's version on port 5037 is unreadable/);
   });
 
   it("says Simlock's version is unreadable when adb version has no protocol number, with send rejecting ECONNREFUSED too", async () => {
@@ -771,7 +809,7 @@ describe("Android physical handler: advisories", () => {
 
     expect(advisories).toHaveLength(1);
     expect(advisories[0]?.code).toBe("adb-protocol-mismatch");
-    expect(advisories[0]?.message).toMatch(/unreadable/i);
+    expect(advisories[0]?.message).toMatch(/Simlock's adb version is unreadable/);
   });
 
   it("returns nothing on a match", async () => {
@@ -933,28 +971,63 @@ describe("Android physical handler: inspectPhysical", () => {
     [
       "adb devices -l fails",
       (rest: readonly string[]) => (isDevicesListing(rest) ? FAILED : undefined),
+      /could not read the device list \(adb devices -l\)/,
     ],
     [
       "adb devices -l passes 30 s",
       (rest: readonly string[]) => (isDevicesListing(rest) ? TIMED_OUT : undefined),
+      /could not read the device list \(adb devices -l\)/,
     ],
-    ["getprop fails", (rest: readonly string[]) => (isGetprop(rest) ? FAILED : undefined)],
+    [
+      "getprop fails",
+      (rest: readonly string[]) => (isGetprop(rest) ? FAILED : undefined),
+      /could not read the model/,
+    ],
     [
       "the user id read fails",
       (rest: readonly string[]) => (isUserRead(rest) ? FAILED : undefined),
+      /could not read the current user id/,
     ],
     [
       "the package list fails",
       (rest: readonly string[]) => (isPackageList(rest) ? FAILED : undefined),
+      /could not read the user apps/,
     ],
-  ])("is refused unreadable, and does not reject, when %s", async (_name, override) => {
+  ])(
+    "is refused unreadable naming the read, and does not reject, when %s",
+    async (_name, override, named) => {
+      const { driver, runner } = await world();
+      runner.override(override);
+
+      const inspection = await driver.inspectPhysical(PHONE);
+
+      expect(inspection).toMatchObject({ enrollable: false, reason: "unreadable" });
+      expect((inspection as { message: string }).message).toMatch(named);
+    },
+  );
+
+  it("is refused unreadable, and does not reject, when the process runner cannot spawn adb", async () => {
     const { driver, runner } = await world();
-    runner.override(override);
+    runner.override((rest) => {
+      if (isDevicesListing(rest)) throw new ProcessSpawnError(adb, rest);
+      return undefined;
+    });
 
     const inspection = await driver.inspectPhysical(PHONE);
 
     expect(inspection).toMatchObject({ enrollable: false, reason: "unreadable" });
-    expect(typeof (inspection as { message: string }).message).toBe("string");
+  });
+
+  it("lists nothing present, and does not reject, when the process runner cannot spawn adb", async () => {
+    const { driver, runner } = await world();
+    runner.override((rest) => {
+      if (isDevicesListing(rest)) throw new ProcessSpawnError(adb, rest);
+      return undefined;
+    });
+
+    const present = await driver.listPresentPhysical([PHONE]);
+
+    expect(present).toEqual([{ driverDeviceId: PHONE, present: false, reason: "not-present" }]);
   });
 
   it.each([
@@ -1387,7 +1460,9 @@ describe("Android physical handler: passthrough", () => {
     const failure = await rejectionOf(passthroughOf(driver, ["shell", "getprop"]));
 
     expect(failure).toBeInstanceOf(PassthroughRefusedError);
-    expect((failure as Error).message).toMatch(/unreadable|could not read|cannot read/i);
+    expect((failure as Error).message).toMatch(
+      /the adb server's version on port 5037 is unreadable/,
+    );
     expect(runner.commands).toEqual([]);
   });
 
@@ -1429,10 +1504,8 @@ describe("Android physical handler: estimate", () => {
       90_000,
     );
     expect(driver.estimate({ clean: "full", operation: "reclaim" }, PHYSICAL_SPEC)).toBe(90_000);
-    expect(driver.estimate({ clean: "standard", operation: "reclaim" }, VIRTUAL_SPEC)).not.toBe(
-      90_000,
-    );
-    expect(driver.estimate({ clean: "full", operation: "reclaim" }, VIRTUAL_SPEC)).not.toBe(90_000);
+    expect(driver.estimate({ clean: "standard", operation: "reclaim" }, VIRTUAL_SPEC)).toBe(6_000);
+    expect(driver.estimate({ clean: "full", operation: "reclaim" }, VIRTUAL_SPEC)).toBe(32_000);
   });
 });
 

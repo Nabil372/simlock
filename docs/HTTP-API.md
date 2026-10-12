@@ -749,9 +749,14 @@ by simlock and refused from the caller), and the same refusal list for verbs
 that would change a device's lifecycle behind the registry's back
 (`create`/`erase`/`delete`, `shutdown all`, `runtime delete`, `kill-server`,
 `emu kill`, …). A refused verb is `422 PASSTHROUGH_REFUSED` here too and
-nothing is spawned for it. For `simctl` and `adb` nothing else about the
+nothing is spawned for it. For `simctl` and `adb` on a virtual device nothing else about the
 arguments is parsed, they are passed through unchanged, and the *device* is
-named by them, not by the lease: the lease id is the ownership proof. For
+named by them, not by the lease: the lease id is the ownership proof. For `adb`
+on a leased physical Android device the driver refuses an argument list that
+starts with a flag, the subcommands that would stop, start or move a server or
+transport (`kill-server`, `connect`, `tcpip`, `usb`, …) and a reboot into the
+bootloader, recovery or sideload, and it adds `-P 5037 -s <serial>` of the
+leased phone itself. For
 `devicectl` the driver checks the arguments against the reviewed list above
 and adds `--device <UDID>` of the leased device unless they name one. A
 gateway in the path parses none of this — it proxies the call to the owning
