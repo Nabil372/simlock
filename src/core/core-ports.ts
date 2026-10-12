@@ -1,7 +1,12 @@
 import type { CapacityPlatform, RamBudget, RunningCapacity } from "./capacity/index.js";
 import type { WarmPoolFigures } from "./warm-pool/index.js";
 import type { Platform } from "./domain.js";
-import type { PassthroughCommand, PassthroughContext } from "./driver.js";
+import type {
+  PassthroughCommand,
+  PassthroughContext,
+  PhysicalDriverDevice,
+  VirtualDriverDevice,
+} from "./driver.js";
 import type { PlatformCatalog } from "./driver-catalog.js";
 
 /** Read-only capacity view used by daemon status. */
@@ -40,9 +45,10 @@ export interface CatalogReader {
 export interface PassthroughResolver {
   passthrough(
     tool: string,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
     args: readonly string[],
     context?: PassthroughContext,
-  ): PassthroughCommand;
+  ): Promise<PassthroughCommand>;
 }
 
 /** Operator reset capability used by the nuke command facade. */

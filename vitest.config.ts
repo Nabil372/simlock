@@ -4,7 +4,13 @@ export default defineConfig({
   test: {
     // strictTags (default in vitest 4.1) rejects any tag not declared here or on a
     // project. Declared once at the root so both projects inherit the vocabulary.
-    tags: [{ name: "slow" }, { name: "ios" }, { name: "android" }],
+    tags: [
+      { name: "slow" },
+      { name: "ios" },
+      { name: "android" },
+      { name: "physical" },
+      { name: "physical-manual" },
+    ],
     projects: [
       {
         test: {

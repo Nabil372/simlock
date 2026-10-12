@@ -830,7 +830,9 @@ export class DaemonServer {
       return rejections.find((candidate) => candidate.platform === error.platform);
     }
     if (error instanceof UnknownPassthroughToolError) {
-      return rejections.find((candidate) => candidate.passthroughTool === error.tool);
+      return rejections.find(
+        (candidate) => candidate.passthroughTools?.includes(error.tool) === true,
+      );
     }
     return undefined;
   }

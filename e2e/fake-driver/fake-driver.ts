@@ -192,7 +192,7 @@ export class OutOfProcessFakeDriver implements Driver {
   readonly platform: Platform;
   /** Synthetic: this driver owns no real devices, and nothing validates or creates it. */
   readonly deviceRoot: string;
-  readonly passthroughTool: string;
+  readonly passthroughTools: readonly string[];
   readonly componentFootprint: { readonly path: string; readonly bytes: number };
   readonly #clock: FakeDriverClock;
   /** Versions `installComponent` put in place, with each one's receipt. */
@@ -208,7 +208,7 @@ export class OutOfProcessFakeDriver implements Driver {
   constructor(options: OutOfProcessFakeDriverOptions) {
     this.platform = options.platform;
     this.deviceRoot = `/fake/${options.platform}`;
-    this.passthroughTool = PASSTHROUGH_TOOLS[options.platform];
+    this.passthroughTools = [PASSTHROUGH_TOOLS[options.platform]];
     // A real directory: the installer measures its free space before every install.
     this.componentFootprint = { bytes: 0, path: tmpdir() };
     this.#clock = options.clock;
@@ -586,19 +586,25 @@ export class OutOfProcessFakeDriver implements Driver {
   }
 
   /** Script-free: a rule that depended on a prior script read would not hold for a test's first command. */
-  passthrough(args: readonly string[], context?: PassthroughContext): PassthroughCommand {
+  async passthrough(
+    _tool: string,
+    _device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    args: readonly string[],
+    context?: PassthroughContext,
+  ): Promise<PassthroughCommand> {
+    const tool = PASSTHROUGH_TOOLS[this.platform];
     // A mirror of the Android no-terminal rule, never evidence for the real driver's own rule.
     if (context?.hasTerminal === false && this.platform === "android" && isBareShell(args)) {
       throw new PassthroughRefusedError(
-        this.passthroughTool,
+        tool,
         "Refusing `simlock adb shell` with no command: an interactive shell needs a terminal.",
       );
     }
     const refused = PASSTHROUGH_REFUSALS[this.platform](args);
     if (refused !== undefined) {
       throw new PassthroughRefusedError(
-        this.passthroughTool,
-        `Refusing \`simlock ${this.passthroughTool} ${refused}\`: use \`simlock release\` or \`simlock cleanup\` instead.`,
+        tool,
+        `Refusing \`simlock ${tool} ${refused}\`: use \`simlock release\` or \`simlock cleanup\` instead.`,
       );
     }
     return {

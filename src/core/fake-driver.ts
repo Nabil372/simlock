@@ -29,6 +29,7 @@ import {
   type PassthroughContext,
   isPhysicalDriverDevice,
   type PhysicalDriverDevice,
+  type VirtualDriverDevice,
   type PhysicalInspection,
   type PresentPhysical,
   type ReclaimResult,
@@ -123,12 +124,11 @@ export interface FakeDriverOptions {
   readonly latencyMs?: Partial<Record<FakeDriverOperation, number>>;
   /** What a grant for this driver's devices should carry; empty unless a test says otherwise. */
   readonly leaseEnvironment?: Readonly<Record<string, string>>;
-  /**
-   * The `simlock <tool>` name this fake claims, when a test needs one. Absent by default so
-   * two fakes in one catalog do not both answer to the same tool.
-   */
-  readonly passthroughTool?: string;
+  /** why: absent by default, so two fakes in one catalog do not both answer to the same tool. */
+  readonly passthroughTools?: readonly string[];
   readonly passthrough?: (
+    tool: string,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
     args: readonly string[],
     context?: PassthroughContext,
   ) => PassthroughCommand;
@@ -187,10 +187,8 @@ export class FakeDriver implements Driver {
   readonly #customModels: FakeDriverOptions["customModels"];
   readonly #latencyMs: FakeDriverOptions["latencyMs"];
   readonly #leaseEnvironment: Readonly<Record<string, string>>;
-  readonly passthroughTool: string | undefined;
-  readonly #passthrough:
-    | ((args: readonly string[], context?: PassthroughContext) => PassthroughCommand)
-    | undefined;
+  readonly passthroughTools: readonly string[] | undefined;
+  readonly #passthrough: FakeDriverOptions["passthrough"];
   #nextDeviceNumber = 1;
   readonly #pendingMakeReady: (() => void)[] = [];
   readonly #reclaimResult: "ready" | "shutdown";
@@ -226,7 +224,7 @@ export class FakeDriver implements Driver {
     this.#latencyMs = options.latencyMs;
     this.#leaseEnvironment = options.leaseEnvironment ?? {};
     this.#legacyDevices = new Map(Object.entries(options.legacyDevices ?? {}));
-    this.passthroughTool = options.passthroughTool;
+    this.passthroughTools = options.passthroughTools;
     this.#passthrough = options.passthrough;
     this.platform = options.platform;
     this.deviceRoot = options.deviceRoot ?? `/fake/${options.platform}`;
@@ -641,14 +639,16 @@ export class FakeDriver implements Driver {
     return this.#leaseEnvironment;
   }
 
-  passthrough(args: readonly string[], context?: PassthroughContext): PassthroughCommand {
+  async passthrough(
+    tool: string,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    args: readonly string[],
+    context?: PassthroughContext,
+  ): Promise<PassthroughCommand> {
     if (this.#passthrough === undefined) {
-      throw new PassthroughRefusedError(
-        this.passthroughTool ?? "",
-        "Fake driver builds no passthrough command",
-      );
+      throw new PassthroughRefusedError(tool, "Fake driver builds no passthrough command");
     }
-    return this.#passthrough(args, context);
+    return await Promise.resolve(this.#passthrough(tool, device, args, context));
   }
 
   failOn(operation: FakeDriverOperation, callNumber: number, error: Error): void {

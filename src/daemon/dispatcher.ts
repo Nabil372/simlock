@@ -25,6 +25,7 @@ import {
   effectiveAllowDownload,
   RuntimeMissingError,
   transitionEnteredAt,
+  toDriverDevice,
   UnknownLeaseError,
   type CapacityReader,
   type WarmPoolReader,
@@ -498,7 +499,7 @@ export class Dispatcher {
     if (this.options.passthrough === undefined) {
       throw new DispatchError("INTERNAL", "Tool passthrough is unavailable");
     }
-    return this.options.passthrough.passthrough(input.tool, input.args);
+    return this.options.passthrough.passthrough(input.tool, undefined, input.args);
   };
 
   /**
@@ -530,14 +531,21 @@ export class Dispatcher {
       (candidate) => candidate.id === input.leaseId,
     );
     if (lease === undefined) throw new UnknownLeaseError(input.leaseId);
+    const record = this.options.registry.snapshot.devices.find(
+      (candidate) => candidate.id === lease.deviceId,
+    );
+    if (record === undefined) throw new UnknownLeaseError(input.leaseId);
 
     // `hasTerminal: false` is the one thing this path tells the driver about its caller: the
     // command runs here, with pipes and no pty (ADR 0005 §19c), so a driver may refuse
     // something it allows a local `simlock <tool>` invocation -- a bare `adb shell` would
     // otherwise sit on those pipes until `exec.timeoutMs` killed it.
-    const command = this.options.passthrough.passthrough(input.tool, input.args, {
-      hasTerminal: false,
-    });
+    const command = await this.options.passthrough.passthrough(
+      input.tool,
+      toDriverDevice(record),
+      input.args,
+      { hasTerminal: false },
+    );
     const handle = this.options.processRunner.spawnStreaming(command.command, command.args, {
       env: { ...this.options.execEnv, ...command.env },
       // Returned, not fired and forgotten: whatever the transport hands back is what pauses

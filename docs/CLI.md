@@ -38,6 +38,17 @@ iOS (macOS only):
 - The Xcode license accepted (`sudo xcodebuild -license accept`).
 - Xcode's first-launch setup done (`sudo xcodebuild -runFirstLaunch`).
 
+Physical iOS devices (an iPhone or iPad you enroll with `device add`):
+
+- Xcode 15 or later (it ships `devicectl`); checked with Xcode 27 (devicectl 642.16).
+- iOS or iPadOS 17 or later.
+- The device trusts this Mac ("Trust This Computer").
+- Developer Mode on.
+- Connected by USB.
+- Unlocked: a device whose passcode is needed counts as not present, and
+  `status` shows it `absent (locked)`, so set Auto-Lock to Never or use no
+  passcode.
+
 Android:
 
 - An Android SDK, found at `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or
@@ -660,6 +671,16 @@ or not, the path has to reach the command line:
 ```bash
 xcrun simctl --set "$SIMLOCK_IOS_DEVICE_SET" list devices
 ```
+
+For a physical iPhone or iPad, name the device with its UDID:
+
+```bash
+xcrun devicectl device info apps --device "$SIMLOCK_DEVICE_UDID"
+```
+
+A remote agent runs `devicectl` through `device.exec` over HTTP or the client,
+which adds `--device <UDID>` for the leased device itself. There is no
+`simlock devicectl` command.
 
 Both ways describe paths and ports **on the machine that owns the device**.
 That is your own machine when you lease from a local worker, and somebody

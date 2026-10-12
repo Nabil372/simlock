@@ -70,6 +70,8 @@ export {
   type PassthroughCommand,
   isPhysicalDriverDevice,
   type PhysicalDriverDevice,
+  type DriverRefusalReason,
+  type VirtualDriverDevice,
   type PhysicalInspection,
   type PresentPhysical,
   toDriverDevice,

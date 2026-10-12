@@ -728,8 +728,8 @@ doesn't end up holding the result. This is a known gap.
 
 ## Running a command on the leased device: `exec`
 
-`exec` runs one `simctl` / `adb` command against a device you hold a lease
-on, wherever that device actually is, and streams its output back as it
+`exec` runs one `simctl` / `adb` command (or, on a physical iPhone or iPad,
+one `devicectl` command) against a device you hold a lease on, wherever that device actually is, and streams its output back as it
 arrives:
 
 ```ts
@@ -789,9 +789,14 @@ Five things to know before building on it:
   is killed and the call rejects with `EXEC_TIMEOUT`.
 - **The refusals are the daemon's, not a client's.** A verb that would change
   a device's lifecycle behind the registry's back rejects with
-  `PASSTHROUGH_REFUSED`, and a `tool` outside `simctl`/`adb` with
+  `PASSTHROUGH_REFUSED`, and a `tool` outside `simctl`/`adb`/`devicectl` with
   `UNKNOWN_PASSTHROUGH_TOOL` — the same list `simlock simctl` /
-  `simlock adb` document. One refusal is particular to `exec`: a bare `adb
+  `simlock adb` document. `devicectl` runs only on a physical iOS lease, and
+  only the reviewed `device …` commands (install, uninstall, launch,
+  terminate, signal, and the `info` reads); anything else, and any option
+  that names a path on the worker (`--json-output`, `--log-output`,
+  `--destination`, `--file`, `--filter`), is `PASSTHROUGH_REFUSED`.
+  `simctl` on a physical lease is refused too. One refusal is particular to `exec`: a bare `adb
   shell` with no command is `PASSTHROUGH_REFUSED` ("needs a terminal") rather
   than a call that hangs until the timeout, since there is no pseudo-terminal
   for it to attach to.

@@ -352,9 +352,14 @@ export interface Driver {
   /** Android must reap the adb server it supervises by pid; nothing else can. */
   dispose?(): Promise<void>;
   /** Spelled `| undefined` so a driver that decides at construction can still say it has none. */
-  readonly passthroughTool?: string | undefined;
-  /** `device.exec` has no pseudo-terminal (ADR 0005 §19c), so a driver may refuse there what it allows locally. */
-  passthrough?(args: readonly string[], context?: PassthroughContext): PassthroughCommand;
+  readonly passthroughTools?: readonly string[] | undefined;
+  /** why: `device.exec` has no pseudo-terminal (ADR 0005 §19c), so a driver may refuse there what it allows locally. */
+  passthrough?(
+    tool: string,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    args: readonly string[],
+    context?: PassthroughContext,
+  ): Promise<PassthroughCommand>;
   /**
    * Looks for a registry device in the location this platform used before Simlock owned a
    * root, and reports it without touching it. Optional: a driver with no pre-root history
@@ -476,12 +481,11 @@ interface DriverRefusal<Event extends DriverRejectionEvent> {
    */
   readonly reason: DriverRejectionReason;
   /**
-   * The `simlock <tool>` wrapper this driver would have answered to, when it has one.
-   * Carried because a passthrough that finds no driver is otherwise indistinguishable
+   * why: the `simlock <tool>` wrappers this driver would have answered to are carried because a passthrough that finds no driver is otherwise indistinguishable
    * from a host with no SDK, and safety rule 9 promises Simlock reports *why*. The core
    * only compares it to the requested tool name; the name itself is the driver's.
    */
-  readonly passthroughTool?: string;
+  readonly passthroughTools?: readonly string[];
   /** One line, for `doctor` output and the startup log. */
   readonly summary: string;
 }

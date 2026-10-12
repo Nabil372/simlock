@@ -67,6 +67,14 @@ The machine can run a line only if:
 | ---------- | ---------------------------------------------------------- |
 | iOS        | `uname -s` is `Darwin`; `xcrun simctl list runtimes` lists one |
 | Android    | `command -v emulator adb` finds both                       |
+| Physical iOS | `uname -s` is `Darwin`; `SIMLOCK_PHYSICAL_IOS` is the UDID of an iPhone on USB (trusted, Developer Mode on, unlocked, Auto-Lock Never); `SIMLOCK_PHYSICAL_IOS_APP` is a `.app` signed for it. Run `scripts/slow-e2e.sh --physical e2e/slow-ios-physical.test.ts` |
+| Physical iOS, a person at the phone | the checks above, a passcode set on the phone (locking it then needs the passcode), and `SIMLOCK_PHYSICAL_PERSON` is `1`. Run `scripts/slow-e2e.sh --physical-manual e2e/slow-ios-physical-manual.test.ts` |
+
+Two tags mark the phone lane. `physical` tests run unattended. `physical-manual`
+tests prompt a person in the log and wait up to 150 s for each step. Only a
+person running the lane by hand sets `SIMLOCK_PHYSICAL_PERSON`. The hardware
+verifier never does, so the second machine check fails and it reports
+`unavailable (needs a person)`.
 
 A Done when line needs the slow lane when it needs a real simulator or
 emulator. It says so in its own words ("on a Mac with an iOS runtime: ...")

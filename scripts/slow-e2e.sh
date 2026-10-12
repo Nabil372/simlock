@@ -2,6 +2,8 @@
 # Runs the slow e2e lane (real simctl and Android SDK) detached, one run per machine.
 #
 #   scripts/slow-e2e.sh [vitest args...]    e.g. scripts/slow-e2e.sh e2e/slow-ios-slim.test.ts
+#   scripts/slow-e2e.sh --physical <files>          the phone lane (tag `physical`, no person)
+#   scripts/slow-e2e.sh --physical-manual <files>   the phone lane with a person (tag `physical-manual`)
 #
 # Prints the log path and exits at once. The run writes its exit code to <log>.exit when it
 # ends. Exits 75 without starting when another worktree's slow run holds the lock: real
@@ -12,6 +14,12 @@
 # The run is detached from the calling shell, so no tool time limit kills it halfway and
 # leaves booted devices behind. Its own harness tears down the devices it created.
 set -eu
+
+script=test:e2e:slow
+case "${1:-}" in
+  --physical) script=test:e2e:physical; shift ;;
+  --physical-manual) script=test:e2e:physical-manual; shift ;;
+esac
 
 root=$(git rev-parse --show-toplevel)
 lock=/tmp/simlock-slow-e2e.lock
@@ -33,9 +41,9 @@ echo "$log" > "$lock/log"
 
 # The runner owns the lock from here: it records its pid, runs the lane, writes the exit code,
 # and removes the lock however the lane ends.
-python3 - "$lock" "$log" "$root" "$@" <<'EOF'
+python3 - "$lock" "$log" "$root" "$script" "$@" <<'EOF'
 import os, subprocess, sys
-lock, log, root, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+lock, log, root, script, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
 child = os.fork()
 if child != 0:
     # Written before this returns, so a second caller never sees a lock without a live pid.
@@ -49,7 +57,7 @@ for fd in (0, 1, 2):
     os.dup2(null, fd)
 with open(log, "w") as out:
     code = subprocess.call(
-        ["pnpm", "run", "test:e2e:slow", *args],
+        ["pnpm", "run", script, *args],
         cwd=root, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
     )
 with open(log + ".exit", "w") as f:

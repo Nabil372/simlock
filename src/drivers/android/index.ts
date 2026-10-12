@@ -25,6 +25,8 @@ import {
   type DriverReality,
   type PhysicalInspection,
   isPhysicalDriverDevice,
+  type PhysicalDriverDevice,
+  type VirtualDriverDevice,
   type PresentPhysical,
   type DriverToolVersion,
   type InstalledComponent,
@@ -256,11 +258,11 @@ interface SystemImage {
 }
 
 /**
- * The `simlock <tool>` wrapper this driver answers to. Published as a constant because a
+ * why: the `simlock <tool>` wrappers this driver answers to are a constant because a
  * driver that refused to start has no instance to ask, and `DriverRejection` carries the
- * name so `simlock adb` can say why it is unavailable rather than reading as a missing SDK.
+ * names so `simlock adb` can say why it is unavailable rather than reading as a missing SDK.
  */
-export const ANDROID_PASSTHROUGH_TOOL = "adb";
+export const ANDROID_PASSTHROUGH_TOOLS: readonly string[] = ["adb"];
 
 /**
  * ADR 0015 §4: the models Simlock tries for each class on Android when the operator names none
@@ -642,16 +644,21 @@ export class AndroidDriver implements Driver {
     return { ANDROID_ADB_SERVER_PORT: String(this.#adbServerPort) };
   }
 
-  readonly passthroughTool = ANDROID_PASSTHROUGH_TOOL;
+  readonly passthroughTools = ANDROID_PASSTHROUGH_TOOLS;
 
   /** `ANDROID_ADB_SERVER_PORT` rides along so an adb that re-execs itself stays on the same server. */
-  passthrough(args: readonly string[], context?: PassthroughContext): PassthroughCommand {
+  async passthrough(
+    _tool: string,
+    _device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    args: readonly string[],
+    context?: PassthroughContext,
+  ): Promise<PassthroughCommand> {
     this.#assertProxyable(args, context);
-    return {
+    return await Promise.resolve({
       args: ["-P", String(this.#adbServerPort), ...args],
       command: this.#sdk.adb,
       env: { ANDROID_ADB_SERVER_PORT: String(this.#adbServerPort) },
-    };
+    });
   }
 
   #assertProxyable(args: readonly string[], context?: PassthroughContext): void {
@@ -662,13 +669,13 @@ export class AndroidDriver implements Driver {
     // the CLI's own tty, is untouched and still the way to get one.
     if (context?.hasTerminal === false && isBareShell(args)) {
       throw new PassthroughRefusedError(
-        this.passthroughTool,
+        "adb",
         "Refusing `simlock adb shell` with no command: an interactive shell needs a terminal, and this one runs on the device's own machine with none. Pass the command to run (`simlock adb shell getprop`), or run `simlock adb shell` on that machine.",
       );
     }
     if (args.includes(REFUSED_ADB_VERB)) {
       throw new PassthroughRefusedError(
-        this.passthroughTool,
+        "adb",
         `Refusing \`simlock adb ${REFUSED_ADB_VERB}\`: it would detach every leased emulator at once. Use \`simlock release\` to give a device back, or \`simlock cleanup\` to reclaim idle ones.`,
       );
     }
@@ -677,7 +684,7 @@ export class AndroidDriver implements Driver {
     );
     if (refused !== undefined) {
       throw new PassthroughRefusedError(
-        this.passthroughTool,
+        "adb",
         `Refusing \`simlock adb ${refused.sequence.join(" ")}\`: ${refused.reason} ${RECLAIM_INSTEAD}`,
       );
     }
@@ -685,7 +692,7 @@ export class AndroidDriver implements Driver {
     const scopeFlag = callerSuppliedScopeFlag(args);
     if (scopeFlag !== undefined) {
       throw new PassthroughRefusedError(
-        this.passthroughTool,
+        "adb",
         `Refusing \`simlock adb ${scopeFlag}\`: \`simlock adb\` supplies the adb server itself, and only allows \`-s\`/\`-t\`/\`-d\`/\`-e\` ahead of the subcommand -- anything else there, whether it is a known way to move the server or one this driver does not recognize, might point the command at a server that cannot see Simlock's devices, or at one it must not touch. Drop the flag -- the command is already scoped -- or run \`adb\` directly if you mean to leave Simlock's server.`,
       );
     }

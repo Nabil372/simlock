@@ -736,8 +736,11 @@ machine's filesystem.
 { "tool": "simctl", "args": ["list", "devices"], "stdin": "y\n" }
 ```
 
-`tool` names a driver passthrough — `simctl` or `adb` on the machines this
-version runs on. The contract does not close that set; the drivers installed
+`tool` names a driver passthrough — `simctl`, `adb` or `devicectl` on the
+machines this version runs on. `devicectl` serves a physical iOS lease only,
+runs the reviewed `device …` commands, and gets `--device <UDID>` added for the
+leased device; `simctl` on a physical lease and `devicectl` on a simulator
+lease are `422 PASSTHROUGH_REFUSED`. The contract does not close that set; the drivers installed
 there do, and one they do not claim is `422 UNKNOWN_PASSTHROUGH_TOOL`. `args`
 is the argument vector, passed through unchanged. The daemon that owns the
 device resolves it through the same driver passthrough logic `simlock

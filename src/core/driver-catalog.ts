@@ -7,6 +7,8 @@ import type {
   DriverCatalogEntry,
   PassthroughCommand,
   PassthroughContext,
+  PhysicalDriverDevice,
+  VirtualDriverDevice,
 } from "./driver.js";
 import { stableError } from "./stable-error.js";
 
@@ -71,14 +73,15 @@ export class DriverCatalog {
    * environment must carry are decided inside the driver, so a third driver can add a
    * wrapper without a line changing here (architecture rules 2 and 3).
    */
-  passthrough(
+  async passthrough(
     tool: string,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
     args: readonly string[],
     context?: PassthroughContext,
-  ): PassthroughCommand {
+  ): Promise<PassthroughCommand> {
     for (const driver of this.#drivers.values()) {
-      if (driver.passthroughTool === tool && driver.passthrough !== undefined) {
-        return driver.passthrough(args, context);
+      if (driver.passthroughTools?.includes(tool) === true && driver.passthrough !== undefined) {
+        return await driver.passthrough(tool, device, args, context);
       }
     }
     throw new UnknownPassthroughToolError(tool);
