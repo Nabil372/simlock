@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import type { CliBackgroundHandle } from "./helpers/cli.js";
 import type { FakeDriverPlatformScript, ScriptedPhysicalDevice } from "./fake-driver/types.js";
 import {
   freeLoopbackPort,
   waitFor,
   waitForDeviceState,
   withDaemon,
-  type CliBackgroundHandle,
   type CliResult,
   type TestEnv,
 } from "./helpers/index.js";
