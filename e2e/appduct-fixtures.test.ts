@@ -11,7 +11,7 @@ const FIXTURES = "e2e/fixtures/appduct";
 const README = `${FIXTURES}/README.md`;
 
 interface Tracked {
-  /** Path relative to `e2e/fixtures/appduct/`. */
+  /** why: path relative to `e2e/fixtures/appduct/`. */
   path: string;
   mode: string;
 }
@@ -34,14 +34,19 @@ function readme(): string {
   return readFileSync(join(REPO_ROOT, README), "utf8");
 }
 
-/** The rows of the only table under `## Files`: path and SHA-256, cells trimmed, backticks removed. */
+/** why: the rows of the only table under `## Files`: path and SHA-256, cells trimmed, backticks removed. */
 function readmeTable(): Array<{ path: string; sha256: string }> {
   const section = readme().split(/^## Files\s*$/m)[1] ?? "";
   const body = section.split(/^## /m)[0] ?? "";
   return body
     .split("\n")
     .filter((line) => line.trim().startsWith("|"))
-    .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()))
+    .map((line) =>
+      line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    )
     .filter((cells) => cells.length === 2 && !/^-+$/.test(cells[0] ?? "") && cells[0] !== "File")
     .map(([path = "", sha256 = ""]) => ({
       path: path.replace(/^`|`$/g, ""),

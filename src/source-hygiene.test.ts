@@ -10,7 +10,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NUL = 0x00;
 
 /**
- * A raw NUL byte in a text file makes `grep` and `ripgrep` classify the whole file as
+ * why: a raw NUL byte in a text file makes `grep` and `ripgrep` classify the whole file as
  * binary and print `binary file matches` instead of the matching lines -- so the file
  * stops being searchable for every human and agent working in this repo. The byte is
  * almost always a `"\0"` escape that was written as the literal character instead.
