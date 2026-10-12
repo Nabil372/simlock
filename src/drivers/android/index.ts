@@ -7,6 +7,7 @@ import {
   OwnedRootError,
   type DeviceClass,
   type DeviceSpec,
+  type DriverAdvisory,
   type VirtualSpec,
   BootTimeoutError,
   type ComponentInstallProgress,
@@ -57,6 +58,7 @@ import {
 import { AdbRegistrar } from "./adb-registrar.js";
 import { AdbServerSupervisor, AdbServerUnavailableError } from "./adb-server.js";
 import { isAndroidDriverData, type AndroidDriverData } from "./data.js";
+import { AndroidPhysicalHandler, PHYSICAL_RECLAIM_ESTIMATE_MS } from "./physical-handler.js";
 import {
   BuiltinDeviceProfileSource,
   DeviceProfileRegistry,
@@ -473,6 +475,7 @@ export class AndroidDriver implements Driver {
   readonly #onDiagnostic: ((diagnostic: AndroidDriverDiagnostic) => void) | undefined;
   readonly #portAllocator: PortAllocator;
   readonly #processRunner: ProcessRunner;
+  readonly #physical: AndroidPhysicalHandler;
   readonly #resolvedProfiles = new Map<string, DeviceProfile>();
   readonly #readinessTimeoutMs: number;
   readonly #registrar: AdbRegistrar;
@@ -502,6 +505,14 @@ export class AndroidDriver implements Driver {
     this.#idGenerator = options.idGenerator ?? new SequentialIdGenerator();
     this.#onDiagnostic = options.onDiagnostic;
     this.#processRunner = options.processRunner;
+    this.#physical = new AndroidPhysicalHandler({
+      adb: sdk.adb,
+      baseEnv: options.env,
+      filesystem: options.filesystem,
+      isBareShell,
+      processRunner: options.processRunner,
+      tcpProbe: options.tcpProbe,
+    });
     this.#readinessTimeoutMs = options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
     this.#registrar = new AdbRegistrar({ serverPort: adbServerPort, tcp: options.tcpProbe });
     this.#rootOptions = rootOptions;
@@ -649,10 +660,13 @@ export class AndroidDriver implements Driver {
   /** `ANDROID_ADB_SERVER_PORT` rides along so an adb that re-execs itself stays on the same server. */
   async passthrough(
     _tool: string,
-    _device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
+    device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
     args: readonly string[],
     context?: PassthroughContext,
   ): Promise<PassthroughCommand> {
+    if (device !== undefined && isPhysicalDriverDevice(device)) {
+      return this.#physical.passthrough(device, args, context);
+    }
     this.#assertProxyable(args, context);
     return await Promise.resolve({
       args: ["-P", String(this.#adbServerPort), ...args],
@@ -936,7 +950,7 @@ export class AndroidDriver implements Driver {
     options: { readonly clean: "standard" | "full" },
   ): Promise<ReclaimResult> {
     if (isPhysicalDriverDevice(device)) {
-      throw new Error("a physical device cannot be reclaimed yet");
+      return this.#physical.reclaim(device);
     }
     const data = this.#dataFor(device);
     return this.#withDeviceLock(data.avdName, async () => {
@@ -1018,15 +1032,15 @@ export class AndroidDriver implements Driver {
   }
 
   async listPresentPhysical(enrolledIds: readonly string[]): Promise<readonly PresentPhysical[]> {
-    return enrolledIds.map((driverDeviceId) => ({ driverDeviceId, present: false }));
+    return this.#physical.listPresentPhysical(enrolledIds);
   }
 
-  async inspectPhysical(_id: string): Promise<PhysicalInspection> {
-    return {
-      enrollable: false,
-      message: "this driver cannot read physical devices yet",
-      reason: "not-connected",
-    };
+  async inspectPhysical(id: string): Promise<PhysicalInspection> {
+    return this.#physical.inspectPhysical(id);
+  }
+
+  async advisories(): Promise<readonly DriverAdvisory[]> {
+    return this.#physical.advisories();
   }
 
   async listManaged(): Promise<DriverReality> {
@@ -1219,13 +1233,14 @@ export class AndroidDriver implements Driver {
     };
   }
 
-  estimate(estimate: DriverEstimate, _spec: DeviceSpec): number {
+  estimate(estimate: DriverEstimate, spec: DeviceSpec): number {
     switch (estimate.operation) {
       case "provision":
         return PROVISION_ESTIMATE_MS;
       case "boot":
         return COLD_BOOT_ESTIMATE_MS;
       case "reclaim":
+        if (spec.physical) return PHYSICAL_RECLAIM_ESTIMATE_MS;
         // `standard` can still fall back to the wipe branch (about five times longer); `Doctor`
         // takes the slower clean level instead of averaging the two.
         return virtualReclaimStrategy(estimate.clean) === "wipe"

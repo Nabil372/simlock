@@ -404,15 +404,13 @@ export interface LegacyDevice {
   readonly path?: string;
 }
 
-/**
- * A ready-to-run invocation of a platform tool, already scoped to the driver's root. The
- * frontend that runs it merges `env` over its own environment rather than replacing it --
- * these are only the scoping keys, and a tool spawned without `PATH` would not be found.
- */
+// why: the frontend that runs it merges `env` over its own environment, because a tool spawned
+// without `PATH` would not be found, and then deletes every key in `unsetEnv` from the child's.
 export interface PassthroughCommand {
   readonly command: string;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
+  readonly unsetEnv?: readonly string[];
 }
 
 /**

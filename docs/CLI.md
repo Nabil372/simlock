@@ -49,6 +49,15 @@ Physical iOS devices (an iPhone or iPad you enroll with `device add`):
   `status` shows it `absent (locked)`, so set Auto-Lock to Never or use no
   passcode.
 
+Android physical devices (a phone you enroll with `device add`):
+
+- Connected by USB, with USB debugging authorized for this host.
+- Reached through the host's default adb server (port 5037), which Simlock
+  starts if none runs and never stops. Its adb protocol version must match the
+  `adb` Simlock finds in the SDK's `platform-tools`; `simlock doctor` reports
+  an `adb-protocol-mismatch` finding when it does not.
+- Simlock cannot see an Android lock screen: a locked phone stays in rotation.
+
 Android:
 
 - An Android SDK, found at `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or
@@ -1960,9 +1969,9 @@ operation (`busy`) is `DEVICE_BUSY`.
 
 Enrolling emits `device.enrolled` and removing emits `device.deleted` with
 `initiator` `operator`; see [EVENTS.md](EVENTS.md). The iOS driver reads a
-wired iPhone or iPad through `devicectl` and enrols it; the Android driver does
-not read physical devices yet and refuses every ID as `not-connected`. A missing `--platform`, a second ID or an unknown option is a
-usage error (exit 2).
+wired iPhone or iPad through `devicectl` and enrols it; the Android driver reads
+a USB-connected phone through `adb` and enrols it. A missing `--platform`, a
+second ID or an unknown option is a usage error (exit 2).
 
 ## `simlock cleanup [--dry-run] [--rule <name>]`
 
@@ -2050,6 +2059,18 @@ names each one, the measured size of their downloads (or no size when it
 cannot be read), and the one supported way to get the space back: remove the
 platform in Xcode's Settings → Platforms. Advisory only, like the finding
 above — reclaiming this space is outside anything `--fix` may do.
+
+`doctor` also reports a `driver-advisory` finding (code
+`adb-protocol-mismatch`) when the adb server on port 5037, the one plain `adb`
+and Android Studio use, speaks a different protocol version than the `adb`
+Simlock runs, or when either version cannot be read. The finding names both
+versions, or says which one is unreadable. Until they match, Simlock sends no
+command to physical Android devices: they read as not present and
+`device add` and `device.exec` on a phone are refused. Simlock does not
+restart that server. The fix is running that server with an `adb` of the same
+protocol version, for example the one in the SDK's `platform-tools`. Nothing
+is reported when no server is listening on that port. Advisory only, like the
+findings above — there is no `--fix` for it.
 
 `doctor` also checks the [prerequisites](#prerequisites) of each platform
 this host can run (iOS only on macOS), every time it runs. Each one missing is
