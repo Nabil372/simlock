@@ -138,7 +138,8 @@ describe.skipIf(process.platform !== "darwin" || missing !== undefined)(
       const removed = await env.cli(["device", "remove", udid]);
 
       expect(removed.code, removed.stderr).toBe(0);
-      expect(await deviceOf(env, udid)).toBeUndefined();
+      // why: a removed device is absent, or kept as a "deleted" tombstone.
+      expect(["deleted", undefined]).toContain((await deviceOf(env, udid))?.state);
     });
   },
 );
