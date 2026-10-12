@@ -1,4 +1,4 @@
-# 0024. Simlock ships Android device profiles, and a model pairs only with images that fit it
+# 0025. Simlock ships Android device profiles, and a model pairs only with images that fit it
 
 - **Status:** Proposed
 - **Date:** 2026-10-12
@@ -10,7 +10,8 @@
   0015](0015-a-lease-request-is-a-set-of-constraints.md) §3: a library
   profile states its class, a `devices.xml` profile's tag sets its class,
   and Android `tablet` holds a model (§5). Amends ADR 0015 §4: Android's
-  built-in default lists name library models (§5).
+  built-in default lists name library models (§5). Amends ADR 0015 §5:
+  under an image tag, the driver may refuse the level the core picked (§4).
 - **Depends on:** ADR 0008, 0015.
 
 ## Context
@@ -82,8 +83,11 @@ the SDK or `devices.xml`, as today.
 
 `avdmanager create avd` still needs some SDK profile to seed the device. For a
 library profile the driver seeds with any SDK profile, then writes the
-library's keys into `config.ini` and its boot properties next to it. No key
-the seed wrote survives unless the library profile sets it. The config hash
+library's keys into `config.ini` and its boot properties next to it. No
+hardware key (`hw.*`) and no boot property the seed wrote survives unless the
+library profile sets it. Keys that describe the image (`image.sysdir.*`,
+`tag.*`, `abi.type`, `target`) come from the image, not the profile, and
+stay as `avdmanager` wrote them. The config hash
 is taken after that, as it is for a `devices.xml` profile today.
 
 A device keeps the `config.ini` it was created with. A changed library
@@ -132,8 +136,21 @@ image. A version or an `--image-tag` with no fitting image fails with
 `RUNTIME_MISSING`, naming what to install. Within one level the image is
 picked by today's order, applied to fitting images only: a host-native
 `google_apis` image, then any host-native image, then any `google_apis`
-image, then any. Nothing is
+image, then any.
+
+`allowDownload` works as today: for an exact version with no image
+installed, it installs that level's `google_apis` image. When that image
+would not fit the model, such as a TV, nothing is downloaded and the request
+fails with `RUNTIME_MISSING` and `downloadable: false`. Nothing else is
 downloaded.
+
+A request that names an image tag picks its level as ADR 0015 §5 says: a
+level counts when the model pairs with it and the catalog's `images` lists
+an image of that tag there. The image of that tag may not fit the model even
+when another image at that level does. `resolveSpec` then refuses with
+`RUNTIME_MISSING`, though a lower level in the range might have fitted. ADR
+0015 §5's promise that the driver accepts the pairing it is asked for holds
+only for a request with no image tag.
 
 An existing device is not checked against `fits`. A lease fits an idle device
 by model and OS as ADR 0015 §6 says, so a device made before this change is
@@ -197,6 +214,13 @@ is not reported: the library copies the SDK's values, so the two agree.
 - Pixel 6's SDK profile does not allow Play Store, so the library's Pixel 6
   does not take Play Store images. A host whose only image at a level is a
   Play Store image loses that level for Pixel 6.
+- A lease with an image tag whose image does not fit the model at the level
+  the core picked fails, even when a lower level in its range would fit.
+  It needs both a tag and a misfit, so it is rare.
+- `avdmanager list device` prints no screen size, so an SDK-only tablet
+  model, such as Pixel Tablet, is never a tablet profile and takes no
+  `tablet` image. Android Studio would offer one. Medium Tablet, from the
+  library, does.
 - The library is data to maintain. A new SDK model is not in the library
   until someone copies it in; it still resolves through the SDK until then.
 - If sdklib changes its rule, Simlock follows only in a release that changes
@@ -219,6 +243,10 @@ is not reported: the library copies the SDK's values, so the two agree.
 - **Fit by kind and API range only, without the Play Store and tablet
   checks.** Smaller, and SDK profiles do not print either value. Rejected by
   the maintainer: Simlock should give the same answer as Android Studio.
+- **The catalog lists, per model and level, the image tags that fit.** The
+  core and the gateway would then pick a level only where the asked tag
+  fits, so the image-tag gap in §4 would close. Rejected by the maintainer:
+  a new catalog field and a protocol bump for a rare case.
 - **Retire idle devices that no longer fit.** Rejected by the maintainer:
   devices are reused as they are, and a profile change affects new devices
   only.

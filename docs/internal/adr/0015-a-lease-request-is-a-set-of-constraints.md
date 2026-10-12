@@ -2,11 +2,12 @@
 
 - **Status:** Accepted — not yet implemented. §3 is narrowed by [ADR
   0022](0022-a-physical-device-is-a-second-device-type-the-core-knows.md):
-  a physical device's class is recorded at enrollment. §3 and §4 are
+  a physical device's class is recorded at enrollment. §3 to §5 are
   narrowed by [ADR
-  0024](0024-simlock-ships-android-profiles-and-a-model-pairs-only-with-images-that-fit.md):
-  Android library profiles state their class, and Android `tablet` holds a
-  model.
+  0025](0025-simlock-ships-android-profiles-and-a-model-pairs-only-with-images-that-fit.md):
+  Android library profiles state their class, Android `tablet` holds a
+  model, and under an image tag the driver may refuse the level the core
+  picked.
 - **Date:** 2026-10-04
 - **Issue:** [#326](https://github.com/callstackincubator/simlock/issues/326)
 - **Supersedes:** nothing. Narrows [ADR

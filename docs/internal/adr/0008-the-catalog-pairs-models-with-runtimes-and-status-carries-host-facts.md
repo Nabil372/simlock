@@ -1,7 +1,7 @@
 # 0008. The catalog pairs models with runtimes, and status carries host facts
 
 - **Status:** Accepted — not yet implemented. §3 is narrowed by [ADR
-  0024](0024-simlock-ships-android-profiles-and-a-model-pairs-only-with-images-that-fit.md):
+  0025](0025-simlock-ships-android-profiles-and-a-model-pairs-only-with-images-that-fit.md):
   on Android a model pairs only with levels that have an image that fits it.
 - **Date:** 2026-10-01
 - **Issue:** [#171](https://github.com/callstackincubator/simlock/issues/171)
