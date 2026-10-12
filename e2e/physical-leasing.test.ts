@@ -510,9 +510,9 @@ describe("a physical lease request that waits", () => {
       },
     );
     const first = await granted(env, physical("agent-a"));
-    await release(env, first);
     const waiter = env.cliBackground(physical("agent-b"));
     await queuedAt(waiter, 1);
+    await release(env, first);
 
     const ended = await waiter.waitForExit(30_000);
 
