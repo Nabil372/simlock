@@ -852,6 +852,63 @@ describe("IosSimctlDriver physical handler: enrollment", () => {
     expect(result).toMatchObject({ enrollable: true });
   });
 
+  it.each([
+    { title: "has no result.devices list", document: JSON.stringify({ result: {} }) },
+    {
+      title: "holds a device entry that is not an object",
+      document: JSON.stringify({ result: { devices: [wire(PHONE), "not-an-object"] } }),
+    },
+  ])(
+    "inspectPhysical whose list devices read $title is refused unreadable naming list devices",
+    async ({ document }) => {
+      const result = await inspect(new Lab().list(document), PHONE_UDID);
+
+      expect(result).toMatchObject({
+        enrollable: false,
+        message: expect.stringContaining("list devices"),
+        reason: "unreadable",
+      });
+    },
+  );
+
+  it.each([
+    { title: "has no result.apps list", document: JSON.stringify({ result: {} }) },
+    {
+      title: "lists an app with no bundleIdentifier",
+      document: JSON.stringify({ result: { apps: [{ name: "Anonymous" }] } }),
+    },
+  ])(
+    "inspectPhysical whose apps read $title is refused unreadable naming the apps read, with no app list",
+    async ({ document }) => {
+      const lab = new Lab()
+        .list([wire(PHONE)])
+        .lock(PHONE_UDID)
+        .apps(PHONE_UDID, { file: document });
+
+      const result = await inspect(lab, PHONE_UDID);
+
+      expect(result).toMatchObject({
+        enrollable: false,
+        message: expect.stringContaining("apps"),
+        reason: "unreadable",
+      });
+      expect(result).not.toHaveProperty("apps");
+    },
+  );
+
+  it.each([
+    { change: { isMobileDeviceOnly: "yes" }, title: "a non-boolean isMobileDeviceOnly" },
+    { change: { osVersionNumber: "beta" }, title: "an OS version with no numeric major" },
+    {
+      change: { marketingName: undefined, productType: undefined },
+      title: "neither marketingName nor productType",
+    },
+  ])("inspectPhysical of a wired entry with $title is refused unreadable", async ({ change }) => {
+    const { inspection } = await refusedAfterAccepting({ change });
+
+    expect(inspection).toMatchObject({ enrollable: false, reason: "unreadable" });
+  });
+
   it.each(
     [
       { name: "list devices", position: 1 },
@@ -975,7 +1032,12 @@ describe("IosSimctlDriver physical handler: enrollment", () => {
     "the parser reads $field from the deprecated key and from properties alone",
     async ({ change, expected, field, id }) => {
       const device = { ...PHONE, ...change };
-      const fromDeprecated = await inspect(enrollableLab([wire(device)]), id ?? PHONE_IDENTIFIER);
+      const contradicted = wire(device);
+      const group = PROPERTIES_GROUP[field] ?? "";
+      const properties = contradicted["properties"] as Record<string, Fields>;
+      // why: a parser that reads `properties` first must see a different value than the deprecated key holds.
+      Object.assign(properties[group] ?? {}, { [field]: "contradicts-the-deprecated-key" });
+      const fromDeprecated = await inspect(enrollableLab([contradicted]), id ?? PHONE_IDENTIFIER);
       const fromProperties = await inspect(
         enrollableLab([wire(device, [field])]),
         id ?? PHONE_IDENTIFIER,
