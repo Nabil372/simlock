@@ -63,4 +63,4 @@ the status is stale.
 | [0022](0022-a-physical-device-is-a-second-device-type-the-core-knows.md) | A physical device is a second device type the core knows | Proposed |
 | [0023](0023-agent-device-is-served-by-an-optional-edge-module.md) | agent-device is served by an optional edge module, and the simlock lease is the only clock | Accepted — not yet implemented |
 | [0024](0024-leasing-calls-lease-end-participants-before-reclaim.md) | Leasing calls lease-end participants before it reclaims a device | Accepted — not yet implemented |
-| [0025](0025-simlock-ships-android-profiles-and-a-model-pairs-only-with-images-that-fit.md) | Simlock ships Android device profiles, and a model pairs only with images that fit it | Proposed |
+| [0025](0025-simlock-ships-android-profiles-and-a-model-pairs-only-with-images-that-fit.md) | Simlock ships Android device profiles, and a model pairs only with images that fit it | Accepted — not yet implemented |
