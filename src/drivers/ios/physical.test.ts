@@ -1005,38 +1005,45 @@ describe("IosSimctlDriver physical handler: enrollment", () => {
     },
     {
       change: { osVersionNumber: "16.7" },
+      contradiction: "18.4",
       field: "osVersionNumber",
       expected: { enrollable: false, reason: "os-too-old" },
     },
     {
       change: { developerModeStatus: "disabled" },
+      contradiction: "enabled",
       field: "developerModeStatus",
       expected: { enrollable: false, reason: "developer-mode-off" },
     },
     {
       change: { transportType: "localNetwork" },
+      contradiction: "wired",
       field: "transportType",
       expected: { enrollable: false, reason: "network-only" },
     },
     {
       change: { pairingState: "unpaired" },
+      contradiction: "paired",
       field: "pairingState",
       expected: { enrollable: false, reason: "untrusted" },
     },
   ] as {
     change: Fields;
+    contradiction?: string;
     expected: Record<string, unknown>;
     field: string;
     id?: string;
   }[])(
     "the parser reads $field from the deprecated key and from properties alone",
-    async ({ change, expected, field, id }) => {
+    async ({ change, contradiction, expected, field, id }) => {
       const device = { ...PHONE, ...change };
       const contradicted = wire(device);
       const group = PROPERTIES_GROUP[field] ?? "";
       const properties = contradicted["properties"] as Record<string, Fields>;
-      // why: a parser that reads `properties` first must see a different value than the deprecated key holds.
-      Object.assign(properties[group] ?? {}, { [field]: "contradicts-the-deprecated-key" });
+      // why: a parser that reads `properties` first must see a different value than the deprecated key holds, and for a refusing row one that enrolls.
+      Object.assign(properties[group] ?? {}, {
+        [field]: contradiction ?? "contradicts-the-deprecated-key",
+      });
       const fromDeprecated = await inspect(enrollableLab([contradicted]), id ?? PHONE_IDENTIFIER);
       const fromProperties = await inspect(
         enrollableLab([wire(device, [field])]),
