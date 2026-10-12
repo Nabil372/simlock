@@ -2139,8 +2139,10 @@ agent-device  fail  found 0.20.3, need 0.21.25 or later; install agent-device 0.
 
 While agent-device is still starting, or running, or switched off, there is
 none. The check runs when the daemon starts agent-device, so after fixing the
-cause, restart the daemon. It never changes the exit code, and `--fix` never
-acts on it.
+cause, restart the daemon, except when agent-device failed to start: the
+daemon retries a failed start every 30 seconds, so the finding clears by
+itself once the cause is fixed. It never changes the exit code, and `--fix`
+never acts on it.
 
 ## `simlock nuke [--delete-devices] [--yes]`
 
