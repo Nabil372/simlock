@@ -85,9 +85,10 @@ the SDK or `devices.xml`, as today.
 library profile the driver seeds with any SDK profile, then writes the
 library's keys into `config.ini` and its boot properties next to it. No
 hardware key (`hw.*`) and no boot property the seed wrote survives unless the
-library profile sets it. Keys that describe the image (`image.sysdir.*`,
-`tag.*`, `abi.type`, `target`) come from the image, not the profile, and
-stay as `avdmanager` wrote them. The config hash
+library profile sets it, and no skin key (`skin.*`): a library device has no
+skin, so its screen comes from its `hw.lcd.*` keys alone. Keys that describe
+the image (`image.sysdir.*`, `tag.*`, `abi.type`, `target`, `hw.cpu.arch`)
+come from the image, not the profile, and stay as `avdmanager` wrote them. The config hash
 is taken after that, as it is for a `devices.xml` profile today.
 
 A device keeps the `config.ini` it was created with. A changed library
@@ -138,11 +139,12 @@ picked by today's order, applied to fitting images only: a host-native
 `google_apis` image, then any host-native image, then any `google_apis`
 image, then any.
 
-`allowDownload` works as today: for an exact version with no image
-installed, it installs that level's `google_apis` image. When that image
-would not fit the model, such as a TV, nothing is downloaded and the request
-fails with `RUNTIME_MISSING` and `downloadable: false`. Nothing else is
-downloaded.
+`allowDownload` works as today: for an exact version with no fitting image
+installed, it installs that level's `google_apis` image. That is the only
+image Simlock ever downloads. A `RUNTIME_MISSING` for an exact version says
+`downloadable: true` only when that image would fit the model and is not
+installed; otherwise `downloadable: false`, so a client does not retry with
+`allowDownload` for nothing. A TV model is always `downloadable: false`.
 
 A request that names an image tag picks its level as ADR 0015 §5 says: a
 level counts when the model pairs with it and the catalog's `images` lists
