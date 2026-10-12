@@ -6,6 +6,7 @@ import {
   agentDeviceFindings,
   AgentDeviceSupervisor,
   type AgentDeviceHealthProbe,
+  type AgentDeviceUpstream,
   NodeAgentDeviceHealthProbe,
 } from "../agent-device/index.js";
 import { EVENT_FILE_NAME, EventBus, EventHistory, type EventBusLogger } from "../bus/index.js";
@@ -108,6 +109,7 @@ import { createCredentialRoleResolver } from "./session.js";
 
 export interface StartDaemonOptions {
   readonly agentDeviceHealth?: AgentDeviceHealthProbe;
+  readonly agentDeviceUpstream?: AgentDeviceUpstream;
   readonly clock?: Clock;
   readonly configOverrides?: ConfigOverrides;
   readonly configPath?: string;
