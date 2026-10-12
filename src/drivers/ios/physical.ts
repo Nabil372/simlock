@@ -177,6 +177,18 @@ function deviceRefusal(
   return undefined;
 }
 
+function entryChecks(
+  id: string,
+  entry: Raw,
+): { readonly fields: WiredFields } | { readonly refusal: PhysicalInspection } {
+  const early = transportRefusal(id, entry);
+  if (early !== undefined) return { refusal: early };
+  const fields = requireStrings(entry, WIRED_FIELDS);
+  if ("missing" in fields) return { refusal: missing(id, fields.missing) };
+  const refusal = deviceRefusal(id, entry, fields);
+  return refusal === undefined ? { fields } : { refusal };
+}
+
 type Listed =
   | { readonly kind: "absent"; readonly reason: AbsentReason }
   | { readonly kind: "listed"; readonly osVersion: string };
@@ -229,29 +241,25 @@ export class IosPhysicalHandler {
   }
 
   async #checkEntry(id: string, entry: Raw): Promise<PhysicalInspection> {
-    const early = transportRefusal(id, entry);
-    if (early !== undefined) return early;
-    const fields = requireStrings(entry, WIRED_FIELDS);
-    if ("missing" in fields) return missing(id, fields.missing);
-    const refusal = deviceRefusal(id, entry, fields);
-    if (refusal !== undefined) return refusal;
+    const checked = entryChecks(id, entry);
+    if ("refusal" in checked) return checked.refusal;
+    const { fields } = checked;
 
-    const { deviceType, osVersionNumber, udid } = fields;
-    const lock = await this.#lockRead(udid);
+    const lock = await this.#lockRead(fields.udid);
     if (!lock.ok) return unreadable("devicectl device info lockState", lock.why);
     if (lock.locked) return refused("locked", `${id} is locked: unlock it and try again.`);
 
-    const apps = await this.#appsRead(udid);
+    const apps = await this.#appsRead(fields.udid);
     if (!apps.ok) return unreadable("devicectl device info apps", apps.why);
     const model = stringField(entry, "marketingName") ?? stringField(entry, "productType");
     if (model === undefined) return missing(id, "marketingName");
     return {
       apps: apps.bundles,
-      class: deviceType === "iPad" ? "tablet" : "phone",
-      driverDeviceId: udid,
+      class: fields.deviceType === "iPad" ? "tablet" : "phone",
+      driverDeviceId: fields.udid,
       enrollable: true,
       model,
-      osVersion: osVersionNumber,
+      osVersion: fields.osVersionNumber,
     };
   }
 

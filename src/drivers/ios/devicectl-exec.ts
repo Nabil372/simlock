@@ -151,26 +151,25 @@ function parseOptions(
   for (const argument of options) {
     if (expectsValue) {
       expectsValue = false;
-      continue;
-    }
-    if (!argument.startsWith("-") || argument === "-") {
+    } else if (!isOption(argument)) {
       positional += 1;
-      if (positional > spec.positional) {
-        refuse(`${command}: ${argument} is an extra argument; the app's own arguments go after --`);
+      if (positional > spec.positional) refuse(`${command}: ${argument} is an extra argument`);
+    } else {
+      const { name, inline } = splitOption(argument);
+      if (!isOnList(name, inline, valued, flags)) {
+        refuse(`${command}: ${argument} is not on the reviewed list`);
       }
-      continue;
-    }
-    const { name, inline } = splitOption(argument);
-    if (!isOnList(name, inline, valued, flags)) {
-      refuse(`${command}: ${argument} is not on the reviewed list`);
-    }
-    if (valued.has(name)) {
-      namesDevice ||= name === "-d" || name === "--device";
-      expectsValue = !inline;
+      const takesValue = valued.has(name);
+      namesDevice ||= takesValue && (name === "-d" || name === "--device");
+      expectsValue = takesValue && !inline;
     }
   }
   if (expectsValue) refuse(`${command}: an option has no value`);
   return { namesDevice };
+}
+
+function isOption(argument: string): boolean {
+  return argument.startsWith("-") && argument !== "-";
 }
 
 export function devicectlExecCommand(udid: string, args: readonly string[]): PassthroughCommand {
