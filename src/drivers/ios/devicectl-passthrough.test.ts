@@ -551,6 +551,34 @@ describe("IosSimctlDriver passthrough", () => {
       expect(runner.calls).toHaveLength(0);
     });
 
+    it("refuses devicectl on a physical device whose lease is an Android one, and runs nothing", async () => {
+      const runner = new ScriptedProcessRunner([]);
+      const driver = await createDriver(runner);
+
+      const accepted = await driver.passthrough("devicectl", PHYSICAL_DEVICE, ALLOWED_PLAIN, {
+        hasTerminal: false,
+        platform: "ios",
+      });
+      expect(accepted).toMatchObject({ command: "xcrun" });
+      const outcome = await driver
+        .passthrough("devicectl", PHYSICAL_DEVICE, ALLOWED_PLAIN, {
+          hasTerminal: false,
+          platform: "android",
+        })
+        .then(
+          () => undefined,
+          (rejected: unknown) => rejected,
+        );
+
+      expect(outcome).toBeInstanceOf(PassthroughRefusedError);
+      expect(outcome).toMatchObject({
+        message:
+          "Refusing `devicectl`: it only serves a physical iOS device, and this lease is on the android platform.",
+        tool: "devicectl",
+      });
+      expect(runner.calls).toHaveLength(0);
+    });
+
     it("refuses devicectl with no device, naming xcrun devicectl", async () => {
       const runner = new ScriptedProcessRunner([]);
       const driver = await createDriver(runner);

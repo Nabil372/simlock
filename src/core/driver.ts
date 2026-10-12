@@ -416,12 +416,14 @@ export interface PassthroughCommand {
 }
 
 /**
- * What the caller can give the command it is asking for. One field today: whether the process
- * that runs it has a terminal. A driver reads it to refuse what cannot work without one (a
- * bare `adb shell`), and nothing else -- it is not a general-purpose "who is asking".
+ * why: a driver cannot see the process that will run its command or the lease's platform, so
+ * the caller states `hasTerminal` (to refuse what needs one, a bare `adb shell`) and, on
+ * `device.exec`, the lease's `platform` (to refuse a tool that is another platform's). It is
+ * not a general-purpose "who is asking".
  */
 export interface PassthroughContext {
   readonly hasTerminal: boolean;
+  readonly platform?: Platform;
 }
 
 /**

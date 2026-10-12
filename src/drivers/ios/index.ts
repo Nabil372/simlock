@@ -30,6 +30,7 @@ import {
   type ObservedDevice,
   OwnedRootError,
   type PassthroughCommand,
+  type PassthroughContext,
   PassthroughRefusedError,
   type ObservedRunState,
   removeListedComponent,
@@ -1541,6 +1542,7 @@ export class IosSimctlDriver implements Driver {
     tool: string,
     device: VirtualDriverDevice | PhysicalDriverDevice | undefined,
     args: readonly string[],
+    context?: PassthroughContext,
   ): Promise<PassthroughCommand> {
     if (tool === "devicectl") {
       if (device === undefined) {
@@ -1553,6 +1555,12 @@ export class IosSimctlDriver implements Driver {
         throw new PassthroughRefusedError(
           tool,
           "Refusing `devicectl`: it only serves a physical device, and this lease holds a simulator. Use `simctl`.",
+        );
+      }
+      if (context?.platform !== undefined && context.platform !== this.platform) {
+        throw new PassthroughRefusedError(
+          tool,
+          `Refusing \`devicectl\`: it only serves a physical iOS device, and this lease is on the ${context.platform} platform.`,
         );
       }
       return devicectlExecCommand(device.deviceId, args);

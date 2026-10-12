@@ -3189,7 +3189,7 @@ describe("Dispatcher: device.exec", () => {
       session({ principal: "tok_agent" }),
     );
 
-    expect(seen).toEqual([{ hasTerminal: false }, undefined]);
+    expect(seen).toEqual([{ hasTerminal: false, platform: "ios" }, undefined]);
   });
 
   it("answers UNKNOWN_LEASE for an id that names no lease, rather than running the command", async () => {

@@ -544,7 +544,7 @@ export class Dispatcher {
       input.tool,
       toDriverDevice(record),
       input.args,
-      { hasTerminal: false },
+      { hasTerminal: false, platform: record.spec.platform },
     );
     const handle = this.options.processRunner.spawnStreaming(command.command, command.args, {
       env: { ...this.options.execEnv, ...command.env },
