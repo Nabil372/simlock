@@ -660,6 +660,47 @@ describe("LeaseReleaseCoordinator", () => {
       expect(harness.registry.snapshot.leases.map((lease) => lease.id)).toEqual([held.lease.id]);
     });
 
+    it("endForAbsentDevice calls the lease-end participant after the decision section has ended, not inside it", async () => {
+      const harness = await createHarness();
+      const held = await grantPhysical(harness, "UDID-A");
+      let inSection = false;
+      let calledInSection: boolean | undefined;
+      const coordinator = new LeaseReleaseCoordinator({
+        claims: harness.claims,
+        decisions: {
+          run: async (operation) => {
+            inSection = true;
+            try {
+              return await harness.decisions.run(operation);
+            } finally {
+              inSection = false;
+            }
+          },
+        },
+        leaseEnd: {
+          clock: harness.clock,
+          endWaitMs: 1_000,
+          participants: [
+            {
+              leaseEnded: async () => {
+                calledInSection = inSection;
+              },
+            },
+          ],
+        },
+        lifecycle: harness.lifecycle,
+        notifyAvailability: () => undefined,
+        reclaim: harness.reclaim,
+        registry: harness.registry,
+      });
+
+      await expect(coordinator.endForAbsentDevice(held.lease.id, "not-present")).resolves.toBe(
+        true,
+      );
+
+      expect(calledInSection).toBe(false);
+    });
+
     it("endForAbsentDevice answers false when no lease exists at all", async () => {
       const harness = await createHarness();
 
