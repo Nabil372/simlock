@@ -519,7 +519,8 @@ took it, but the gateway cannot find it again: it forwards no key, and no
 operation lists a worker's stored requests. What survives is the lease
 itself: the gateway rebuilds its lease index from the workers when they
 reconnect, so a client that repeats its request gets
-`REQUESTER_ALREADY_LEASED` naming the lease if one was granted.
+`REQUESTER_ALREADY_LEASED` naming a lease if it is at `lease.maxPerRequester`,
+and a new lease request if it is below it.
 
 **Status:** known, and out of #72's scope by its own spec.
 
@@ -914,8 +915,10 @@ and the lease itself is bounded by its TTL: an orphan from this race expires
 on the worker's own clock without anyone intervening.
 
 **Status:** accepted, with the recovery documented rather than automated:
-re-request, and if the answer is `REQUESTER_ALREADY_LEASED`, read the lease it
-names — that is your earlier grant, found again.
+re-request. If the answer is `REQUESTER_ALREADY_LEASED`, read the lease it
+names — that is your earlier grant, found again. Below `lease.maxPerRequester`
+the re-request is granted as a new lease, and the earlier one stays until its
+TTL or release.
 
 **Possible future fix:** #72 made lease requests durable and repeatable on a
 worker, but not across the gateway's own hop — see "A fleet request is stored

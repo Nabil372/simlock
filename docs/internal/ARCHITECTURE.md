@@ -954,9 +954,10 @@ emits its own facts — `worker.connected`, `worker.disconnected`,
 - **Dispatched, then the uplink drops.** The request's client sees
   `WORKER_UNREACHABLE`. If the worker actually granted it, that lease exists
   on the worker and expires there on its TTL. A retry hits the fleet-wide
-  one-lease rule only once the uplink is back and the index is rebuilt —
-  so the client re-requests, and a `409 REQUESTER_ALREADY_LEASED` names the
-  lease to read back.
+  per-requester limit (`lease.maxPerRequester`) only once the uplink is back
+  and the index is rebuilt — so the client re-requests; at the limit a
+  `409 REQUESTER_ALREADY_LEASED` names a lease to read back, below it the
+  retry gets a new lease.
 - **Gateway restart.** In-flight requests are lost: a gateway keeps its lease
   requests in memory only, while a worker stores its own in `state.json` (#72).
   Leases survive on their workers; workers reconnect on their backoff and the

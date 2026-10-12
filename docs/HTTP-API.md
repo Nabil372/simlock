@@ -1541,8 +1541,10 @@ and `message` — details are contract, message text is not.
   is treated as a new request. Leases survive it, on their workers, which
   reconnect on their own backoff and let the gateway rebuild every view and
   its lease index. So a client that repeats its request after a gateway
-  restart gets `409 REQUESTER_ALREADY_LEASED` naming the lease if one was
-  granted — `GET` that lease to recover it — or a new request if not. While a
+  restart gets a new lease request if `lease.maxPerRequester` leaves room for
+  another lease under its agent id, which can leave it holding two leases (`GET`
+  the earlier one to recover it); at the limit it gets
+  `409 REQUESTER_ALREADY_LEASED` naming a lease it already holds. While a
   worker's uplink is down, anything routed to it is
   `503 WORKER_UNREACHABLE`; the gateway never reports a lease as gone before
   the worker says so, and the lease meanwhile runs out its TTL on the
