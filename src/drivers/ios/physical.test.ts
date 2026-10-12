@@ -977,11 +977,13 @@ describe("IosSimctlDriver physical handler: enrollment", () => {
     },
     {
       change: { platform: "tvOS" },
+      contradiction: "iOS",
       field: "platform",
       expected: { enrollable: false, reason: "unsupported-kind" },
     },
     {
       change: { deviceType: "appleTV" },
+      contradiction: "iPhone",
       field: "deviceType",
       expected: { enrollable: false, reason: "unsupported-kind" },
     },
