@@ -17,7 +17,8 @@ const NUL = 0x00;
  *
  * Enumerated from `git ls-files` rather than a directory walk so the check sees every
  * tracked file in the repository (testing rule 4), not just the directories this test
- * happened to name. Untracked and ignored files are out of scope: they are not part of
+ * happened to name. The one exception is `e2e/fixtures/`: built binaries committed for tests,
+ * never searched as text, so they are skipped. Untracked and ignored files are out of scope: they are not part of
  * what anyone clones or searches.
  */
 describe("tracked files", () => {
@@ -45,7 +46,12 @@ describe("tracked files", () => {
     expect(trackedFiles.length).toBeGreaterThan(100);
   });
 
-  it("contain no raw NUL byte, so grep and ripgrep can search them", () => {
+  it("hold no path under e2e/fixtures/ and still hold e2e/appduct-fixtures.test.ts", () => {
+    expect(trackedFiles.filter((name) => name.startsWith("e2e/fixtures/"))).toEqual([]);
+    expect(trackedFiles).toContain("e2e/appduct-fixtures.test.ts");
+  });
+
+  it("outside e2e/fixtures/ contain no raw NUL byte, so grep and ripgrep can search them", () => {
     const offenders = trackedFiles
       .map((name) => ({ name, contents: readFileSync(join(REPO_ROOT, name)) }))
       .filter(({ contents }) => contents.includes(NUL))
