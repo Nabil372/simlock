@@ -665,12 +665,13 @@ describe("AgentDeviceSupervisor spawning", () => {
   it("writes exactly the policy file before the spawn", async () => {
     const harness = await arrange();
     const atSpawn: string[] = [];
-    const spawn = harness.runner.spawn.bind(harness.runner);
-    vi.spyOn(harness.runner, "spawn").mockImplementation((command, args, options) => {
+    const arranged = vi.mocked(harness.runner.spawn).getMockImplementation();
+    if (arranged === undefined) throw new Error("arrange installs the spawn spy");
+    vi.mocked(harness.runner.spawn).mockImplementation((command, args, options) => {
       if (isDaemonEntry(args[0])) {
         void harness.filesystem.readFile(policyPath).then((contents) => atSpawn.push(contents));
       }
-      return spawn(command, args, options);
+      return arranged(command, args, options);
     });
 
     await advancing(harness, harness.begin());
