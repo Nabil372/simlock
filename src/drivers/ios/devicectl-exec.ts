@@ -138,34 +138,50 @@ function isOnList(
   return valued.has(name) || (flags.has(name) && !inline);
 }
 
+interface Scan {
+  namesDevice: boolean;
+  positional: number;
+  expectsValue: boolean;
+}
+
+function scanArgument(
+  command: string,
+  spec: CommandSpec,
+  lists: { readonly valued: ReadonlySet<string>; readonly flags: ReadonlySet<string> },
+  scan: Scan,
+  argument: string,
+): void {
+  if (scan.expectsValue) {
+    scan.expectsValue = false;
+    return;
+  }
+  if (!isOption(argument)) {
+    scan.positional += 1;
+    if (scan.positional > spec.positional) refuse(`${command}: ${argument} is an extra argument`);
+    return;
+  }
+  const { name, inline } = splitOption(argument);
+  if (!isOnList(name, inline, lists.valued, lists.flags)) {
+    refuse(`${command}: ${argument} is not on the reviewed list`);
+  }
+  if (!lists.valued.has(name)) return;
+  if (name === "-d" || name === "--device") scan.namesDevice = true;
+  scan.expectsValue = !inline;
+}
+
 function parseOptions(
   command: string,
   spec: CommandSpec,
   options: readonly string[],
 ): { readonly namesDevice: boolean } {
-  const valued = new Set([...spec.valued, ...COMMON_VALUED].flat());
-  const flags = new Set([...spec.flags, ...COMMON_FLAGS]);
-  let namesDevice = false;
-  let positional = 0;
-  let expectsValue = false;
-  for (const argument of options) {
-    if (expectsValue) {
-      expectsValue = false;
-    } else if (!isOption(argument)) {
-      positional += 1;
-      if (positional > spec.positional) refuse(`${command}: ${argument} is an extra argument`);
-    } else {
-      const { name, inline } = splitOption(argument);
-      if (!isOnList(name, inline, valued, flags)) {
-        refuse(`${command}: ${argument} is not on the reviewed list`);
-      }
-      const takesValue = valued.has(name);
-      namesDevice ||= takesValue && (name === "-d" || name === "--device");
-      expectsValue = takesValue && !inline;
-    }
-  }
-  if (expectsValue) refuse(`${command}: an option has no value`);
-  return { namesDevice };
+  const lists = {
+    flags: new Set([...spec.flags, ...COMMON_FLAGS]),
+    valued: new Set([...spec.valued, ...COMMON_VALUED].flat()),
+  };
+  const scan: Scan = { expectsValue: false, namesDevice: false, positional: 0 };
+  for (const argument of options) scanArgument(command, spec, lists, scan, argument);
+  if (scan.expectsValue) refuse(`${command}: an option has no value`);
+  return { namesDevice: scan.namesDevice };
 }
 
 function isOption(argument: string): boolean {
