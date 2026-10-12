@@ -157,7 +157,6 @@ export class FleetLeaseIndex {
   add(entry: FleetLeaseEntry): boolean {
     const existing = this.#byGatewayId.get(entry.gatewayLeaseId);
     if (existing !== undefined && existing.workerId !== entry.workerId) return false;
-    if (existing !== undefined) this.#dropRequesterLink(existing);
     this.#byGatewayId.set(entry.gatewayLeaseId, entry);
     const ids = this.#byRequester.get(entry.requesterId) ?? new Set<string>();
     ids.add(entry.gatewayLeaseId);

@@ -1026,8 +1026,9 @@ reaches the same operation as `POST /v1/leases/{id}/exec`; see
 [HTTP-API.md](HTTP-API.md).) Three consequences:
 
 - **It needs a lease**, because `device.exec` is scoped to one. The CLI uses
-  your own lease, which the one-lease-per-requester rule makes unambiguous;
-  `--lease <lease-id>` names one explicitly (and is required if you hold none
+  your own lease, which is unambiguous while you hold one (the default limit);
+  `--lease <lease-id>` names one explicitly (and is required if you hold more
+  than one, or none
   under the identity you are running as — see [Agent
   identity](#agent-identity)). An **agent-role** invocation sends no
   `requesterId` at all and is gated the ordinary way, its principal against
@@ -1092,8 +1093,11 @@ release, a `simctl`/`adb`, or a request that had already been dispatched to
 it. The gateway does not guess that the lease is gone; the worker's own TTL
 ends it on the worker's clock, and the loss reaches you once the uplink is
 back. The recovery is the ordinary one: re-request, and if the worker had in
-fact granted you a lease, the fleet-wide one-lease rule names it once the
-gateway has rebuilt its index.
+fact granted you a lease, the fleet-wide lease limit names it once the
+gateway has rebuilt its index. With `lease.maxPerRequester` above 1, a client
+that lost its grant and asks again without an `idempotencyKey` gets a new
+lease, not a refusal naming the lost one; the lost lease stays until its TTL
+runs out.
 
 ## `simlock worker <list|drain|undrain|remove>`
 
@@ -1308,7 +1312,7 @@ Codex session. An agent that leases through both the CLI and MCP in one Codex
 session can therefore hold two leases. To avoid that, use one interface per
 session, or set the same `SIMLOCK_AGENT_ID` for both. Under any other client,
 set a distinct `SIMLOCK_AGENT_ID` per MCP server process (one per agent
-session) so the one-lease-per-agent rule is meaningful.
+session) so the per-agent lease limit is meaningful.
 
 ### Breaking in 0.3.0: tool schemas are now the contract's own field names
 

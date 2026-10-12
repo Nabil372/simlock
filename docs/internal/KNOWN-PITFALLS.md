@@ -13,7 +13,7 @@ stdio servers inherit only a limited environment by contract, and MCP has no
 session id for stdio, so this is client behaviour we cannot rely on. Under
 Codex, `simlock mcp` falls back to `mcp:<pid>`, so an agent using both the CLI
 (`codex:<id>`) and MCP in one session is two requesters and can hold two
-leases. The daemon still enforces one lease per requester on each side.
+leases. The daemon still enforces `lease.maxPerRequester` per requester on each side.
 
 **Why it is accepted:** mixing the CLI and MCP in one agent session is
 uncommon, and the id is only a per-requester key, so nothing collides across
