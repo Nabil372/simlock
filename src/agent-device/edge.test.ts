@@ -82,6 +82,11 @@ interface Rig {
   readonly started: Promise<DaemonServer>;
 }
 
+const phoneModels = {
+  defaultModels: { phone: ["iPhone 16"] },
+  modelClasses: { "iPhone 16": "phone" },
+} as const;
+
 function iosDriver(clock: FakeClock): FakeDriver {
   return new FakeDriver({
     availableOsVersions: ["26.5"],
@@ -530,7 +535,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
   });
 
   it('allocate `--target mobile`, `tv` and `desktop` ask simlock for class `phone`, `tv` and `desktop`; allocate `--device "iPhone 17 Pro"`, alone and with `--target tv`, asks for that model and no class', async () => {
-    const rig = await setUp();
+    const rig = await setUp({ maxRunning: 8 });
 
     await granted(rig, 1, { target: "mobile" });
     await granted(rig, 2, { target: "tv" });
@@ -769,8 +774,10 @@ describe("the agent-device front, through the whole worker daemon", () => {
     const slow = await setUp({
       drivers: (clock) => [
         new FakeDriver({
+          ...phoneModels,
           availableOsVersions: ["26.5"],
           clock,
+          knownModels: ["iPhone 16"],
           latencyMs: { listManaged: 30_000 },
           platform: "ios",
         }),
@@ -790,6 +797,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(parked.done()).toBe(false);
     early.abort();
     await parked.promise.catch(() => undefined);
+    await sleep(50);
     slow.clock.advance(30_000);
     const ready = { ...slow, daemon: await slow.started };
     await sleep(100);
@@ -802,6 +810,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
   it("a CLI that hangs up after device work started for it gets no agent-device lease: the grant that lands later is released at once and never reaches the agent-device daemon; when that device work fails and the request goes back to the queue, the front's repeated cancel removes it, and it is never granted", async () => {
     const slowDevice = (clock: FakeClock) => [
       new FakeDriver({
+        ...phoneModels,
         availableOsVersions: ["26.5"],
         clock,
         knownModels: ["iPhone 16"],
@@ -880,7 +889,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
 
   it("an allocate still waiting 330 s after the front admitted it answers `timed out waiting for a device; nothing was leased`, and simlock's queue is empty", async () => {
     const rig = await setUp({ maxRunning: 1 });
-    await granted(rig, 1, {}, { token: secrets.two });
+    await granted(rig, 1, { ttlMs: maxTtlMs }, { token: secrets.two });
     const second = track(allocate(rig, 2));
     await expect.poll(async () => (await waiting(rig)).length).toBe(1);
 
@@ -915,6 +924,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     const bare = await setUp({
       drivers: (clock) => [
         new NoAddressDriver({
+          ...phoneModels,
           availableOsVersions: ["26.5"],
           clock,
           knownModels: ["iPhone 16"],
@@ -969,6 +979,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
 
     hangUp.abort();
     await first.promise.catch(() => undefined);
+    await sleep(50);
     rig.fake.letAllocateGo();
 
     await expect.poll(async () => (await leases(rig)).length).toBe(0);
@@ -984,6 +995,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     await expect.poll(() => allocatesReceived(rig, 2).length).toBe(1);
     abort.abort();
     await second.promise.catch(() => undefined);
+    await sleep(50);
     rig.fake.letAllocateGo();
     await expect.poll(() => rig.fake.rpcRequests("agent_device.lease.release").length).toBe(2);
 

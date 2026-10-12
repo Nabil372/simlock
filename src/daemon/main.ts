@@ -5,6 +5,9 @@ import { pathToFileURL } from "node:url";
 import {
   agentDeviceFindings,
   AgentDeviceSupervisor,
+  createAgentDeviceEdgeParts,
+  createAgentDeviceFront,
+  SupervisorAgentDeviceUpstream,
   type AgentDeviceHealthProbe,
   type AgentDeviceUpstream,
   NodeAgentDeviceHealthProbe,
@@ -52,6 +55,7 @@ import {
   iosPrerequisites,
 } from "../drivers/ios/index.js";
 import { createHttpApp } from "../http/app.js";
+import type { HttpDispatch } from "../http/dispatcher-session.js";
 import { HttpGateway } from "../http/server.js";
 import { TokenStore } from "../http/token-store.js";
 import {
@@ -428,6 +432,13 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     processSupervisor,
     tcpProbe,
   });
+  // why: the edge needs nothing from leasing, so it is built here, with the supervisor it reads.
+  const agentDeviceParts = config.agentDevice.enabled
+    ? createAgentDeviceEdgeParts(
+        options.agentDeviceUpstream ?? new SupervisorAgentDeviceUpstream(agentDevice),
+        clock,
+      )
+    : undefined;
   const daemon = new DaemonServer({
     // Closes the warm pool the moment a stop is asked for, ahead of every await in the stop.
     beginStop: () => core.closeWarmPool(),
@@ -527,7 +538,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
       socketClaimed = true;
       // why: not awaited, since simlock's start never waits for agent-device, and a daemon that lost
       // the socket race never gets here, so it reaps nothing.
-      void agentDevice.start();
+      if (options.agentDeviceUpstream === undefined) void agentDevice.start();
       // Dialled here, once the socket is claimed and `#readyPromise` is set. The gateway's first
       // `status.get` never parks (it still answers `starting` during convergence), but its
       // `events.subscribe` does park on startup readiness, so the refresh that follows the
@@ -549,14 +560,26 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
 
   async function startHttpGateway(): Promise<void> {
     const httpLogger = logger.child("http");
+    const dispatch: HttpDispatch = (operation, input, session) =>
+      daemon.dispatch(operation, input, session);
     const app = createHttpApp({
       clock,
       config,
-      dispatch: (operation, input, session) => daemon.dispatch(operation, input, session),
+      dispatch,
       eventBus,
       idGenerator,
       leaseRequests: leasing.requests,
       logger: httpLogger,
+      mounts:
+        agentDeviceParts === undefined
+          ? []
+          : [
+              createAgentDeviceFront(agentDeviceParts, {
+                clock,
+                dispatch,
+                logger: logger.child("agent-device"),
+              }),
+            ],
       ownerRoutedFacts: daemon.ownerRoutedFacts,
       registry,
       tokens,

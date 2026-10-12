@@ -20,7 +20,21 @@ export class SupervisorAgentDeviceUpstream implements AgentDeviceUpstream {
 
   // fallow-ignore-next-line unused-class-member -- reached through the AgentDeviceUpstream port by the host.
   current(): AgentDeviceUpstreamState {
-    return { reason: "not implemented", state: "unavailable" };
+    const availability = this.supervisor.availability();
+    switch (availability.state) {
+      case "running":
+        return {
+          baseUrl: availability.baseUrl,
+          generation: availability.generation,
+          leaseMaxTtlMs: availability.leaseMaxTtlMs,
+          state: "running",
+          token: availability.token,
+        };
+      case "unavailable":
+        return { reason: availability.message, state: "unavailable" };
+      default:
+        return { reason: availability.state === "off" ? "off" : "starting", state: "unavailable" };
+    }
   }
 
   // fallow-ignore-next-line unused-class-member -- reached through the AgentDeviceUpstream port by the host.
