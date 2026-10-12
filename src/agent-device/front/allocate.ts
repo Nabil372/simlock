@@ -44,13 +44,7 @@ function notPlain(params: Record<string, unknown>): boolean {
   );
 }
 
-function refusalFor(params: Record<string, unknown>): FrontReply | undefined {
-  const fields = leaseCallFields(params);
-  const ttl = fields.ttlMs;
-  if (leaseIdOf(fields.leaseId) === undefined) {
-    return refusal("refused: this agent-device is too old for simlock; upgrade it");
-  }
-  if (notPlain(params)) return refusal("refused: simlock leases only plain devices");
+function deviceRefusal(fields: ReturnType<typeof leaseCallFields>): FrontReply | undefined {
   if (!present(fields.platform)) return refusal("refused: name --platform ios or android");
   if (fields.platform !== "ios" && fields.platform !== "android") {
     return refusal("refused: only iOS and Android");
@@ -58,6 +52,18 @@ function refusalFor(params: Record<string, unknown>): FrontReply | undefined {
   if (present(fields.udid) || present(fields.serial)) {
     return refusal("refused: simlock picks the device");
   }
+  return undefined;
+}
+
+function refusalFor(params: Record<string, unknown>): FrontReply | undefined {
+  const fields = leaseCallFields(params);
+  const ttl = fields.ttlMs;
+  if (leaseIdOf(fields.leaseId) === undefined) {
+    return refusal("refused: this agent-device is too old for simlock; upgrade it");
+  }
+  if (notPlain(params)) return refusal("refused: simlock leases only plain devices");
+  const device = deviceRefusal(fields);
+  if (device !== undefined) return device;
   if (present(ttl) && !(typeof ttl === "number" && Number.isFinite(ttl) && ttl > 0)) {
     return refusal("refused: ttlMs must be a positive number of milliseconds");
   }
