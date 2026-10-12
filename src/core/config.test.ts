@@ -100,6 +100,7 @@ describe("loadConfig", () => {
         requestRetentionMs: 600_000,
         maxRequestRecords: 10_000,
         maxPerRequester: 1,
+        endWaitMs: 600_000,
       },
       capacity: {
         strategy: "resource",
@@ -683,6 +684,50 @@ describe("loadConfig", () => {
     },
   );
 
+  it("lease.endWaitMs defaults to 600000 and accepts a positive number and 2147483647", async () => {
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    const unset = await loadConfig({ configPath, filesystem, systemStats: createStats() });
+
+    await filesystem.writeFileAtomic(configPath, JSON.stringify({ lease: { endWaitMs: 5_000 } }));
+    const small = await loadConfig({ configPath, filesystem, systemStats: createStats() });
+    await filesystem.writeFileAtomic(
+      configPath,
+      JSON.stringify({ lease: { endWaitMs: 2_147_483_647 } }),
+    );
+    const largest = await loadConfig({ configPath, filesystem, systemStats: createStats() });
+
+    expect(unset.lease.endWaitMs).toBe(600_000);
+    expect(small.lease.endWaitMs).toBe(5_000);
+    expect(largest.lease.endWaitMs).toBe(2_147_483_647);
+  });
+
+  it.each([[0], [-1], [2_147_483_648], ["600000"]])(
+    "refuses lease.endWaitMs %j with a message naming the key, where 5000 loads",
+    async (value) => {
+      const filesystem = new MemoryFilesystem();
+      await filesystem.mkdirp("/home/agent/.simlock");
+      await filesystem.writeFileAtomic(configPath, JSON.stringify({ lease: { endWaitMs: 5_000 } }));
+      const accepted = await loadConfig({ configPath, filesystem, systemStats: createStats() });
+      expect(accepted.lease.endWaitMs).toBe(5_000);
+      await filesystem.writeFileAtomic(configPath, JSON.stringify({ lease: { endWaitMs: value } }));
+
+      await expect(
+        loadConfig({ configPath, filesystem, systemStats: createStats() }),
+      ).rejects.toThrow("lease.endWaitMs");
+    },
+  );
+
+  it("a loaded config parsed through configSchema keeps lease.endWaitMs", async () => {
+    const config = await loadConfig({
+      configPath,
+      filesystem: new MemoryFilesystem(),
+      systemStats: createStats(),
+    });
+
+    expect((configSchema.parse(config) as unknown as Config).lease.endWaitMs).toBe(600_000);
+  });
+
   it("reads lease.identity per platform and leaves the unset platform reusable", async () => {
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
@@ -763,6 +808,7 @@ describe("loadConfig", () => {
         defaultTtlMs: 15 * 60_000,
         identity: { android: "reusable", ios: "reusable" },
         maxPerRequester: 1,
+        endWaitMs: 600_000,
         maxRequestRecords: 10_000,
         maxTtlMs: 4 * 60 * 60_000,
         requestRetentionMs: 10 * 60_000,

@@ -24,6 +24,7 @@ import type {
   ClientReleaseReason,
   DeviceModeReader,
   LeaseCommands,
+  LeaseEndParticipant,
   QueueControl,
 } from "./lease-ports.js";
 import { LeaseReleaseCoordinator } from "./lease-release-coordinator.js";
@@ -55,6 +56,7 @@ export interface LeasingOptions {
   readonly modelPreferences?: ModelPreferences | undefined;
   /** why: not started on build: a health probe would shell out while startup convergence does. */
   readonly healthMonitor?: boolean | undefined;
+  readonly leaseEndParticipants?: readonly LeaseEndParticipant[] | undefined;
 }
 
 export interface Leasing extends LeaseCommands, QueueControl, DeviceModeReader {
@@ -160,6 +162,15 @@ export function createLeasing(options: LeasingOptions): Leasing {
   const releaseCoordinator: LeaseReleaseCoordinator = new LeaseReleaseCoordinator({
     claims: core.claims,
     decisions,
+    ...(options.leaseEndParticipants === undefined || options.leaseEndParticipants.length === 0
+      ? {}
+      : {
+          leaseEnd: {
+            clock: options.clock,
+            endWaitMs: options.config.lease.endWaitMs,
+            participants: options.leaseEndParticipants,
+          },
+        }),
     lifecycle: leases,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     // Called once a backgrounded reclaim has given up its claim; the warm pool can act on the
@@ -256,6 +267,7 @@ export function createLeasing(options: LeasingOptions): Leasing {
       await releaseCoordinator.settleBackgroundReclaims();
     },
     dispose: () => {
+      releaseCoordinator.dispose();
       physicalDeviceWatcher.dispose();
       expiry.dispose();
     },

@@ -1,4 +1,10 @@
-import type { DeviceRequest, DeviceSpec, LeaseGrant, LeaseRecord } from "../core/index.js";
+import type {
+  DeviceRequest,
+  DeviceSpec,
+  LeaseGrant,
+  LeaseRecord,
+  Platform,
+} from "../core/index.js";
 import type { WaitingRequest } from "./lease-request-book.js";
 import type { LeaseReleaseReason } from "./lease-release-coordinator.js";
 import type { LeaseRequestOptions } from "./wait-queue.js";
@@ -18,6 +24,18 @@ export interface QueueControl {
   cancelPending(requesterId: string): Promise<"cancelled" | "not-found" | "not-cancellable">;
   pendingRequestOwner(requesterId: string): string | undefined;
   waitingRequests(): readonly WaitingRequest[];
+}
+
+export interface EndedLease {
+  readonly leaseId: string;
+  readonly ownerId: string;
+  readonly deviceId: string;
+  readonly platform: Platform;
+  readonly reason: "explicit" | "killed" | "expired" | "device-lost";
+}
+
+export interface LeaseEndParticipant {
+  leaseEnded(ended: EndedLease, signal: AbortSignal): Promise<void>;
 }
 
 export interface DeviceModeReader {

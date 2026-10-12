@@ -181,6 +181,7 @@ export interface Config {
      */
     readonly maxRequestRecords: number;
     readonly maxPerRequester: number;
+    readonly endWaitMs: number;
   };
   /**
    * ADR 0005 §19e. Platform-agnostic on purpose: it bounds the *daemon's* willingness to wait
@@ -678,6 +679,7 @@ function defaultConfig(
       requestRetentionMs: DEFAULT_LEASE_REQUEST_RETENTION_MS,
       maxRequestRecords: DEFAULT_LEASE_MAX_REQUEST_RECORDS,
       maxPerRequester: DEFAULT_LEASE_MAX_PER_REQUESTER,
+      endWaitMs: DEFAULT_EXEC_TIMEOUT_MS,
     },
     exec: { timeoutMs: DEFAULT_EXEC_TIMEOUT_MS },
     diskPressure: { freeBytesThreshold: 10 * 1024 ** 3 },
@@ -827,6 +829,7 @@ function configValidators(strategy: CapacityStrategyName): Record<string, Valida
       requestRetentionMs: positiveNumber,
       maxRequestRecords: positiveInteger,
       maxPerRequester: positiveInteger,
+      endWaitMs: endWaitValidator,
     }),
     exec: objectValidator({ timeoutMs: positiveNumber }),
     diskPressure: objectValidator({ freeBytesThreshold: nonNegativeNumber }),
@@ -879,6 +882,17 @@ function configValidators(strategy: CapacityStrategyName): Record<string, Valida
  * names to try first, most preferred first. A class with no key has none.
  */
 export type DefaultModels = Partial<Record<DeviceClass, readonly string[]>>;
+
+/** why: `setTimeout` fires after about 1 ms above this delay, which would end the wait at once. */
+const MAXIMUM_TIMER_DELAY_MS = 2_147_483_647;
+
+const endWaitValidator: Validator = (value, path) => {
+  const wait = positiveNumber(value, path);
+  if (wait > MAXIMUM_TIMER_DELAY_MS) {
+    throw invalidValue(path, `a positive number no larger than ${MAXIMUM_TIMER_DELAY_MS}`);
+  }
+  return wait;
+};
 
 /**
  * Each key is a device class and each value one non-empty model name or a non-empty list of

@@ -21,7 +21,12 @@ import {
   type SerializedDecision,
 } from "../core/index.js";
 import { createLeasing, type Leasing } from "./create-leasing.js";
-import type { DeviceModeReader, LeaseCommands, QueueControl } from "./lease-ports.js";
+import type {
+  DeviceModeReader,
+  LeaseCommands,
+  LeaseEndParticipant,
+  QueueControl,
+} from "./lease-ports.js";
 import type { LeaseHealthMonitor } from "./lease-health-monitor.js";
 
 /**
@@ -43,6 +48,7 @@ export interface TestEngineOptions {
   readonly describeFailure?: ((error: unknown) => LeaseRequestFailure) | undefined;
   readonly defaultModes?: Readonly<Partial<Record<Platform, DeviceMode>>> | undefined;
   readonly modelPreferences?: ModelPreferences | undefined;
+  readonly leaseEndParticipants?: readonly LeaseEndParticipant[] | undefined;
 }
 
 /**
@@ -96,6 +102,7 @@ export function createTestEngine(options: TestEngineOptions): TestEngine {
     describeFailure: options.describeFailure,
     eventBus: options.eventBus,
     idGenerator: options.idGenerator,
+    leaseEndParticipants: options.leaseEndParticipants,
     logger: options.logger,
     modelPreferences: options.modelPreferences,
   });

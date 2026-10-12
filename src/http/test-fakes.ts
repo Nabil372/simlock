@@ -76,6 +76,7 @@ export function testConfig(
       requestRetentionMs: 600_000,
       maxRequestRecords: 10_000,
       maxPerRequester: 1,
+      endWaitMs: 600_000,
       ...overrides,
     },
     log: { level: "info", rotateBytes: 5 * 1024 * 1024 },

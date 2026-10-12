@@ -3052,6 +3052,7 @@ function config(stalledTransitionOverrides: Partial<Config["stalledTransition"]>
       requestRetentionMs: 600_000,
       maxRequestRecords: 10_000,
       maxPerRequester: 1,
+      endWaitMs: 600_000,
     },
     capacity: {
       strategy: "resource",
