@@ -38,7 +38,7 @@ const virtualRequest = {
   platform: "ios",
 } as const satisfies DeviceRequest;
 
-function config(): Config {
+function config(leaseOverrides: object = {}): Config {
   return {
     mode: "worker",
     exec: { timeoutMs: 600_000 },
@@ -74,6 +74,8 @@ function config(): Config {
       identity: { ios: "reusable", android: "reusable" },
       requestRetentionMs: 600_000,
       maxRequestRecords: 10_000,
+      maxPerRequester: 1,
+      ...leaseOverrides,
     },
     capacity: {
       strategy: "resource",
@@ -108,7 +110,11 @@ function config(): Config {
 }
 
 async function createHarness(
-  options: { readonly reclaimEstimateMs?: number; readonly logger?: Logger } = {},
+  options: {
+    readonly reclaimEstimateMs?: number;
+    readonly logger?: Logger;
+    readonly lease?: { readonly maxPerRequester?: number };
+  } = {},
 ) {
   const clock = new FakeClock(1_000);
   const bus = new EventBus(clock);
@@ -132,7 +138,7 @@ async function createHarness(
   const engine = createTestEngine({
     ...wiring,
     clock,
-    config: config(),
+    config: config(options.lease),
     drivers: [driver],
     eventBus: bus,
     idGenerator: { generate: () => `request-${nextId++}` },
@@ -511,6 +517,21 @@ describe("createLeasing with physical devices", () => {
     expect(harness.engine.core.claims.isClaimed(device.id)).toBe(false);
     expect(stateOf(harness, device)).toBe("ready");
     expect(harness.registry.snapshot.leases).toEqual([]);
+  });
+
+  it("a physical lease counts toward lease.maxPerRequester like a virtual one", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 2 } });
+    await enrollIphone(harness, "UDID-A");
+
+    await expect(harness.engine.request(physicalRequest, asking("agent-1"))).resolves.toMatchObject(
+      { lease: { id: expect.any(String) } },
+    );
+    await expect(harness.engine.request(virtualRequest, asking("agent-1"))).resolves.toMatchObject({
+      lease: { id: expect.any(String) },
+    });
+    const third = await outcome(harness.engine.request(virtualRequest, asking("agent-1")));
+
+    expect(third).toMatchObject({ name: "RequesterAlreadyLeasedError" });
   });
 
   it("declines a probe for a physical request nothing could match unresolvable-spec, and one whose matches are all leased no-wait", async () => {

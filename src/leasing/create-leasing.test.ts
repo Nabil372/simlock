@@ -78,6 +78,7 @@ function config(
       identity: { ios: "reusable", android: "reusable" },
       requestRetentionMs: 600_000,
       maxRequestRecords: 10_000,
+      maxPerRequester: 1,
       ...overrides,
     },
     capacity: {
@@ -153,7 +154,7 @@ async function createHarness(
     /** The state directory of an earlier harness: loading it again is a daemon restart. */
     readonly filesystem?: MemoryFilesystem;
     readonly identity?: Config["lease"]["identity"];
-    readonly lease?: Partial<Config["lease"]>;
+    readonly lease?: Partial<Config["lease"]> & { readonly maxPerRequester?: number };
     readonly capacity?: Config["capacity"];
     readonly defaultModes?: Parameters<typeof createTestEngine>[0]["defaultModes"];
     readonly limits?: CapacityLimits;
@@ -3919,6 +3920,231 @@ describe("createLeasing a lease ID chosen by the requester", () => {
   });
 });
 
+describe("createLeasing: a requester may hold up to lease.maxPerRequester leases (ADR 0023)", () => {
+  const roomy = {
+    android: { maxDevices: 1, maxRunning: 1 },
+    ios: { maxDevices: 4, maxRunning: 4 },
+    maxRunning: 5,
+  };
+  const twoDevices = {
+    android: { maxDevices: 1, maxRunning: 1 },
+    ios: { maxDevices: 2, maxRunning: 2 },
+    maxRunning: 3,
+  };
+  const asking = (requesterId: string, more: Record<string, unknown> = {}) => ({
+    ownerId: requesterId,
+    requesterId,
+    ...more,
+  });
+  const atLimit = (held: number, limit: number, leaseId: string) =>
+    `Requester agent-1 already holds ${String(held)} leases and lease.maxPerRequester is ${String(limit)}; release one (\`simlock release ${leaseId}\`) before requesting another device`;
+  const waitingMessage =
+    "Requester agent-1 already has a waiting request; wait for it to be granted or cancel it before requesting another device";
+
+  it("with no lease.maxPerRequester, a requester holding a lease is refused with today's message, naming that lease", async () => {
+    const harness = await createHarness({ limits: roomy });
+    const first = await harness.engine.request(request, asking("agent-1"));
+
+    const refusal = await harness.engine
+      .request(request, asking("agent-1"))
+      .catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      existingLeaseId: first.lease.id,
+      message: `Requester agent-1 already holds lease ${first.lease.id}; release it (\`simlock release ${first.lease.id}\`) before requesting another device`,
+      name: "RequesterAlreadyLeasedError",
+    });
+  });
+
+  it("with no lease.maxPerRequester, a requester with a waiting request is refused with today's message", async () => {
+    const harness = await createHarness();
+    await harness.engine.request(request, asking("holder"));
+    void harness.engine.request(request, asking("agent-1")).catch(() => undefined);
+    await expect
+      .poll(() =>
+        harness.registry.leaseRequests().find((record) => record.requesterId === "agent-1"),
+      )
+      .toMatchObject({ state: "open" });
+
+    const refusal = await harness.engine
+      .request(request, asking("agent-1"))
+      .catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      message: "Requester already has a lease or pending request: agent-1",
+      name: "RequesterAlreadyLeasedError",
+    });
+  });
+
+  it("with lease.maxPerRequester: 2, one requester holds two leases at once", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 2 }, limits: roomy });
+
+    const first = await harness.engine.request(request, asking("agent-1"));
+    const second = await harness.engine.request(request, asking("agent-1"));
+
+    expect(second.lease.id).not.toBe(first.lease.id);
+    expect(
+      harness.registry.snapshot.leases.filter((lease) => lease.requesterId === "agent-1"),
+    ).toHaveLength(2);
+  });
+
+  it("with lease.maxPerRequester: 2, a requester holding two leases is refused, the message naming the limit and the earlier-granted lease", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 2 }, limits: roomy });
+    await harness.engine.request(request, asking("agent-1", { leaseId: "zeta" }));
+    harness.clock.advance(5);
+    await harness.engine.request(request, asking("agent-1", { leaseId: "alpha" }));
+
+    const refusal = await harness.engine
+      .request(request, asking("agent-1"))
+      .catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      existingLeaseId: "zeta",
+      message: atLimit(2, 2, "zeta"),
+      name: "RequesterAlreadyLeasedError",
+      requesterId: "agent-1",
+    });
+  });
+
+  it("with lease.maxPerRequester: 3, a requester holding one lease and one waiting request is refused with the waiting-request message", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 3 }, limits: twoDevices });
+    await harness.engine.request(request, asking("agent-1"));
+    await harness.engine.request(request, asking("other"));
+    void harness.engine.request(request, asking("agent-1")).catch(() => undefined);
+    await expect
+      .poll(() =>
+        harness.registry
+          .leaseRequests()
+          .filter((record) => record.requesterId === "agent-1" && record.state === "open"),
+      )
+      .toHaveLength(1);
+
+    const refusal = await harness.engine
+      .request(request, asking("agent-1"))
+      .catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      message: waitingMessage,
+      name: "RequesterAlreadyLeasedError",
+    });
+  });
+
+  it("a refusal at the lease limit emits lease.rejected with reason already-leased", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 2 }, limits: roomy });
+    await harness.engine.request(request, asking("agent-1"));
+    await harness.engine.request(request, asking("agent-1"));
+
+    await harness.engine.request(request, asking("agent-1")).catch(() => undefined);
+
+    expect(
+      harness.bus
+        .replay()
+        .filter((event) => event.event === "lease.rejected")
+        .map((event) => event.payload),
+    ).toEqual([
+      {
+        reason: "already-leased",
+        requestId: expect.stringMatching(/^req_/),
+        requester: "agent-1",
+        requestSpec: request,
+      },
+    ]);
+  });
+
+  it("releasing one of two leases lets the requester's next request through", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 2 }, limits: roomy });
+    const first = await harness.engine.request(request, asking("agent-1"));
+    await harness.engine.request(request, asking("agent-1"));
+    await expect(harness.engine.request(request, asking("agent-1"))).rejects.toMatchObject({
+      name: "RequesterAlreadyLeasedError",
+    });
+
+    await harness.engine.release(first.lease.id, "explicit");
+
+    await expect(harness.engine.request(request, asking("agent-1"))).resolves.toMatchObject({
+      lease: { id: expect.stringMatching(/^lse_/) },
+    });
+  });
+
+  it("at the lease limit, a repeat with a used idempotencyKey gets its stored answer", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 2 }, limits: roomy });
+    const first = await harness.engine.request(
+      request,
+      asking("agent-1", { idempotencyKey: "k1" }),
+    );
+    await harness.engine.request(request, asking("agent-1", { idempotencyKey: "k2" }));
+
+    const repeat = await harness.engine.request(
+      request,
+      asking("agent-1", { idempotencyKey: "k1" }),
+    );
+
+    expect(repeat).toEqual(first);
+  });
+
+  it("at the lease limit, a request naming a taken lease id gets REQUESTER_ALREADY_LEASED", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 2 }, limits: roomy });
+    await harness.engine.request(request, asking("agent-2", { leaseId: "taken" }));
+    await harness.engine.request(request, asking("agent-1"));
+    await harness.engine.request(request, asking("agent-1"));
+
+    await expect(
+      harness.engine.request(request, asking("agent-1", { leaseId: "taken" })),
+    ).rejects.toMatchObject({ name: "RequesterAlreadyLeasedError" });
+  });
+
+  it("after a restart with lease.maxPerRequester lowered from 3 to 1, a requester's three running leases are all kept, and its next request is refused naming the earliest one", async () => {
+    const driver = new FakeDriver({
+      availableOsVersions: ["26.5"],
+      clock: new FakeClock(1_000),
+      platform: "ios",
+    });
+    const before = await createHarness({
+      driver,
+      lease: { maxPerRequester: 3 },
+      limits: roomy,
+    });
+    const earliest = await before.engine.request(request, asking("agent-1"));
+    before.clock.advance(5);
+    await before.engine.request(request, asking("agent-1"));
+    await before.engine.request(request, asking("agent-1"));
+
+    const after = await createHarness({
+      driver,
+      filesystem: before.filesystem,
+      lease: { maxPerRequester: 1 },
+      limits: roomy,
+    });
+    await after.engine.convergeRunningCapacity();
+
+    expect(
+      after.registry.snapshot.leases.filter((lease) => lease.requesterId === "agent-1"),
+    ).toHaveLength(3);
+    await expect(after.engine.request(request, asking("agent-1"))).rejects.toMatchObject({
+      existingLeaseId: earliest.lease.id,
+      name: "RequesterAlreadyLeasedError",
+    });
+  });
+
+  it("a worker still refuses a local request of a requester at its limit while probes of other requesters are granted", async () => {
+    const harness = await createHarness({ lease: { maxPerRequester: 2 }, limits: roomy });
+    await harness.engine.request(request, asking("agent-1"));
+    await harness.engine.request(request, asking("agent-1"));
+
+    await expect(harness.engine.request(request, asking("agent-1"))).rejects.toMatchObject({
+      name: "RequesterAlreadyLeasedError",
+    });
+    await expect(
+      harness.engine.request(request, {
+        fleetRequestId: "req_gw1",
+        noWait: true,
+        ownerId: "gw:two",
+        requesterId: "gw:two",
+      }),
+    ).resolves.toMatchObject({ lease: { id: expect.stringMatching(/^lse_/) } });
+  });
+});
+
 describe("createLeasing: a gateway dispatch is a probe (ADR 0021)", () => {
   type Harness = Awaited<ReturnType<typeof createHarness>>;
 
@@ -3987,8 +4213,19 @@ describe("createLeasing: a gateway dispatch is a probe (ADR 0021)", () => {
   });
 
   it("emits lease.declined for a probe refused already-leased at admission, carrying its requestSpec", async () => {
-    const harness = await createHarness();
-    await harness.engine.request(request, { ownerId: "gw:one", requesterId: "gw:one" });
+    const driver = new FakeDriver({
+      availableOsVersions: ["26.5"],
+      clock: new FakeClock(1_000),
+      platform: "ios",
+    });
+    driver.hangMakeReady();
+    const harness = await createHarness({ driver });
+    void harness.engine.request(request, probeOf("gw:one")).catch(() => undefined);
+    await expect
+      .poll(() =>
+        harness.registry.leaseRequests().find((record) => record.requesterId === "gw:one"),
+      )
+      .toMatchObject({ state: "open" });
 
     await settledOrPending(harness.engine.request(request, probeOf("gw:one")));
 
@@ -4113,17 +4350,72 @@ describe("createLeasing: a gateway dispatch is a probe (ADR 0021)", () => {
     expect(grantedLocal).not.toHaveProperty("fleetRequestId");
   });
 
-  it("answers a declined probe with the error code it answered before, NO_CAPACITY for no room and the already-leased error for an existing lease", async () => {
+  it("answers a declined probe with the error code it answered before, NO_CAPACITY for no room and the already-leased error for a probe of the same requester still waiting", async () => {
     const harness = await createHarness();
-    const first = await harness.engine.request(request, holder);
+    await harness.engine.request(request, holder);
 
     await expect(harness.engine.request(request, probeOf("gw:one"))).rejects.toMatchObject({
       name: "NoCapacityError",
     });
-    await expect(harness.engine.request(request, probeOf("holder"))).rejects.toMatchObject({
-      existingLeaseId: first.lease.id,
+
+    const driver = new FakeDriver({
+      availableOsVersions: ["26.5"],
+      clock: new FakeClock(1_000),
+      platform: "ios",
+    });
+    driver.hangMakeReady();
+    const waiting = await createHarness({ driver });
+    void waiting.engine.request(request, probeOf("gw:one")).catch(() => undefined);
+    await expect
+      .poll(() =>
+        waiting.registry.leaseRequests().find((record) => record.requesterId === "gw:one"),
+      )
+      .toMatchObject({ state: "open" });
+    await expect(waiting.engine.request(request, probeOf("gw:one"))).rejects.toMatchObject({
       name: "RequesterAlreadyLeasedError",
     });
+  });
+
+  it("a worker grants a probe for a requester that already holds a lease from an earlier probe", async () => {
+    const harness = await createHarness({
+      limits: {
+        android: { maxDevices: 1, maxRunning: 1 },
+        ios: { maxDevices: 3, maxRunning: 3 },
+        maxRunning: 4,
+      },
+    });
+    const first = await harness.engine.request(request, probeOf("gw:one"));
+
+    const second = await harness.engine.request(request, probeOf("gw:one"));
+
+    expect(second.lease.id).not.toBe(first.lease.id);
+    expect(
+      harness.registry.snapshot.leases.filter((lease) => lease.requesterId === "gw:one"),
+    ).toHaveLength(2);
+  });
+
+  it("a worker declines a probe already-leased while an earlier probe of the same requester is still waiting", async () => {
+    const driver = new FakeDriver({
+      availableOsVersions: ["26.5"],
+      clock: new FakeClock(1_000),
+      platform: "ios",
+    });
+    driver.hangMakeReady();
+    const harness = await createHarness({ driver });
+    void harness.engine.request(request, probeOf("gw:one")).catch(() => undefined);
+    await expect
+      .poll(() =>
+        harness.registry.leaseRequests().find((record) => record.requesterId === "gw:one"),
+      )
+      .toMatchObject({ state: "open" });
+
+    await expect(harness.engine.request(request, probeOf("gw:one"))).rejects.toMatchObject({
+      name: "RequesterAlreadyLeasedError",
+    });
+
+    expect(payloads(harness, "lease.declined")).toEqual([
+      expect.objectContaining({ fleetRequestId: "req_gw1", reason: "already-leased" }),
+    ]);
   });
 
   it("declines, rather than rejects, a request carrying fleetRequestId whose wait in the queue times out", async () => {

@@ -536,6 +536,33 @@ describe("CLI: exit codes", () => {
       });
     });
 
+    it("without --lease, for a requester holding two leases, fails with a usage error naming both leases and --lease", async () => {
+      const output = outputCapture();
+
+      await expect(
+        runCli(
+          ["simctl", "list"],
+          output.environmentWith({
+            connectAdmin: async () =>
+              fakeClient({
+                getStatus: () => Promise.resolve(gatewayStatus),
+                listLeases: () =>
+                  Promise.resolve({
+                    leases: [ownLease, { ...ownLease, deviceId: "dev_2", id: "lse_other" }],
+                  }),
+                exec: () => Promise.reject(new Error("must not run")),
+              }),
+          }),
+        ),
+      ).resolves.toBe(2);
+      expect(JSON.parse(output.stderr.trim().split("\n").at(-1) ?? "")).toEqual({
+        error: {
+          code: "USAGE",
+          message: expect.stringMatching(/lse_mine.*lse_other.*--lease <id>/s),
+        },
+      });
+    });
+
     it("takes `--lease <id>` out of the arguments and runs against that lease", async () => {
       // The flag exists only on this path, so it is stripped here rather than parsed with the
       // CLI's own flags: locally every argument after the tool name belongs to the tool.
@@ -5818,6 +5845,7 @@ function testConfig(): Config {
       identity: { ios: "reusable", android: "reusable" },
       requestRetentionMs: 600_000,
       maxRequestRecords: 10_000,
+      maxPerRequester: 1,
     },
     capacity: {
       strategy: "resource",

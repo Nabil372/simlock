@@ -835,20 +835,6 @@ function extractLeaseFlag(args: readonly string[]): {
   return { leaseFlag, rest: args.slice(index) };
 }
 
-/**
- * Which lease the remote command runs against: the one this invocation's requester id holds.
- *
- * `lease.list` already answers per role -- an agent-role connection sees only the leases it
- * owns, an admin-role one sees every lease on the daemon -- so the requester filter is applied
- * only in the admin case, where it is the difference between "my lease" and "somebody's".
- * Filtering an agent's own list by `requesterId` too would drop a lease it demonstrably owns
- * whenever the requester id differs from the principal (an `--agent-id` used on the lease but
- * not on this invocation): a refusal with no safety behind it.
- *
- * Identity rather than a flag, in either case: `--agent-id`, `SIMLOCK_AGENT_ID` or the agent
- * session's id already names who is asking, `simlock lease` attributes a lease to it, and one requester holds at most one
- * lease -- so the usual invocation needs nothing, and `--lease` is there for the rest.
- */
 async function resolveRemoteLeaseId(
   client: SimlockAdminClient,
   environment: CliEnvironment,
@@ -865,7 +851,7 @@ async function resolveRemoteLeaseId(
   }
   if (own.length > 1) {
     throw new UsageError(
-      `${environment.requesterId} holds more than one lease (${own.map((lease) => lease.id).join(", ")}); run this command under the agent id that holds the device you mean`,
+      `${environment.requesterId} holds more than one lease (${own.map((lease) => lease.id).join(", ")}); pass --lease <id> to name the device you mean`,
     );
   }
   return (own[0] as { readonly id: string }).id;

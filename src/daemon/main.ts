@@ -688,6 +688,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
       retentionMs: config.lease.requestRetentionMs,
     },
     logger: logger.child("gateway"),
+    maxPerRequester: config.lease.maxPerRequester,
     routing,
     views: gatewayService.workers,
   });

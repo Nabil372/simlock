@@ -806,8 +806,9 @@ stops renewing loses its lease on the worker's clock, gateway or no gateway.
 - **The lease object gains `worker: { id, label }`** (additive) so a client
   and the console can say *where* the device lives. A worker's network
   address is never on it: clients reach devices through the gateway.
-- **One lease per requester is fleet-wide.** A requester already holding a
-  gateway-issued lease on any worker gets `REQUESTER_ALREADY_LEASED` from the
+- **The lease limit per requester is fleet-wide** (`lease.maxPerRequester`, default 1;
+  ADR 0023). A requester already holding that many
+  gateway-issued leases across the workers gets `REQUESTER_ALREADY_LEASED` from the
   gateway, naming the existing lease. The gateway enforces this from its own
   index of the leases *it* issued, rebuilt from each worker's `lease.list` on
   uplink connect. It picks its own out of that list by the requester prefix
@@ -820,8 +821,7 @@ stops renewing loses its lease on the worker's clock, gateway or no gateway.
   keeps them from ever touching a lease this gateway did not issue.
 - **The requester id the gateway forwards is namespaced**:
   `gw:<gateway instance id>:<requester>`. A local agent on the worker machine
-  and a remote agent behind the gateway therefore can never collide on the
-  worker's own one-lease rule, and every lease on the worker is attributable
+  and a remote agent behind the gateway therefore can never be mistaken for each other on the worker, and every lease on the worker is attributable
   to the fleet it came from. The namespace is worker-side bookkeeping: the
   gateway reports the leases it issued under the client's own requester id.
 - **The gateway keeps no per-connection lease state** and releases nothing
@@ -953,9 +953,10 @@ emits its own facts — `worker.connected`, `worker.disconnected`,
 - **Dispatched, then the uplink drops.** The request's client sees
   `WORKER_UNREACHABLE`. If the worker actually granted it, that lease exists
   on the worker and expires there on its TTL. A retry hits the fleet-wide
-  one-lease rule only once the uplink is back and the index is rebuilt —
-  so the client re-requests, and a `409 REQUESTER_ALREADY_LEASED` names the
-  lease to read back.
+  per-requester limit (`lease.maxPerRequester`) only once the uplink is back
+  and the index is rebuilt — so the client re-requests; at the limit a
+  `409 REQUESTER_ALREADY_LEASED` names a lease to read back, below it the
+  retry gets a new lease.
 - **Gateway restart.** In-flight requests are lost: a gateway keeps its lease
   requests in memory only, while a worker stores its own in `state.json` (#72).
   Leases survive on their workers; workers reconnect on their backoff and the
@@ -1451,7 +1452,7 @@ There is **one kind of lease**, on every transport ([ADR
   reintroducing per-connection lease state that HTTP and a gateway could never
   honour anyway (ADR 0004, "Alternatives considered"). See
   [known-pitfalls.md](known-pitfalls.md#a-sigkilled-lease-holder-keeps-its-device-until-the-ttl-expires).
-- One lease per agent in v1; no atomic multi-device acquisition (documented
+- One lease per agent by default (`lease.maxPerRequester`); no atomic multi-device acquisition (documented
   deadlock risk if two devices are taken sequentially).
 
 ### Release hands the purge off

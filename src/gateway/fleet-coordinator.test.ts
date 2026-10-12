@@ -93,6 +93,7 @@ function harness(
     readonly execTimeoutMs?: number;
     readonly leaseRequestTimeoutMs?: number;
     readonly logger?: Logger;
+    readonly maxPerRequester?: number;
     /** Built with the registry so a stub can change the views from inside the dispatch walk --
      * the one way to reach `#dispatch`'s re-entrancy guard. Defaults to the real policy. */
     readonly routing?: (workers: WorkerRegistry) => RoutingPolicy;
@@ -135,6 +136,9 @@ function harness(
     // execTimeoutMs above.
     leaseRequestTimeoutMs: overrides.leaseRequestTimeoutMs ?? 5 * 60_000,
     ...(overrides.logger === undefined ? {} : { logger: overrides.logger }),
+    ...(overrides.maxPerRequester === undefined
+      ? {}
+      : { maxPerRequester: overrides.maxPerRequester }),
     routing: overrides.routing?.(workers) ?? createRoutingPolicy("warm-then-free"),
     views: workers,
   });
@@ -4765,5 +4769,104 @@ describe("FleetLeaseCoordinator routes a physical request by the enrolled device
     await tick();
 
     expect(leaseRequests(client).slice(3)).toEqual([`lease.request:${GATEWAY_PREFIX}agent-2`]);
+  });
+});
+
+describe("FleetLeaseCoordinator: a requester may hold up to lease.maxPerRequester fleet leases (ADR 0023)", () => {
+  const held = (id: string, grantedAt: number, requester = "agent-1") => ({
+    grantedAt,
+    id,
+    ownerId: requester,
+    requesterId: `${GATEWAY_PREFIX}${requester}`,
+  });
+  const atLimit = (held: number, limit: number, leaseId: string) =>
+    `Requester agent-1 already holds ${String(held)} leases and lease.maxPerRequester is ${String(limit)}; release one (\`simlock release ${leaseId}\`) before requesting another device`;
+  const waitingMessage =
+    "Requester agent-1 already has a waiting request; wait for it to be granted or cancel it before requesting another device";
+
+  async function withWaitingRequest(maxPerRequester?: number) {
+    const built = harness(maxPerRequester === undefined ? {} : { maxPerRequester });
+    connectWorker(built.workers, "wrk_a", { capacity: saturatedIos() });
+    built.directory.add("wrk_a", new ScriptedWorkerClient());
+    void built.coordinator.request(REQUEST, requestOptions()).catch(() => undefined);
+    await tick();
+    expect(built.coordinator.queueDepth).toBe(1);
+    return built;
+  }
+
+  it("with no limit set, a requester holding a fleet lease is refused with today's message, naming that lease", async () => {
+    const { coordinator, leaseIndex } = harness();
+    leaseIndex.rebuildFromWorker("wrk_a", [held("lse_1", 1)]);
+
+    const refusal = await coordinator.request(REQUEST, requestOptions()).catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      existingLeaseId: "wrk_a.lse_1",
+      message:
+        "Requester agent-1 already holds lease wrk_a.lse_1; release it (`simlock release wrk_a.lse_1`) before requesting another device",
+      name: "RequesterAlreadyLeasedError",
+    });
+  });
+
+  it("with limit 2, a requester holding two fleet leases is refused, naming the earlier-granted one", async () => {
+    const { coordinator, leaseIndex } = harness({ maxPerRequester: 2 });
+    leaseIndex.rebuildFromWorker("wrk_a", [held("lse_9", 10), held("lse_1", 20)]);
+
+    const refusal = await coordinator.request(REQUEST, requestOptions()).catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      existingLeaseId: "wrk_a.lse_9",
+      message: atLimit(2, 2, "wrk_a.lse_9"),
+      name: "RequesterAlreadyLeasedError",
+    });
+  });
+
+  it("with limit 2, a requester holding one fleet lease is not refused", async () => {
+    const { coordinator, directory, leaseIndex, workers } = harness({ maxPerRequester: 2 });
+    const client = new ScriptedWorkerClient();
+    directory.add("wrk_a", client);
+    connectWorker(workers, "wrk_a");
+    client.requestLeaseQueue.push({ grant: grantFixture(), kind: "grant" });
+    leaseIndex.rebuildFromWorker("wrk_a", [held("lse_1", 1)]);
+
+    await expect(coordinator.request(REQUEST, requestOptions())).resolves.toMatchObject({
+      lease: expect.anything(),
+    });
+  });
+
+  it("with limit 2, a requester with a waiting fleet request is refused with the waiting-request message", async () => {
+    const { coordinator } = await withWaitingRequest(2);
+
+    const refusal = await coordinator.request(REQUEST, requestOptions()).catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      message: waitingMessage,
+      name: "RequesterAlreadyLeasedError",
+    });
+  });
+
+  it("with limit 2, a requester with a waiting fleet request that also holds two fleet leases gets the waiting-request message", async () => {
+    const { coordinator, leaseIndex } = await withWaitingRequest(2);
+    leaseIndex.rebuildFromWorker("wrk_a", [held("lse_1", 1), held("lse_2", 2)]);
+
+    const refusal = await coordinator.request(REQUEST, requestOptions()).catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      message: waitingMessage,
+      name: "RequesterAlreadyLeasedError",
+    });
+  });
+
+  it("with no limit set, a requester that holds a fleet lease and has a waiting request gets today's message naming that lease", async () => {
+    const { coordinator, leaseIndex } = await withWaitingRequest();
+    leaseIndex.rebuildFromWorker("wrk_a", [held("lse_1", 1)]);
+
+    const refusal = await coordinator.request(REQUEST, requestOptions()).catch((e: unknown) => e);
+
+    expect(refusal).toMatchObject({
+      existingLeaseId: "wrk_a.lse_1",
+      message:
+        "Requester agent-1 already holds lease wrk_a.lse_1; release it (`simlock release wrk_a.lse_1`) before requesting another device",
+    });
   });
 });

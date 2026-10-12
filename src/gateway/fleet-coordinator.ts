@@ -128,6 +128,7 @@ export interface FleetLeaseCoordinatorOptions {
   readonly leaseRequestLimits: LeaseRequestLimits;
   /** The same failure description a worker stores, so a replay answers with the same code. */
   readonly describeFailure: (error: unknown) => LeaseRequestFailure;
+  readonly maxPerRequester?: number;
   readonly logger?: Logger;
 }
 
@@ -258,21 +259,23 @@ export class FleetLeaseCoordinator {
     return admitted.waiter.promise;
   }
 
-  /** One lease or pending request per requester, fleet-wide (§14). */
   #refuseIfAlreadyLeased(
     deviceRequest: DeviceRequest,
     requesterId: string,
     requestId: string,
   ): void {
     const existingLeaseId = this.options.leaseIndex.existingLeaseId(requesterId);
-    if (existingLeaseId !== undefined || this.#queue.hasPendingRequester(requesterId)) {
+    const held = this.options.leaseIndex.leaseCount(requesterId);
+    const limit = this.options.maxPerRequester ?? 1;
+    const waiting = this.#queue.hasPendingRequester(requesterId);
+    if (held >= limit || waiting) {
       this.#emit("lease.rejected", {
         requestId,
         requester: requesterId,
         requestSpec: deviceRequest,
         reason: "already-leased",
       });
-      throw new RequesterAlreadyLeasedError(requesterId, existingLeaseId);
+      throw new RequesterAlreadyLeasedError(requesterId, existingLeaseId, { held, limit, waiting });
     }
   }
 

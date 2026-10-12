@@ -67,6 +67,54 @@ describe("FleetLeaseIndex", () => {
     });
   });
 
+  describe("one requester with several leases", () => {
+    it("adding a second lease for a requester keeps the first, and forgetting one keeps the other", () => {
+      const index = new FleetLeaseIndex(PREFIX);
+      const first = entry({ gatewayLeaseId: "wrk_1.lse_1", grantedAt: 10, workerLeaseId: "lse_1" });
+      const second = entry({
+        gatewayLeaseId: "wrk_1.lse_2",
+        grantedAt: 20,
+        workerLeaseId: "lse_2",
+      });
+      index.add(first);
+      index.add(second);
+
+      expect(index.all()).toEqual([first, second]);
+      expect(index.existingLeaseId("alice")).toBe("wrk_1.lse_1");
+
+      index.remove("wrk_1.lse_1");
+
+      expect(index.all()).toEqual([second]);
+      expect(index.existingLeaseId("alice")).toBe("wrk_1.lse_2");
+      expect(index.remove("wrk_1.lse_2")).toEqual(second);
+      expect(index.existingLeaseId("alice")).toBeUndefined();
+    });
+
+    it("answers the earliest-granted lease of a requester, whatever order they were added in", () => {
+      const index = new FleetLeaseIndex(PREFIX);
+      index.add(entry({ gatewayLeaseId: "wrk_1.lse_2", grantedAt: 20, workerLeaseId: "lse_2" }));
+      index.add(entry({ gatewayLeaseId: "wrk_1.lse_1", grantedAt: 10, workerLeaseId: "lse_1" }));
+      index.add(entry({ gatewayLeaseId: "wrk_1.lse_3", grantedAt: 30, workerLeaseId: "lse_3" }));
+
+      expect(index.existingLeaseId("alice")).toBe("wrk_1.lse_1");
+    });
+
+    it("rebuildFromWorker restores two leases of one requester", () => {
+      const index = new FleetLeaseIndex(PREFIX);
+
+      index.rebuildFromWorker("wrk_1", [
+        reported("lse_1", { grantedAt: 10 }),
+        reported("lse_2", { grantedAt: 20 }),
+      ]);
+
+      expect(index.all().map((lease) => lease.gatewayLeaseId)).toEqual([
+        "wrk_1.lse_1",
+        "wrk_1.lse_2",
+      ]);
+      expect(index.existingLeaseId("alice")).toBe("wrk_1.lse_1");
+    });
+  });
+
   describe("remove / removeByWorkerLease", () => {
     it("remove forgets an entry by gateway id and is a no-op for an unknown one", () => {
       const index = new FleetLeaseIndex(PREFIX);

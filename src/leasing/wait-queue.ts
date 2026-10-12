@@ -51,19 +51,37 @@ export class RequestCancelledError extends Error {
   }
 }
 
+export interface RequesterLimitContext {
+  readonly limit: number;
+  readonly held: number;
+  readonly waiting: boolean;
+}
+
 export class RequesterAlreadyLeasedError extends Error {
   constructor(
     readonly requesterId: string,
-    /** The requester's existing lease, when the conflict is a granted lease rather than a queued request. */
     readonly existingLeaseId?: string,
+    context?: RequesterLimitContext,
   ) {
-    super(
-      existingLeaseId === undefined
-        ? `Requester already has a lease or pending request: ${requesterId}`
-        : `Requester ${requesterId} already holds lease ${existingLeaseId}; release it (\`simlock release ${existingLeaseId}\`) before requesting another device`,
-    );
+    super(requesterRefusalMessage(requesterId, existingLeaseId, context));
     this.name = "RequesterAlreadyLeasedError";
   }
+}
+
+function requesterRefusalMessage(
+  requesterId: string,
+  existingLeaseId: string | undefined,
+  context: RequesterLimitContext | undefined,
+): string {
+  if (context !== undefined && context.limit > 1) {
+    if (context.waiting) {
+      return `Requester ${requesterId} already has a waiting request; wait for it to be granted or cancel it before requesting another device`;
+    }
+    return `Requester ${requesterId} already holds ${String(context.held)} leases and lease.maxPerRequester is ${String(context.limit)}; release one (\`simlock release ${String(existingLeaseId)}\`) before requesting another device`;
+  }
+  return existingLeaseId === undefined
+    ? `Requester already has a lease or pending request: ${requesterId}`
+    : `Requester ${requesterId} already holds lease ${existingLeaseId}; release it (\`simlock release ${existingLeaseId}\`) before requesting another device`;
 }
 
 /** A request named a lease ID an active lease or a waiting request already holds (ADR 0020). */

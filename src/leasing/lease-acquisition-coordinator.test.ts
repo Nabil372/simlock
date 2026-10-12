@@ -96,6 +96,7 @@ function config(maxDevices = 1, maxRunning = 1): Config {
       identity: { ios: "reusable", android: "reusable" },
       requestRetentionMs: 600_000,
       maxRequestRecords: 10_000,
+      maxPerRequester: 1,
     },
     capacity: {
       strategy: "resource",

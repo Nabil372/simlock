@@ -59,7 +59,7 @@ export type ProjectedLease<Lease> = Lease extends {
 
 export class FleetLeaseIndex {
   readonly #byGatewayId = new Map<string, FleetLeaseEntry>();
-  readonly #byRequester = new Map<string, string>();
+  readonly #byRequester = new Map<string, Set<string>>();
   readonly #byWorkerLease = new Map<string, string>();
   /** C3 (round 2 review): one strictly-increasing counter per worker, bumped on every
    * `rebuildFromWorker` call for that worker -- what lets reconciliation (below) tell "missing
@@ -129,12 +129,23 @@ export class FleetLeaseIndex {
     return this.resolve(gatewayLeaseId)?.requesterId;
   }
 
-  /** ADR §14: the fleet-wide one-lease-per-requester check, keyed on `requesterId` (never
+  /** why: ADR §14 -- the fleet-wide one-lease-per-requester check, keyed on `requesterId` (never
    * `ownerId` -- see the module doc on the distinction). `undefined` means "no lease", so a
-   * caller gets the existing id to report (`RequesterAlreadyLeasedError`) in the same lookup
-   * that answers the boolean question. */
+   * caller gets the earliest existing lease id to report (`RequesterAlreadyLeasedError`). The
+   * admission decision itself rests on the lease count, not on this lookup. */
   existingLeaseId(requesterId: string): string | undefined {
-    return this.#byRequester.get(requesterId);
+    let earliest: FleetLeaseEntry | undefined;
+    for (const id of this.#byRequester.get(requesterId) ?? []) {
+      const entry = this.#byGatewayId.get(id);
+      if (entry !== undefined && (earliest === undefined || entry.grantedAt < earliest.grantedAt)) {
+        earliest = entry;
+      }
+    }
+    return earliest?.gatewayLeaseId;
+  }
+
+  leaseCount(requesterId: string): number {
+    return this.#byRequester.get(requesterId)?.size ?? 0;
   }
 
   /**
@@ -147,7 +158,9 @@ export class FleetLeaseIndex {
     const existing = this.#byGatewayId.get(entry.gatewayLeaseId);
     if (existing !== undefined && existing.workerId !== entry.workerId) return false;
     this.#byGatewayId.set(entry.gatewayLeaseId, entry);
-    this.#byRequester.set(entry.requesterId, entry.gatewayLeaseId);
+    const ids = this.#byRequester.get(entry.requesterId) ?? new Set<string>();
+    ids.add(entry.gatewayLeaseId);
+    this.#byRequester.set(entry.requesterId, ids);
     this.#byWorkerLease.set(workerKey(entry.workerId, entry.workerLeaseId), entry.gatewayLeaseId);
     return true;
   }
@@ -335,11 +348,15 @@ export class FleetLeaseIndex {
     } as ProjectedLease<Lease>;
   }
 
+  #dropRequesterLink(entry: FleetLeaseEntry): void {
+    const ids = this.#byRequester.get(entry.requesterId);
+    ids?.delete(entry.gatewayLeaseId);
+    if (ids?.size === 0) this.#byRequester.delete(entry.requesterId);
+  }
+
   #forget(entry: FleetLeaseEntry): void {
     this.#byGatewayId.delete(entry.gatewayLeaseId);
-    if (this.#byRequester.get(entry.requesterId) === entry.gatewayLeaseId) {
-      this.#byRequester.delete(entry.requesterId);
-    }
+    this.#dropRequesterLink(entry);
     this.#byWorkerLease.delete(workerKey(entry.workerId, entry.workerLeaseId));
     this.#missingSince.delete(entry.gatewayLeaseId);
   }

@@ -106,7 +106,7 @@ command starts it again) to bring the platform up.
 | 12 | `DEVICE_NOT_ENROLLABLE` | `device add` of a device that cannot be enrolled; the message says why |
 | 12 | `UNKNOWN_DEVICE` | `device remove` of an ID that is not an enrolled device |
 | 12 | `COMPONENT_IN_USE` | `component remove` of a component a device uses, Simlock's or your own |
-| 13 | `REQUESTER_ALREADY_LEASED` | requester already holds a lease or has a pending request — one lease per agent in v1; release the named lease first |
+| 13 | `REQUESTER_ALREADY_LEASED` | requester already holds `lease.maxPerRequester` leases (default 1) or has a pending request; release the named lease first |
 | 13 | `LEASE_ID_TAKEN` | `lease --lease-id` named an ID an active lease or a waiting request already holds |
 | 14 | — | `lease` without `--detach` only: the daemon ended the lease without the holder asking (TTL expiry, operator `release`, or an unrecoverable device) |
 | 15 | — | `component install --worker`/`--all-workers` on a gateway only: at least one worker did not end `installed` or `already-installed` (it refused, failed, was skipped, or its result is unknown) |
@@ -162,8 +162,8 @@ implement them:
 
 ## Agent identity
 
-Leases are keyed by requester: at most one active lease per agent id,
-enforced by the daemon. Each agent session needs a **stable** id for this to
+Leases are keyed by requester: at most `lease.maxPerRequester` active leases
+per agent id (default 1), enforced by the daemon. Each agent session needs a **stable** id for this to
 constrain anything — a fresh id on every CLI invocation makes the constraint a
 no-op, since every invocation looks like a different requester.
 
@@ -322,9 +322,11 @@ granted.
   the owning agent is still very much alive; point this at the agent's own
   pid instead.
 
-One lease per requester in v1: leasing while you already hold a lease or
-have a request queued fails with `REQUESTER_ALREADY_LEASED` (exit 13); the
-error message names the existing lease id to release first.
+One lease per requester by default (`lease.maxPerRequester`, default 1): leasing
+while you already hold that many leases, or have a request queued, fails with
+`REQUESTER_ALREADY_LEASED` (exit 13); the error message names your earliest
+lease to release first. With the limit above 1, `simlock simctl` and `simlock adb`
+through a gateway need `--lease <id>` when you hold more than one lease.
 
 **Staying alive (the default):** intended to be run in the background by the
 agent. As soon as the device is ready, one JSON line is printed on stdout — the
@@ -961,18 +963,18 @@ nothing: a `simlock lease` left running renews on its timer as always, and a
 client that stops renewing loses the lease on the worker's clock whether or
 not a gateway is in the path.
 
-**One lease per requester is fleet-wide.** Leasing while you already hold a
-gateway-issued lease on *any* worker in the fleet is `REQUESTER_ALREADY_LEASED`
-(exit 13) naming that lease, the same rule and the same code as on one
-machine.
+**The lease limit per requester is fleet-wide.** Leasing while you already hold
+`lease.maxPerRequester` gateway-issued leases (default 1), counted across *all*
+workers in the fleet, is `REQUESTER_ALREADY_LEASED` (exit 13) naming your
+earliest lease, the same rule and the same code as on one machine. The limit
+that counts is the gateway's.
 
 One thing an operator sees only from the other side: the requester id the
 gateway forwards to a worker is **namespaced**,
 `gw:<gateway instance id>:<requester>`. So `simlock status` on the *worker*
 shows a fleet lease as `gw:7c1e…:agent-1` while the gateway shows it as
 plain `agent-1`. That is what keeps a local `agent-1` on that machine and a
-remote `agent-1` behind the gateway from colliding on the worker's own
-one-lease rule — and it means a lease's attribution says which fleet it came
+remote `agent-1` behind the gateway from being mistaken for each other on the worker — and it means a lease's attribution says which fleet it came
 from, not just who asked.
 
 **`simlock status` and `simlock list`** answer for the whole fleet: capacity
@@ -1023,8 +1025,9 @@ reaches the same operation as `POST /v1/leases/{id}/exec`; see
 [HTTP-API.md](HTTP-API.md).) Three consequences:
 
 - **It needs a lease**, because `device.exec` is scoped to one. The CLI uses
-  your own lease, which the one-lease-per-requester rule makes unambiguous;
-  `--lease <lease-id>` names one explicitly (and is required if you hold none
+  your own lease, which is unambiguous while you hold one (the default limit);
+  `--lease <lease-id>` names one explicitly (and is required if you hold more
+  than one, or none
   under the identity you are running as — see [Agent
   identity](#agent-identity)). An **agent-role** invocation sends no
   `requesterId` at all and is gated the ordinary way, its principal against
@@ -1089,8 +1092,11 @@ release, a `simctl`/`adb`, or a request that had already been dispatched to
 it. The gateway does not guess that the lease is gone; the worker's own TTL
 ends it on the worker's clock, and the loss reaches you once the uplink is
 back. The recovery is the ordinary one: re-request, and if the worker had in
-fact granted you a lease, the fleet-wide one-lease rule names it once the
-gateway has rebuilt its index.
+fact granted you a lease, the fleet-wide lease limit names it once the
+gateway has rebuilt its index. With `lease.maxPerRequester` above 1, a client
+that lost its grant and asks again without an `idempotencyKey` gets a new
+lease, not a refusal naming the lost one; the lost lease stays until its TTL
+runs out.
 
 ## `simlock worker <list|drain|undrain|remove>`
 
@@ -1305,7 +1311,7 @@ Codex session. An agent that leases through both the CLI and MCP in one Codex
 session can therefore hold two leases. To avoid that, use one interface per
 session, or set the same `SIMLOCK_AGENT_ID` for both. Under any other client,
 set a distinct `SIMLOCK_AGENT_ID` per MCP server process (one per agent
-session) so the one-lease-per-agent rule is meaningful.
+session) so the per-agent lease limit is meaningful.
 
 ### Breaking in 0.3.0: tool schemas are now the contract's own field names
 
