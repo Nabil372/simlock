@@ -547,8 +547,13 @@ export class Dispatcher {
       input.args,
       { hasTerminal: false, platform: record.spec.platform },
     );
+    const execEnv: NodeJS.ProcessEnv = { ...this.options.execEnv, ...command.env };
+    for (const key of command.unsetEnv ?? []) {
+      // why: the daemon's own environment is the base, so a key it inherited could re-aim the command.
+      delete execEnv[key];
+    }
     const handle = this.options.processRunner.spawnStreaming(command.command, command.args, {
-      env: { ...this.options.execEnv, ...command.env },
+      env: execEnv,
       // Returned, not fired and forgotten: whatever the transport hands back is what pauses
       // the child until the chunk has actually gone somewhere (ADR 0005 §19e).
       onChunk: (stream, chunk) => session.onOutput?.(stream, chunk),

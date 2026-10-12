@@ -1208,3 +1208,27 @@ second instance on the same machine is a configuration mistake the host's
 tools give no way to detect.
 
 **What to do:** enrol a device in one Simlock instance only.
+
+## A physical Android command can restart a default adb server of another protocol (ADR 0022 §5)
+
+Right before every physical Android command, Simlock reads the default adb
+server's protocol version on port 5037 and sends the command only when it
+matches Simlock's `adb`. A physical command goes through plain `adb`, which
+also starts a server when none runs.
+
+**The pitfall, in two parts:**
+
+- A default server of another protocol, started between Simlock's check and the
+  command right after it, is restarted by Simlock's adb client. adb offers no way
+  to stop that. The window is milliseconds long, for Simlock's own calls and for
+  `device.exec` alike.
+- The default server a physical `adb` command starts is not in that command's
+  process group: adb's fork-server calls `setsid`. So when `NodeProcessRunner`
+  kills a timed-out physical command by its group (`killProcessTree`), the server
+  keeps running. That is the wanted outcome; it is named because the kill looks
+  as if it should end it.
+
+**Why it is accepted:** the check closes every case that lasts longer than the
+window, and nothing in adb's client can close the window itself.
+
+**What to do:** run every adb client on the host from the same platform-tools.

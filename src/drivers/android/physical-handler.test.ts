@@ -373,6 +373,8 @@ async function advisoriesOf(
   return probe.advisories();
 }
 
+const NO_DEVICE = Symbol("no device");
+
 interface PassthroughResult {
   readonly command: string;
   readonly args: readonly string[];
@@ -386,6 +388,8 @@ function passthroughOf(
   device: unknown = PHYSICAL,
   context: { readonly hasTerminal: boolean } = { hasTerminal: false },
 ): Promise<PassthroughResult> {
+  // why: an explicit `undefined` would take the default, so "no device" is a named value.
+  const target = device === NO_DEVICE ? undefined : device;
   return (
     driver as unknown as {
       passthrough(
@@ -395,7 +399,7 @@ function passthroughOf(
         context: { readonly hasTerminal: boolean },
       ): Promise<PassthroughResult>;
     }
-  ).passthrough("adb", device, args, context);
+  ).passthrough("adb", target, args, context);
 }
 
 /** why: a refusal test starts from the same input accepted, so it cannot pass for another reason. */
@@ -1186,11 +1190,15 @@ describe("Android physical handler: reclaim", () => {
 
   it("reads a package listing with \\r\\n line ends and blank lines as the same packages as one with \\n and none", async () => {
     const plain = await world();
-    plain.runner.packagesOutput = "package:com.example.kept\npackage:com.example.stray\n";
+    plain.runner.installed.splice(0, 3, "com.example.kept", "com.example.stray");
     await plain.driver.reclaim(PHYSICAL, { clean: "standard" });
     const crlf = await world();
-    crlf.runner.packagesOutput =
-      "package:com.example.kept\r\n\r\npackage:com.example.stray\r\n\r\n";
+    crlf.runner.installed.splice(0, 3, "com.example.kept", "com.example.stray");
+    crlf.runner.override((rest) =>
+      isPackageList(rest)
+        ? OK(crlf.runner.installed.map((name) => `package:${name}\r\n\r\n`).join(""))
+        : undefined,
+    );
 
     await crlf.driver.reclaim(PHYSICAL, { clean: "standard" });
 
@@ -1382,7 +1390,7 @@ describe("Android physical handler: passthrough", () => {
     const { driver } = await world();
 
     const physical = await passthroughOf(driver, ["shell", "getprop"]);
-    const none = await passthroughOf(driver, ["shell", "getprop"], undefined);
+    const none = await passthroughOf(driver, ["shell", "getprop"], NO_DEVICE);
 
     expect([...(physical.unsetEnv ?? [])].sort()).toEqual([
       "ADB_SERVER_SOCKET",
@@ -1395,7 +1403,7 @@ describe("Android physical handler: passthrough", () => {
   it("with no device, or with an emulator device, still runs on Simlock's own server and sends no host:version", async () => {
     const { driver, probe } = await world();
 
-    const without = await passthroughOf(driver, ["shell", "getprop"], undefined);
+    const without = await passthroughOf(driver, ["shell", "getprop"], NO_DEVICE);
     const emulator = await passthroughOf(driver, ["shell", "getprop"], EMULATOR_DEVICE);
 
     expect(without).toEqual({

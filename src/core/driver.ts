@@ -413,6 +413,7 @@ export interface PassthroughCommand {
   readonly command: string;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
+  readonly unsetEnv?: readonly string[];
 }
 
 /**
