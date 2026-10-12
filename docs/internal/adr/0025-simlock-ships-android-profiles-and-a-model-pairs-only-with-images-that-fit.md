@@ -110,7 +110,14 @@ Each check applies only where the profile states the value it reads:
 |---|---|---|---|---|
 | library | stated | stated | stated | stated |
 | SDK | `Tag :` line | not printed: any level | not printed: allowed | not printed: not a tablet |
-| `devices.xml` | `<d:tag-id>`, else none | `<d:api-level>`, else any | `<d:playstore-enabled>`, else allowed | screen size, as sdklib |
+| custom, as `avdmanager` lists it (`OEM : User`) | `Tag :` line | its `devices.xml` entry's `<d:api-level>`, else any | its entry's `<d:playstore-enabled>`, else allowed | its entry's screen size, as sdklib |
+| `devices.xml` only (`avdmanager` does not list it) | `<d:tag-id>`, else none | `<d:api-level>`, else any | `<d:playstore-enabled>`, else allowed | screen size, as sdklib |
+
+`avdmanager list device` reads `devices.xml` itself and lists each custom
+profile with `OEM : User`, before Simlock's own `devices.xml` source is
+asked, so a custom name resolves to that entry. It prints only the name, id
+and tag; the driver adds the rest from the `devices.xml` profile of the same
+name. The device is still created by `avdmanager -d <id>`.
 
 What makes an image a Play Store image follows sdklib too: a
 `google_apis_playstore` tag; or `android-automotive-playstore` as its only
@@ -139,12 +146,15 @@ picked by today's order, applied to fitting images only: a host-native
 `google_apis` image, then any host-native image, then any `google_apis`
 image, then any.
 
-`allowDownload` works as today: for an exact version with no fitting image
+`allowDownload` works as today: for an exact version with no image
 installed, it installs that level's `google_apis` image. That is the only
 image Simlock ever downloads. A `RUNTIME_MISSING` for an exact version says
-`downloadable: true` only when that image would fit the model and is not
-installed; otherwise `downloadable: false`, so a client does not retry with
-`allowDownload` for nothing. A TV model is always `downloadable: false`.
+`downloadable: true` only when the level has no image installed at all and
+its `google_apis` image would fit the model; otherwise `downloadable: false`,
+so a client does not retry with `allowDownload` for nothing. A level that is
+installed with only misfit images is `downloadable: false`: the component
+installer counts that level as installed and would download nothing. A TV
+model is always `downloadable: false`.
 
 A request that names an image tag picks its level as ADR 0015 §5 says: a
 level counts when the model pairs with it and the catalog's `images` lists
@@ -155,8 +165,12 @@ when another image at that level does. `resolveSpec` then refuses with
 only for a request with no image tag.
 
 An existing device is not checked against `fits`. A lease fits an idle device
-by model and OS as ADR 0015 §6 says, so a device made before this change is
-reused as it is.
+by model and OS as ADR 0015 §6 says, but the core resolves the model and
+level first (ADR 0015 §5), and only levels with a fitting image are picked.
+So a device made before this change is reused as it is when its level still
+fits its model, e.g. a Pixel 9 on API 36 built from the SDK's values. One on
+a level that no longer fits, e.g. a TV on a phone image, is never picked by a
+new lease; idle cleanup removes it as usual.
 
 ```mermaid
 sequenceDiagram
@@ -178,8 +192,10 @@ sequenceDiagram
 ### 5. A profile's class
 
 A library profile states its class. An SDK profile's class comes from its
-`Tag :` line, as ADR 0015 §3 says. A `devices.xml` profile's class comes from
-its `<d:tag-id>` by the same map; without one it is `phone`, as today. So a
+`Tag :` line, as ADR 0015 §3 says. A custom profile `avdmanager` lists takes
+its class from that `Tag :` line too. A `devices.xml` profile `avdmanager`
+does not list takes its class from its `<d:tag-id>` by the same map; without
+one it is `phone`, as today. So a
 profile's class and its image kind always agree.
 
 No class is derived from a name or a screen size. The screen-size test of §3
@@ -250,8 +266,14 @@ is not reported: the library copies the SDK's values, so the two agree.
   fits, so the image-tag gap in §4 would close. Rejected by the maintainer:
   a new catalog field and a protocol bump for a rare case.
 - **Retire idle devices that no longer fit.** Rejected by the maintainer:
-  devices are reused as they are, and a profile change affects new devices
-  only.
+  nothing retires them; a profile change affects new devices only.
+- **Check idle devices before picking a level, so old misfit devices stay
+  reusable.** Rejected by the maintainer: a change to the lease coordinator,
+  the planner and the gateway, worth a feature of its own.
+- **Ignore `avdmanager`'s copy of a custom profile and read `devices.xml`
+  only.** One source, but the device would be built from a seed plus a few
+  keys instead of by `avdmanager -d <id>`, changing its hardware. Rejected by
+  the maintainer.
 - **Read profiles from the SDK's own `sdklib` jar at run time.** Same values
   with no copy to maintain. Rejected: the jar is an SDK implementation detail,
   differs by `cmdline-tools` version, and is exactly the per-host variance
