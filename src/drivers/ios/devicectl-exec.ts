@@ -129,6 +129,15 @@ function splitOption(argument: string): { readonly name: string; readonly inline
     : { inline: true, name: argument.slice(0, equals) };
 }
 
+function isOnList(
+  name: string,
+  inline: boolean,
+  valued: ReadonlySet<string>,
+  flags: ReadonlySet<string>,
+): boolean {
+  return valued.has(name) || (flags.has(name) && !inline);
+}
+
 function parseOptions(
   command: string,
   spec: CommandSpec,
@@ -152,11 +161,12 @@ function parseOptions(
       continue;
     }
     const { name, inline } = splitOption(argument);
+    if (!isOnList(name, inline, valued, flags)) {
+      refuse(`${command}: ${argument} is not on the reviewed list`);
+    }
     if (valued.has(name)) {
       namesDevice ||= name === "-d" || name === "--device";
       expectsValue = !inline;
-    } else if (!flags.has(name) || inline) {
-      refuse(`${command}: ${argument} is not on the reviewed list`);
     }
   }
   if (expectsValue) refuse(`${command}: an option has no value`);
