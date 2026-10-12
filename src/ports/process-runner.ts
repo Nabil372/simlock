@@ -625,6 +625,7 @@ export interface ScriptedProcessExpectation {
    * sends the second signal would be dead and nothing would notice.
    */
   readonly ignoresSigterm?: boolean;
+  readonly onSpawn?: (args: readonly string[]) => void | Promise<void>;
 }
 
 export class ScriptedProcessRunner implements ProcessRunner {
@@ -661,6 +662,7 @@ export class ScriptedProcessRunner implements ProcessRunner {
       throw new Error(`Unexpected process invocation: ${command} ${args.join(" ")}`);
     }
 
+    void expectation.onSpawn?.([...args]);
     const handle = new ScriptedProcessHandle(
       this.#nextPid++,
       expectation,

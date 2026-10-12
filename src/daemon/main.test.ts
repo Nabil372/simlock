@@ -1472,9 +1472,10 @@ describe("discoverDrivers", () => {
     // `simlock events --json` publishes, so renaming `root` has to fail here.
     expect(rejections[0]).toEqual({
       event: "driver.root-rejected",
-      // The wrapper this platform would have answered to, so `simlock simctl` can say why
-      // it is missing instead of reading as "this host has no Xcode".
-      passthroughTool: "simctl",
+      // why: the wrappers this platform would have answered to, so `simlock simctl` and
+      // `simlock devicectl` can say why they are missing instead of reading as "this host
+      // has no Xcode".
+      passthroughTools: ["simctl", "devicectl"],
       payload: { platform: "ios", reason: "wrong-instance", root: IOS_ROOT },
       platform: "ios",
       reason: "wrong-instance",
@@ -1533,6 +1534,7 @@ describe("discoverDrivers on a host with an Android SDK", () => {
     // `driver.adb-server-rejected`, so a renamed key has to fail here.
     expect(rejections[0]).toMatchObject({
       event: "driver.adb-server-rejected",
+      passthroughTools: ["adb"],
       payload: { port: 5038, reason: "occupied" },
       platform: "android",
       reason: "occupied",

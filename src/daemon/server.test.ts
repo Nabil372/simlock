@@ -10,6 +10,7 @@ import {
   CleanupReaper,
   type Config,
   type DriverRejection,
+  type PassthroughCommand,
   PassthroughRefusedError,
   Registry,
   RuntimeMissingError,
@@ -462,7 +463,7 @@ describe("DaemonServer", () => {
 
   it("resolves a passthrough to its driver's command without running it here", async () => {
     const clock = new FakeClock(1_000);
-    const driver = new FakeDriver({
+    const driver = passthroughFake({
       availableOsVersions: ["26.5"],
       clock,
       passthrough: (args) => ({
@@ -470,7 +471,7 @@ describe("DaemonServer", () => {
         command: "xcrun",
         env: {},
       }),
-      passthroughTool: "simctl",
+      passthroughTools: ["simctl"],
       platform: "ios",
     });
     const harness = await createHarness({ clock, driver });
@@ -487,13 +488,13 @@ describe("DaemonServer", () => {
 
   it("gives a refused verb its own code, so the CLI can render it as a usage error", async () => {
     const clock = new FakeClock(1_000);
-    const driver = new FakeDriver({
+    const driver = passthroughFake({
       availableOsVersions: ["26.5"],
       clock,
       passthrough: () => {
         throw new PassthroughRefusedError("simctl", "Refusing it; use `simlock release` instead.");
       },
-      passthroughTool: "simctl",
+      passthroughTools: ["simctl"],
       platform: "ios",
     });
     const harness = await createHarness({ clock, driver });
@@ -545,7 +546,7 @@ describe("DaemonServer", () => {
    */
   it("pushes device.exec output frames keyed by the request id, then replies with the exit code", async () => {
     const clock = new FakeClock(1_000);
-    const driver = new FakeDriver({
+    const driver = passthroughFake({
       availableOsVersions: ["26.5"],
       clock,
       passthrough: (args: readonly string[]) => ({
@@ -553,7 +554,7 @@ describe("DaemonServer", () => {
         command: "simctl",
         env: {},
       }),
-      passthroughTool: "simctl",
+      passthroughTools: ["simctl"],
       platform: "ios",
     });
     const harness = await createHarness({
@@ -1572,14 +1573,17 @@ describe("DaemonServer driver rejections", () => {
   it("names the refusal when a passthrough asks for the tool whose driver did not start", async () => {
     const harness = await createHarness({
       driverRejections: [
-        {
-          event: "driver.adb-server-rejected",
-          passthroughTool: "adb",
-          payload: { port: 5038, reason: "occupied" },
-          platform: "android",
-          reason: "occupied",
-          summary: "Refusing the Android driver: port 5038 is held by an adb server we do not own",
-        },
+        rejectionNaming(
+          {
+            event: "driver.adb-server-rejected",
+            payload: { port: 5038, reason: "occupied" },
+            platform: "android",
+            reason: "occupied",
+            summary:
+              "Refusing the Android driver: port 5038 is held by an adb server we do not own",
+          },
+          ["adb"],
+        ),
       ],
     });
     const client = await createClient(harness.socketPath);
@@ -1597,17 +1601,48 @@ describe("DaemonServer driver rejections", () => {
     expect(response.error?.message).toContain("port 5038 is held by an adb server we do not own");
   });
 
+  it("names the iOS refusal when a devicectl passthrough asks for the tool whose driver did not start", async () => {
+    const harness = await createHarness({
+      driverRejections: [
+        rejectionNaming(
+          {
+            event: "driver.root-rejected",
+            payload: { platform: "ios", reason: "symlink", root: "/Devices" },
+            platform: "ios",
+            reason: "symlink",
+            summary: "Refusing the ios device root /Devices: it is a symlink",
+          },
+          ["simctl", "devicectl"],
+        ),
+      ],
+    });
+    const client = await createClient(harness.socketPath);
+    await hello(client);
+
+    const response = await client.request("driver.passthrough", {
+      args: ["list", "devices"],
+      tool: "devicectl",
+    });
+
+    expect(response.error?.code).toBe("UNKNOWN_PASSTHROUGH_TOOL");
+    expect(response.error?.message).toContain(
+      "Refusing the ios device root /Devices: it is a symlink",
+    );
+  });
+
   it("leaves an unknown passthrough tool unexplained when no driver claimed it", async () => {
     const harness = await createHarness({
       driverRejections: [
-        {
-          event: "driver.root-rejected",
-          passthroughTool: "simctl",
-          payload: { platform: "ios", reason: "symlink", root: "/Devices" },
-          platform: "ios",
-          reason: "symlink",
-          summary: "Refusing the ios device root /Devices: it is a symlink",
-        },
+        rejectionNaming(
+          {
+            event: "driver.root-rejected",
+            payload: { platform: "ios", reason: "symlink", root: "/Devices" },
+            platform: "ios",
+            reason: "symlink",
+            summary: "Refusing the ios device root /Devices: it is a symlink",
+          },
+          ["simctl", "devicectl"],
+        ),
       ],
     });
     const client = await createClient(harness.socketPath);
@@ -3159,7 +3194,7 @@ class BlockingConnection implements IpcConnection {
 }
 
 function passthroughDriver(clock: FakeClock): FakeDriver {
-  return new FakeDriver({
+  return passthroughFake({
     availableOsVersions: ["26.5"],
     clock,
     passthrough: (args: readonly string[]) => ({
@@ -3167,9 +3202,35 @@ function passthroughDriver(clock: FakeClock): FakeDriver {
       command: "simctl",
       env: {},
     }),
-    passthroughTool: "simctl",
+    passthroughTools: ["simctl"],
     platform: "ios",
   });
+}
+
+interface PassthroughFakeOptions {
+  readonly availableOsVersions: readonly string[];
+  readonly clock: FakeClock;
+  readonly passthrough: (args: readonly string[]) => PassthroughCommand;
+  readonly passthroughTools: readonly string[];
+  readonly platform: "android" | "ios";
+}
+
+/** why: the fake's passthrough options are renamed and made async by this task; this one place adapts. */
+function passthroughFake(options: PassthroughFakeOptions): FakeDriver {
+  const { passthrough, ...rest } = options;
+  const adapted = {
+    ...rest,
+    passthrough: (_tool: string, _device: unknown, args: readonly string[]) => passthrough(args),
+  };
+  return new FakeDriver(adapted as unknown as ConstructorParameters<typeof FakeDriver>[0]);
+}
+
+/** why: `DriverRejection.passthroughTool` becomes `passthroughTools`; the cast keeps this compiling until then. */
+function rejectionNaming(
+  rejection: DriverRejection,
+  passthroughTools: readonly string[],
+): DriverRejection {
+  return { ...rejection, passthroughTools } as unknown as DriverRejection;
 }
 
 /**

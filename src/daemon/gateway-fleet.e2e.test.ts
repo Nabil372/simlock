@@ -28,6 +28,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { PassthroughCommand } from "../core/index.js";
 import { FakeDriver } from "../core/testing.js";
 import type { Filesystem, IpcConnector, IpcListenerFactory } from "../ports/index.js";
 import {
@@ -40,6 +41,11 @@ import {
 import type { DispatchSession } from "./dispatch.js";
 import { startDaemon } from "./main.js";
 import type { DaemonServer } from "./server.js";
+
+/** why: the fake's passthrough options are renamed and made async by this task; this adapts in one place. */
+function passthroughOptions(command: PassthroughCommand): object {
+  return { passthrough: () => command, passthroughTools: ["adb"] };
+}
 
 /**
  * Binds an ephemeral loopback port and releases it. A fixed port fails whenever two runs of
@@ -205,7 +211,7 @@ describe("gateway fleet smoke (ADR 0005 §35)", () => {
           // A real command, so `device.exec` proves a real child process actually ran on
           // *this* worker: it prints which worker answered and exits with a distinguishing
           // code, both asserted below.
-          passthrough: () => ({
+          ...passthroughOptions({
             args: [
               "-e",
               `process.stdout.write(${JSON.stringify(options.stdout)}); process.exit(7);`,
@@ -213,7 +219,6 @@ describe("gateway fleet smoke (ADR 0005 §35)", () => {
             command: process.execPath,
             env: {},
           }),
-          passthroughTool: "adb",
           clock: new SystemClock(),
           knownModels: [options.model],
           platform: "android",

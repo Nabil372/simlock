@@ -2587,19 +2587,58 @@ describe("AndroidDriver.create", () => {
     const filesystem = await androidFilesystem();
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
-    expect(driver.passthrough(["shell", "input", "tap", "100", "200"])).toEqual({
+    expect(await passthroughOf(driver, ["shell", "input", "tap", "100", "200"])).toEqual({
       args: ["-P", String(adbServerPort), "shell", "input", "tap", "100", "200"],
       command: binaries.adb,
       env: { ANDROID_ADB_SERVER_PORT: String(adbServerPort) },
     });
   });
 
+  it("claims only the adb passthrough tool", async () => {
+    const filesystem = await androidFilesystem();
+    const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
+
+    expect((driver as unknown as { passthroughTools: unknown }).passthroughTools).toEqual(["adb"]);
+  });
+
+  it("gives the same adb command with a virtual device, a physical one and none", async () => {
+    const filesystem = await androidFilesystem();
+    const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
+    const args = ["shell", "input", "tap", "100", "200"];
+
+    const without = await passthroughOf(driver, args);
+    const virtual = await passthroughOf(driver, args, undefined, VIRTUAL_DEVICE);
+    const physical = await passthroughOf(driver, args, undefined, PHYSICAL_DEVICE);
+
+    expect(without).toEqual({
+      args: ["-P", String(adbServerPort), ...args],
+      command: binaries.adb,
+      env: { ANDROID_ADB_SERVER_PORT: String(adbServerPort) },
+    });
+    expect(virtual).toEqual(without);
+    expect(physical).toEqual(without);
+  });
+
+  it("rejects a refusal with PassthroughRefusedError naming adb, never throwing it synchronously", async () => {
+    const filesystem = await androidFilesystem();
+    const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
+    const routed = driver as unknown as {
+      passthrough(tool: string, device: unknown, args: readonly string[]): unknown;
+    };
+
+    const returned = routed.passthrough("adb", undefined, ["kill-server"]);
+
+    expect(returned).toBeInstanceOf(Promise);
+    await expect(returned).rejects.toMatchObject({ tool: "adb" });
+    await expect(returned).rejects.toBeInstanceOf(PassthroughRefusedError);
+  });
+
   it("refuses kill-server, which would detach every leased emulator at once", async () => {
     const filesystem = await androidFilesystem();
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["kill-server"])).toThrow(PassthroughRefusedError);
-    expect(() => driver.passthrough(["kill-server"])).toThrow(/simlock release/);
+    await expect(passthroughOf(driver, ["kill-server"])).rejects.toThrow(PassthroughRefusedError);
+    await expect(passthroughOf(driver, ["kill-server"])).rejects.toThrow(/simlock release/);
   });
 
   it("refuses kill-server behind a global flag, not only in first position", async () => {
@@ -2608,7 +2647,9 @@ describe("AndroidDriver.create", () => {
 
     // Every other case passes it first, so an `args[0] === "kill-server"` rule would pass
     // them all; this is the one that holds the documented "anywhere in the arguments".
-    expect(() => driver.passthrough(["-P", "1", "kill-server"])).toThrow(PassthroughRefusedError);
+    await expect(passthroughOf(driver, ["-P", "1", "kill-server"])).rejects.toThrow(
+      PassthroughRefusedError,
+    );
   });
 
   it.each([[["emu", "avd", "stop"]], [["-s", "emulator-5586", "emu", "avd", "stop"]]])(
@@ -2617,8 +2658,8 @@ describe("AndroidDriver.create", () => {
       const filesystem = await androidFilesystem();
       const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
-      expect(() => driver.passthrough(args)).toThrow(PassthroughRefusedError);
-      expect(() => driver.passthrough(args)).toThrow(/simlock release/);
+      await expect(passthroughOf(driver, args)).rejects.toThrow(PassthroughRefusedError);
+      await expect(passthroughOf(driver, args)).rejects.toThrow(/simlock release/);
     },
   );
 
@@ -2626,29 +2667,31 @@ describe("AndroidDriver.create", () => {
     const filesystem = await androidFilesystem();
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["emu", "avd", "snapshot", "delete", "default_boot"])).toThrow(
-      PassthroughRefusedError,
-    );
-    expect(() => driver.passthrough(["emu", "avd", "snapshot", "delete", "default_boot"])).toThrow(
-      /full wipe/,
-    );
+    await expect(
+      passthroughOf(driver, ["emu", "avd", "snapshot", "delete", "default_boot"]),
+    ).rejects.toThrow(PassthroughRefusedError);
+    await expect(
+      passthroughOf(driver, ["emu", "avd", "snapshot", "delete", "default_boot"]),
+    ).rejects.toThrow(/full wipe/);
   });
 
   it("still proxies the snapshot operations that do not destroy the baseline", async () => {
     const filesystem = await androidFilesystem();
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
-    expect(driver.passthrough(["emu", "avd", "snapshot", "list"]).args).toContain("list");
+    expect((await passthroughOf(driver, ["emu", "avd", "snapshot", "list"])).args).toContain(
+      "list",
+    );
   });
 
   it("refuses an emu kill pair even behind the -s serial that targets a device", async () => {
     const filesystem = await androidFilesystem();
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["-s", "emulator-5586", "emu", "kill"])).toThrow(
+    await expect(passthroughOf(driver, ["-s", "emulator-5586", "emu", "kill"])).rejects.toThrow(
       PassthroughRefusedError,
     );
-    expect(() => driver.passthrough(["-s", "emulator-5586", "emu", "kill"])).toThrow(
+    await expect(passthroughOf(driver, ["-s", "emulator-5586", "emu", "kill"])).rejects.toThrow(
       /simlock cleanup/,
     );
   });
@@ -2690,10 +2733,13 @@ describe("AndroidDriver.create", () => {
       // refuse what it has never seen, not just what it already knows to refuse.
       ["--not-a-real-adb-flag", "devices"],
     ]) {
-      expect(() => driver.passthrough(args), args.join(" ")).toThrow(PassthroughRefusedError);
-      expect(() => driver.passthrough(args, { hasTerminal: false }), args.join(" ")).toThrow(
-        /supplies the adb server itself/,
+      await expect(passthroughOf(driver, args), args.join(" ")).rejects.toThrow(
+        PassthroughRefusedError,
       );
+      await expect(
+        passthroughOf(driver, args, { hasTerminal: false }),
+        args.join(" "),
+      ).rejects.toThrow(/supplies the adb server itself/);
     }
 
     // Past the subcommand every argument is that subcommand's operand, so one that merely
@@ -2713,7 +2759,7 @@ describe("AndroidDriver.create", () => {
       ["--version"],
       ["--help"],
     ]) {
-      expect(driver.passthrough(args).args, args.join(" ")).toEqual([
+      expect((await passthroughOf(driver, args)).args, args.join(" ")).toEqual([
         "-P",
         String(adbServerPort),
         ...args,
@@ -2734,19 +2780,25 @@ describe("AndroidDriver.create", () => {
       ["--version", "-P", "5037", "shell", "id"],
       ["--help", "-H", "evil", "shell", "id"],
     ]) {
-      expect(() => driver.passthrough(args), args.join(" ")).toThrow(PassthroughRefusedError);
-      expect(() => driver.passthrough(args), args.join(" ")).toThrow(
+      await expect(passthroughOf(driver, args), args.join(" ")).rejects.toThrow(
+        PassthroughRefusedError,
+      );
+      await expect(passthroughOf(driver, args), args.join(" ")).rejects.toThrow(
         /supplies the adb server itself/,
       );
     }
 
     // Alone, either is still the self-answering command it always was.
-    expect(driver.passthrough(["--version"]).args).toEqual([
+    expect((await passthroughOf(driver, ["--version"])).args).toEqual([
       "-P",
       String(adbServerPort),
       "--version",
     ]);
-    expect(driver.passthrough(["--help"]).args).toEqual(["-P", String(adbServerPort), "--help"]);
+    expect((await passthroughOf(driver, ["--help"])).args).toEqual([
+      "-P",
+      String(adbServerPort),
+      "--help",
+    ]);
   });
 
   it("refuses a bare `adb shell` only where the caller has no terminal, never merely because `shell` is the last word", async () => {
@@ -2757,13 +2809,15 @@ describe("AndroidDriver.create", () => {
     const filesystem = await androidFilesystem();
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
-    expect(() => driver.passthrough(["shell"], { hasTerminal: false })).toThrow(
+    await expect(passthroughOf(driver, ["shell"], { hasTerminal: false })).rejects.toThrow(
       PassthroughRefusedError,
     );
-    expect(() => driver.passthrough(["shell"], { hasTerminal: false })).toThrow(/terminal/);
-    expect(() =>
-      driver.passthrough(["-s", "emulator-5586", "shell"], { hasTerminal: false }),
-    ).toThrow(PassthroughRefusedError);
+    await expect(passthroughOf(driver, ["shell"], { hasTerminal: false })).rejects.toThrow(
+      /terminal/,
+    );
+    await expect(
+      passthroughOf(driver, ["-s", "emulator-5586", "shell"], { hasTerminal: false }),
+    ).rejects.toThrow(PassthroughRefusedError);
 
     // A shell with something to run is not the interactive shell, and neither is anything
     // else -- the refusal is about the missing command, not about `shell`. Round 4, F2: this
@@ -2771,41 +2825,39 @@ describe("AndroidDriver.create", () => {
     // one of these genuinely ends in `shell`, but as an operand of an earlier subcommand
     // (`shell`, `push`), never as the bare subcommand itself, so none of them is the
     // interactive shell this refusal exists for.
-    expect(driver.passthrough(["shell", "getprop"], { hasTerminal: false }).args).toEqual([
-      "-P",
-      String(adbServerPort),
-      "shell",
-      "getprop",
-    ]);
-    expect(driver.passthrough(["devices"], { hasTerminal: false }).args).toContain("devices");
+    expect(
+      (await passthroughOf(driver, ["shell", "getprop"], { hasTerminal: false })).args,
+    ).toEqual(["-P", String(adbServerPort), "shell", "getprop"]);
+    expect((await passthroughOf(driver, ["devices"], { hasTerminal: false })).args).toContain(
+      "devices",
+    );
     for (const args of [
       ["shell", "echo", "shell"],
       ["shell", "input", "text", "shell"],
       ["shell", "shell"],
       ["push", "./x", "shell"],
     ]) {
-      expect(driver.passthrough(args, { hasTerminal: false }).args, args.join(" ")).toEqual([
-        "-P",
-        String(adbServerPort),
-        ...args,
-      ]);
+      expect(
+        (await passthroughOf(driver, args, { hasTerminal: false })).args,
+        args.join(" "),
+      ).toEqual(["-P", String(adbServerPort), ...args]);
     }
 
     // And with a terminal (the local `simlock adb shell`, and the default when nothing says
     // otherwise) it is proxied like any other command.
-    expect(driver.passthrough(["shell"], { hasTerminal: true }).args).toEqual([
+    expect((await passthroughOf(driver, ["shell"], { hasTerminal: true })).args).toEqual([
       "-P",
       String(adbServerPort),
       "shell",
     ]);
-    expect(driver.passthrough(["shell"]).args).toContain("shell");
+    expect((await passthroughOf(driver, ["shell"])).args).toContain("shell");
   });
 
   it("proxies the emu subcommands that do not stop a device", async () => {
     const filesystem = await androidFilesystem();
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
-    expect(driver.passthrough(["emu", "avd", "name"]).args).toEqual([
+    expect((await passthroughOf(driver, ["emu", "avd", "name"])).args).toEqual([
       "-P",
       String(adbServerPort),
       "emu",
@@ -3911,6 +3963,28 @@ describe("AndroidDriver toolVersions()", () => {
     await expect(driver.toolVersions()).resolves.toEqual([{ name: "emulator", version: "35.4.9" }]);
   });
 });
+
+/** why: the driver's passthrough takes (tool, device, args, context) and returns a promise after this task; one adapter keeps every case below on the new shape. */
+async function passthroughOf(
+  driver: object,
+  args: readonly string[],
+  context?: { readonly hasTerminal: boolean },
+  device?: unknown,
+): Promise<{ readonly args: readonly string[]; readonly command: string; readonly env: object }> {
+  const routed = driver as {
+    passthrough(
+      tool: string,
+      device: unknown,
+      args: readonly string[],
+      context?: { readonly hasTerminal: boolean },
+    ): Promise<{
+      readonly args: readonly string[];
+      readonly command: string;
+      readonly env: object;
+    }>;
+  };
+  return routed.passthrough("adb", device, args, context);
+}
 
 async function createDriver(
   filesystem: Filesystem,

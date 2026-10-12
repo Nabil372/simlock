@@ -43,6 +43,24 @@ describe("ScriptedProcessRunner", () => {
     expect(runner.calls).toEqual([{ args: ["list", "devices"], command: "simctl", options: {} }]);
   });
 
+  it("runs the onSpawn callback with the spawned args before the result settles", async () => {
+    const seen: string[][] = [];
+    const runner = new ScriptedProcessRunner([
+      {
+        match: { command: "tool", args: ["--out", /.*/] },
+        onSpawn: (args) => {
+          seen.push([...args]);
+        },
+        result: { code: 0, stderr: "", stdout: "" },
+      },
+    ]);
+
+    const pending = runner.run("tool", ["--out", "/x.json"]);
+
+    expect(seen).toEqual([["--out", "/x.json"]]);
+    await expect(pending).resolves.toMatchObject({ code: 0 });
+  });
+
   it("rejects unexpected invocations", () => {
     const runner = new ScriptedProcessRunner([]);
 
