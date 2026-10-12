@@ -1415,7 +1415,11 @@ describe("Dispatcher: device mode on every surface", () => {
       ["UDID-PRESENT", { present: true }],
     ]);
     const { dispatcher, engine } = await buildDispatcher({
-      presence: (driverDeviceId) => reads.get(driverDeviceId),
+      // why: every ID but the unread one answers a read, so a virtual device's own driver ID does too and only the physical guard keeps it off the wire.
+      presence: (driverDeviceId) =>
+        driverDeviceId === "UDID-UNREAD"
+          ? undefined
+          : (reads.get(driverDeviceId) ?? { present: true }),
       state: {
         devices: [],
         leases: [],

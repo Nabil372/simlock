@@ -150,8 +150,9 @@ export class WorkerRegistry {
   }
 
   /**
-   * `views()` as routing reads them: a view with no `catalog`, a worker that answered `starting`,
+   * why: `views()` as routing reads them: a view with no `catalog`, a worker that answered `starting`,
    * carries the last catalog the gateway read from it, so the worker stays known (ADR 0009 §4).
+   * Likewise a view with no `devices` carries the physical devices of the last list read from it, none when that list had none.
    * Never shown to an operator: the view itself says "not read yet".
    */
   routingViews(): readonly WorkerView[] {
@@ -335,12 +336,12 @@ export class WorkerRegistry {
   }
 
   /**
-   * Replaces what the worker reports. Partial on purpose: a refresh triggered by a lease event
+   * why: replaces what the worker reports, and is partial on purpose: a refresh triggered by a lease event
    * re-reads status and devices but not the catalog (§7), and an absent key leaves the previous
    * value standing rather than blanking it -- except for a `starting` refresh, which says the
    * worker has checked nothing: it drops capacity, catalog, catalogReadAt, devices, installs,
    * leases, queueDepth and waiting from the view (absent means "not known"), keeping the last
-   * catalog and leases aside for routing and retention. A refresh for a worker whose view is gone
+   * catalog, leases and physical devices aside for routing and retention. A refresh for a worker whose view is gone
    * (removed while a status call was in flight) is dropped rather than resurrecting it.
    */
   refresh(workerId: string, refresh: WorkerRefresh): void {

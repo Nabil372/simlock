@@ -4511,7 +4511,7 @@ describe("FleetLeaseCoordinator routes a physical request by the enrolled device
     expect(dispatched[0]).not.toHaveProperty("physical");
   });
 
-  it("a physical request is sent to the worker that holds the ready enrolled match, not the one with a warm simulator and more room", async () => {
+  it("a physical request is sent to the worker that holds the ready enrolled match, not the one with a warm simulator", async () => {
     const { a, b, coordinator } = twoWorkers(
       [deviceFixture("dev_sim", "ready")],
       [iphone("dev_q")],

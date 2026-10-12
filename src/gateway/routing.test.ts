@@ -361,7 +361,24 @@ describe("the warm-then-free policy for a physical request", () => {
     expect(policy.select(REQUEST, [queued])).toBeUndefined();
   });
 
-  it("does not run idle-queue, free-slot, ram-budget or free-capacity for a physical request, and runs the others", () => {
+  it("picks, for a physical request, a worker that idle-queue and free-slot would drop and ram-budget would demote, by warm-hit; the four stages are the ones that skip a physical request", () => {
+    const blocked = view("wrk_a", {
+      capacity: withIos({ atRamBudget: true, maxRunning: 0 }),
+      devices: [iphone()],
+      queueDepth: 2,
+    });
+    const roomy = view("wrk_b", { capacity: withIos({ maxRunning: 5 }) });
+
+    expect(policy.select(PHYSICAL, [roomy, blocked])).toEqual({
+      reason: "warm-hit",
+      stage: "warm-hit",
+      workerId: "wrk_a",
+    });
+    expect(policy.select(REQUEST, [roomy, view("wrk_c", { ...blocked, queueDepth: 2 })])).toEqual({
+      reason: "free-capacity",
+      stage: "free-capacity",
+      workerId: "wrk_b",
+    });
     const stages = {
       canServe,
       freeCapacity,
@@ -376,11 +393,7 @@ describe("the warm-then-free policy for a physical request", () => {
       .filter(([, stage]) => (stage as { appliesToPhysical?: boolean }).appliesToPhysical === false)
       .map(([name]) => name)
       .sort();
-
     expect(skipped).toEqual(["freeCapacity", "freeSlot", "idleQueue", "ramBudget"]);
-    for (const stage of [canServe, healthy, takesRequests, warmHit]) {
-      expect((stage as { appliesToPhysical?: boolean }).appliesToPhysical).toBe(true);
-    }
   });
 
   it("lists no physical-interim stage in any policy", () => {

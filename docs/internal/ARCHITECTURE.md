@@ -275,8 +275,8 @@ event envelope an `id`, taking it to 10, and ADR 0009 makes `atRamBudget` a
 required capacity field, taking it to 11, and ADR 0015 §3 makes
 `modelClasses` a required catalog field, taking it to 12, and ADR 0015 §4 makes
 `classDefaults` one too, taking it to 13, and a device's `servesDefaultMode`, required too, takes it to 16 (ADR 0015 §1 and §2 took it to 14 and 15), and `config.get`'s required `warmPool.reserveRunning` takes it to 17, and a starting daemon's `status.get`, which
-answers `daemon` and `host` only, takes it to 18, and `config.get`'s required `warmPool.targets` and `warmPool.maxConcurrentBoots` take it to 19, and `status.get`'s `warmPool` block takes it to 20, and a lease request's optional `leaseId` takes it to 21, and its optional `fleetRequestId` (ADR 0021) takes it to 22, and a device's required `physical` (ADR 0022) takes it to 23, and the operations `device.add` and `device.remove` (ADR 0022 §2), with a physical device's `driverDeviceId` on its status entry, take it to 24, and a lease request's optional `physical` (ADR 0022), the requested device's `physical` and `physicalQueueDepth` on a status and a worker view take it to 25. So the range both
-sides advertise is `{min: 25, max: 25}`, an older client and a current daemon simply
+answers `daemon` and `host` only, takes it to 18, and `config.get`'s required `warmPool.targets` and `warmPool.maxConcurrentBoots` take it to 19, and `status.get`'s `warmPool` block takes it to 20, and a lease request's optional `leaseId` takes it to 21, and its optional `fleetRequestId` (ADR 0021) takes it to 22, and a device's required `physical` (ADR 0022) takes it to 23, and the operations `device.add` and `device.remove` (ADR 0022 §2), with a physical device's `driverDeviceId` on its status entry, take it to 24, and a lease request's optional `physical` (ADR 0022), the requested device's `physical` and `physicalQueueDepth` on a status and a worker view take it to 25, and a device's `absent` state with its `absentReason` (ADR 0022 §7) takes it to 26, and a physical device's `presence` on a status entry and a worker view takes it to 27. So the range both
+sides advertise is `{min: 27, max: 27}`, an older client and a current daemon simply
 do not overlap, and `hello` fails with `PROTOCOL_VERSION_UNSUPPORTED` naming
 both ranges. The same negotiation runs over a worker's uplink, which is why a
 worker older than this shows up in a gateway's views as `incompatible`
@@ -672,7 +672,11 @@ The v1 policy (`warm-then-free`) is eight stages:
    holds a catalog for them (`routingViews`), whose capacity or catalog has not
    been read since they connected;
 2. `can-serve` (filter): drop workers whose catalog cannot serve the request
-   (ADR 0009 §3, `routing/request-match.ts`). The model is the first entry of
+   (ADR 0009 §3, `routing/request-match.ts`). A physical request is not matched
+   on the catalog: it keeps a worker whose view lists an enrolled device, in any
+   state but `deleted`, that fits the request (`physicalMatch(..., "enrolled")`,
+   `fitsPhysical`: the platform, the model or class, the OS constraint). A
+   virtual request: the model is the first entry of
    the worker's `models` whose name or `modelAliases` entry equals the
    requested name, ignoring letter case (`findCatalogModel`, the core's one
    matcher). A class request (the class `requestedClass` gives, `phone` for
@@ -688,7 +692,11 @@ The v1 policy (`warm-then-free`) is eight stages:
    requirement 12). A physical request skips this stage. A worker that has not reported health or queue depth is
    not known to be healthy or idle, so it is dropped. Stages 3 and 4 drop a
    worker that is busy, not unable: its requests wait;
-5. `warm-hit` (rank, settles): prefer a worker with an unleased `ready` device
+5. `warm-hit` (rank, settles): for a physical request, prefer a worker whose
+   view lists a `ready` enrolled device that fits and was not last read not
+   present (`physicalMatch(..., "pickable")`; a device with no read yet
+   counts), with no mode or catalog rule. For a virtual request, prefer a
+   worker with an unleased `ready` device
    matching the request — a **warm hit**, and a sub-second grant. "Matching"
    is the core's `fits` (ADR 0015 §6, §8) over a requirement built from the
    worker's own catalog: its own name for an exact model, or the class with
@@ -971,7 +979,7 @@ emits its own facts — `worker.connected`, `worker.disconnected`,
   ADR 0014 to `{min: 10, max: 10}`, because every event envelope has an `id`, and
   ADR 0009 to `{min: 11, max: 11}`, because `atRamBudget` is required, and
   ADR 0015 to `{min: 12, max: 12}`, because the catalog's `modelClasses` is required, then
-  to `{min: 13, max: 13}`, because its `classDefaults` is, and ADR 0009 to `{min: 16, max: 16}`, because a device's `servesDefaultMode` is, then to `{min: 17, max: 17}`, because `config.get`'s `warmPool.reserveRunning` is, and a starting `status.get` to `{min: 18, max: 18}`, because its `devices`, `leases`, `capacity` and `queueDepth` are optional, then to `{min: 19, max: 19}`, because `config.get`'s `warmPool.targets` and `warmPool.maxConcurrentBoots` are required, and to `{min: 20, max: 20}`, because `status.get` gains `warmPool`, and to `{min: 21, max: 21}`, because a lease request may carry `leaseId`, and to `{min: 22, max: 22}`, because it may carry `fleetRequestId`, and to `{min: 23, max: 23}`, because every device carries `physical`, and to `{min: 24, max: 24}`, because `device.add` and `device.remove` are operations and a physical device's status entry carries `driverDeviceId`, and to `{min: 25, max: 25}`, because a lease request may carry `physical` and a status and a worker view carry `physicalQueueDepth`; a
+  to `{min: 13, max: 13}`, because its `classDefaults` is, and ADR 0009 to `{min: 16, max: 16}`, because a device's `servesDefaultMode` is, then to `{min: 17, max: 17}`, because `config.get`'s `warmPool.reserveRunning` is, and a starting `status.get` to `{min: 18, max: 18}`, because its `devices`, `leases`, `capacity` and `queueDepth` are optional, then to `{min: 19, max: 19}`, because `config.get`'s `warmPool.targets` and `warmPool.maxConcurrentBoots` are required, and to `{min: 20, max: 20}`, because `status.get` gains `warmPool`, and to `{min: 21, max: 21}`, because a lease request may carry `leaseId`, and to `{min: 22, max: 22}`, because it may carry `fleetRequestId`, and to `{min: 23, max: 23}`, because every device carries `physical`, and to `{min: 24, max: 24}`, because `device.add` and `device.remove` are operations and a physical device's status entry carries `driverDeviceId`, and to `{min: 25, max: 25}`, because a lease request may carry `physical` and a status and a worker view carry `physicalQueueDepth`, and to `{min: 26, max: 26}`, because a device may be `absent` with an `absentReason`, and to `{min: 27, max: 27}`, because a physical device's entry may carry `presence`; a
   worker on an older version is `incompatible` the same way. That is the ordinary upgrade path, not a failure mode:
   upgrade the worker. An incompatible worker is marked `incompatible` in its
   view with both ranges shown and is never dispatched to, and it is not
