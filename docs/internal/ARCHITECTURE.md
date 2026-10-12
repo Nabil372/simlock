@@ -1335,7 +1335,7 @@ A successful retry returns the device to `ready` (or `shutdown`) and it
 rejoins the warm pool; exhausting the retry budget destroys a virtual device
 (registry-only, never merely `shutdown`, since `shutdown` is reusable warm
 inventory to `AcquisitionPlanner` and would silently reintroduce a dirty
-device) and unenrols a physical one, which Simlock never destroys. `device.purge-failed` still fires for a virtual device, and for a physical one that is present; a physical device whose reclaim fails while it is not present emits none and goes `absent`. `device.quarantined`,
+device) and unenrols a physical one, which Simlock never destroys. `device.purge-failed` still fires for a virtual device, and for a physical one whose release-time purge fails; a returned physical device whose reclaim fails while it is present is quarantined without it (it has no lease id), and one whose reclaim fails while it is not present emits none and goes `absent`. `device.quarantined`,
 `device.quarantine-recovered`, and `device.quarantine-abandoned` are the
 follow-up facts (see [EVENTS.md](EVENTS.md)).
 

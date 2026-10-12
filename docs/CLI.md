@@ -1343,7 +1343,8 @@ entry in `workers`.
 Human and JSON status include derived warm counts globally and per platform.
 `ready` devices contribute to those counts; `reclaiming` and `quarantined`
 virtual devices remain visible as busy running capacity (a physical device never counts as running capacity) and never contribute to warm
-inventory. A `quarantined` device is one whose release-time purge failed, one
+inventory. A `quarantined` device is one whose release-time purge failed, a returned
+physical device whose reclaim failed while it was present, one
 created under `lease.identity` `fresh` whose lease-end delete failed (it is
 retried as a delete, never returned to the pool), or one
 whose `provisioning`/`reclaiming` transition stalled past its driver-derived
