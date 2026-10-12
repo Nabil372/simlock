@@ -93,31 +93,14 @@ export class AndroidPhysicalHandler {
     const listing = await this.#run(["devices", "-l"], READ_TIMEOUT_MS);
     if (listing.kind !== "ok") return this.#refusal(listing, "the device list (adb devices -l)");
 
-    const matching = parseDevices(listing.stdout).filter((entry) => entry.serial === id);
-    const usb = matching.filter((entry) => entry.usb);
-    const ready = usb.find((entry) => entry.state === "device");
-    if (ready === undefined) {
-      if (usb.some((entry) => entry.state === "unauthorized")) {
-        return {
-          enrollable: false,
-          message: "USB debugging is not authorized for this host on the device",
-          reason: "untrusted",
-        };
-      }
-      if (usb.length === 0 && matching.length > 0) {
-        return {
-          enrollable: false,
-          message: "only USB-connected devices can be enrolled",
-          reason: "network-only",
-        };
-      }
-      return {
-        enrollable: false,
-        message: `the device is not connected to the adb server on port ${PORT}`,
-        reason: "not-connected",
-      };
-    }
+    const unusable = unenrollable(
+      parseDevices(listing.stdout).filter((entry) => entry.serial === id),
+    );
+    if (unusable !== undefined) return unusable;
+    return this.#readDevice(id);
+  }
 
+  async #readDevice(id: string): Promise<PhysicalInspection> {
     const model = await this.#readText(id, ["shell", "getprop", "ro.product.model"]);
     if (model.kind !== "ok")
       return this.#refusal(model.ran, "the model (getprop ro.product.model)");
@@ -304,25 +287,53 @@ function parseDevices(output: string): ListedTransport[] {
   return entries;
 }
 
-function assertProxyable(args: readonly string[], context: PassthroughContext | undefined): void {
-  const [subcommand, target] = args;
-  const refuse = (why: string): never => {
-    throw new PassthroughRefusedError("adb", `Refusing \`adb ${args.join(" ")}\`: ${why}`);
+function unenrollable(matching: readonly ListedTransport[]): Refusal | undefined {
+  const usb = matching.filter((entry) => entry.usb);
+  if (usb.some((entry) => entry.state === "device")) return undefined;
+  if (usb.some((entry) => entry.state === "unauthorized")) {
+    return {
+      enrollable: false,
+      message: "USB debugging is not authorized for this host on the device",
+      reason: "untrusted",
+    };
+  }
+  if (usb.length === 0 && matching.length > 0) {
+    return {
+      enrollable: false,
+      message: "only USB-connected devices can be enrolled",
+      reason: "network-only",
+    };
+  }
+  return {
+    enrollable: false,
+    message: `the device is not connected to the adb server on port ${PORT}`,
+    reason: "not-connected",
   };
-  if (subcommand?.startsWith("-") === true) {
-    refuse("Simlock supplies the scope, so the command stays aimed at the leased phone.");
+}
+
+function refusalReason(
+  args: readonly string[],
+  context: PassthroughContext | undefined,
+): string | undefined {
+  const [subcommand = "", target = ""] = args;
+  if (subcommand.startsWith("-")) {
+    return "Simlock supplies the scope, so the command stays aimed at the leased phone.";
   }
-  if (subcommand !== undefined && REFUSED_SUBCOMMANDS.has(subcommand)) {
-    refuse(
-      "it would stop, start or move a server or transport that other holders share, or take the phone off USB for the next holder.",
-    );
+  if (REFUSED_SUBCOMMANDS.has(subcommand)) {
+    return "it would stop, start or move a server or transport that other holders share, or take the phone off USB for the next holder.";
   }
-  if (subcommand === "reboot" && target !== undefined && REFUSED_REBOOT_TARGETS.has(target)) {
-    refuse("it takes the phone off adb.");
+  if (subcommand === "reboot" && REFUSED_REBOOT_TARGETS.has(target)) {
+    return "it takes the phone off adb.";
   }
   if (context?.hasTerminal === false && args.length === 1 && subcommand === "shell") {
-    refuse(
-      "an interactive shell needs a terminal, and this one runs with none. Pass the command to run.",
-    );
+    return "an interactive shell needs a terminal, and this one runs with none. Pass the command to run.";
+  }
+  return undefined;
+}
+
+function assertProxyable(args: readonly string[], context: PassthroughContext | undefined): void {
+  const reason = refusalReason(args, context);
+  if (reason !== undefined) {
+    throw new PassthroughRefusedError("adb", `Refusing \`adb ${args.join(" ")}\`: ${reason}`);
   }
 }

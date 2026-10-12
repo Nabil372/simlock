@@ -364,13 +364,7 @@ function hostVersionSends(probe: FakeTcpProbe) {
 async function advisoriesOf(
   driver: AndroidDriver,
 ): Promise<readonly { readonly code: string; readonly message: string }[]> {
-  const probe = driver as unknown as {
-    advisories?: () => Promise<readonly { code: string; message: string }[]>;
-  };
-  if (typeof probe.advisories !== "function") {
-    throw new Error("AndroidDriver has no advisories()");
-  }
-  return probe.advisories();
+  return driver.advisories();
 }
 
 const NO_DEVICE = Symbol("no device");
