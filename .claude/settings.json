@@ -76,6 +76,17 @@
         ]
       }
     ],
+    "SubagentStop": [
+      {
+        "matcher": "implementer|reviewer|hardware-verifier",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/scripts/report-guard.mjs"
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

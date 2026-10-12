@@ -30,7 +30,9 @@ to a running agent, or for a report block that is missing.
 You are woken when an agent finishes; its report is the result. Never poll,
 sleep or read an agent's transcript while it runs. A report without its
 block, or with narration in its place, is not a result: ask that agent for
-its report block on the work already done.
+its report block on the work already done. The helpers a stage agent starts
+report to you too: when they have all reported and the stage agent has not,
+ask it once for its report block.
 
 **Progress.** Rename the session with
 `mcp__ccd_session_mgmt__set_session_title` (`session_id: "self"`; load it
@@ -83,6 +85,14 @@ line, not a stop (rule 3). Park only for:
 ## 1. Take stock
 
 ```bash
+git fetch -q origin && git diff --quiet HEAD origin/main -- .claude .agents
+```
+
+Exit 1: this checkout's agents and skills are behind `main`, and the
+session loaded the old ones. Stop and tell the maintainer to run
+`git pull --ff-only` and start a new session.
+
+```bash
 gh issue view <N> --json number,title,labels,assignees,body
 ```
 
@@ -114,7 +124,9 @@ they name; never build again or restart review at round 1.
    `failing` and turned at least one test green since the last, another
    `green` with its `map`; then `mode: audit`. `spec needs` under `open`
    in any report: park (step 6).
-2. **Review**: `reviewer` with the PR number. Before every review round
+2. **Review**: `reviewer` with the PR number. The diff's kind sets which
+   reviews run (rule 14): a small, tests-only or docs-only diff gets fewer.
+   Before every review round
    and every fix run, run `node .agents/scripts/ci-failures.mjs <M>` and
    `gh pr view <M> --json mergeable` once. The script reads the newest
    finished CI run, which is often older than the head: newer pushes cancel
@@ -162,7 +174,6 @@ they name; never build again or restart review at round 1.
    ## Review
 
    Spec review: <b> blocking, <m> fixed, <k> notes. Code review: <b> blocking, <m> fixed, <k> notes. Claims review: <b> blocking, <m> fixed, <k> notes. Comment review: <b> blocking, <m> fixed, <k> notes.
-   Mutate: <n> mutants, <a> alive.
 
    Rejected:
 
@@ -172,8 +183,9 @@ they name; never build again or restart review at round 1.
    `<b>` counts the blocking findings that review raised over all rounds,
    `<m>` those confirmed and fixed, `<k>` its notes. Every blocking finding
    not fixed is a Rejected line; omit "Rejected:" when there is none. Keep
-   the counts line in exactly this shape (for an ADR-only diff:
-   `Code review: skipped. Claims review: skipped. Comment review: skipped.`) and the Rejected lines
+   the counts line in exactly this shape, with `skipped` for each review
+   the diff's kind left out (for an ADR-only diff:
+   `Code review: skipped. Claims review: skipped. Comment review: skipped.`), and the Rejected lines
    with their tags:
    `.agents/scripts/delivery-stats.mjs` parses both. Rule 12 budget: 200
    words plus the checklist, Assumptions and Review, ending with
@@ -207,8 +219,7 @@ they name; never build again or restart review at round 1.
    base branch. Red CI: one `implementer` fix run with the failing test
    titles and the run id. Either way, the `after-pass` review in step 3,
    then the gate again. Any other exit, or red CI a second time: park with the
-   line it printed. A surviving mutant implement could not explain also
-   parks: the gate does not read the report.
+   line it printed.
 
 After every stage, update the PR body's `### Status` section so any session
 can resume from GitHub alone: the status line, then the Fix lines the next
@@ -216,7 +227,7 @@ stage works on, if any.
 
 ```
 ### Status
-Implement: done (5/5 green)  Review: round 2, 2 open  Mutate: 0 alive  Hardware: n/a  Gate: not run
+Implement: done (5/5 green)  Review: round 2, 2 open  Hardware: n/a  Gate: not run
 Next: implement fix, then review round 3
 - code: src/x.ts:12 <defect> [testing 2]
 ```

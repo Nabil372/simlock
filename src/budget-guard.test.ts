@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,5 +57,58 @@ describe("budget-guard time limit", () => {
     const result = await call(HOUR - 1_000, 8 * HOUR);
     expect(result.activeMs).toBe(HOUR - 1_000);
     expect(result.status).toBe(0);
+  });
+});
+
+/** Runs the hook once for a tool call by sub-agent `agent` of a session whose sub-agent a1 has
+ * used 2,000 input tokens, with a 1,000-token limit per agent and none for the session. */
+async function callAsAgent(agent: string, tool: string, command?: string) {
+  const dir = mkdtempSync(join(tmpdir(), "budget-guard-"));
+  const transcript = join(dir, "session.jsonl");
+  writeFileSync(transcript, "");
+  mkdirSync(join(dir, "session", "subagents"), { recursive: true });
+  const usage = { input_tokens: 2_000, output_tokens: 0 };
+  writeFileSync(
+    join(dir, "session", "subagents", "agent-a1.jsonl"),
+    JSON.stringify({ message: { id: "m1", usage } }) + "\n",
+  );
+  writeFileSync(join(dir, "session", "subagents", "agent-a2.jsonl"), "");
+  const child = spawn("sh", ["-c", '"$0" "$1"; exit $?', process.execPath, SCRIPT], {
+    detached: true,
+    env: {
+      ...process.env,
+      TMPDIR: dir,
+      CLAUDE_BUDGET_TOKENS: "0",
+      CLAUDE_BUDGET_HOURS: "0",
+      CLAUDE_BUDGET_AGENT_TOKENS: "1000",
+    },
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+  child.stdin.end(
+    JSON.stringify({
+      transcript_path: transcript,
+      session_id: "s1",
+      agent_id: agent,
+      tool_name: tool,
+      tool_input: command === undefined ? {} : { command },
+    }),
+  );
+  const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+  return { status, stderr };
+}
+
+describe("budget-guard agent limit", () => {
+  it("blocks a tool call of the sub-agent past its own limit, and lets another sub-agent run", async () => {
+    const over = await callAsAgent("a1", "Read");
+    expect(over.status).toBe(2);
+    expect(over.stderr).toContain("this agent used");
+
+    expect((await callAsAgent("a2", "Read")).status).toBe(0);
+  });
+
+  it("lets the sub-agent past its limit commit and push its work", async () => {
+    expect((await callAsAgent("a1", "Bash", "cd /w && git push")).status).toBe(0);
+    expect((await callAsAgent("a1", "Bash", "pnpm test:changed")).status).toBe(2);
   });
 });

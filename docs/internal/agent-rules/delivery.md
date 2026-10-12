@@ -199,9 +199,8 @@ is open, done means closed as completed.
       (what `always-in-scope.md` lists counts as asked for); does every test
       title state a claim the spec made; does any change after red leave a
       line of the spec unproven; is every assumption conservative and
-      consistent with the spec. It reads; it runs nothing. A diff that only
-      adds or changes ADRs gets this review alone, judged as a design record
-      rather than against Completion conditions.
+      consistent with the spec. It reads; it runs nothing. An ADR diff is
+      judged as a design record rather than against Completion conditions.
     - The *code review* gets every file in this directory, the ADR index and
       the diff; never the issue. It runs as two reviewers, each with one
       lens. *Behaviour*: for each changed function, what input, state or
@@ -220,15 +219,22 @@ is open, done means closed as completed.
       touches, the sweep finds, or the docs say about what the diff changed,
       is true of the code.
     - The *comment review* gets architecture rule 17 and the output of
-      `.agents/scripts/comments.mjs` (every comment the diff adds or edits,
-      and every comment within 20 lines of code it adds); never the issue.
-      For each comment it says whether the rule allows it.
+      `.agents/scripts/comments.mjs` (every comment the diff adds or edits);
+      never the issue. For each comment it says whether the rule allows it.
+    The diff's kind (`.agents/scripts/diff-kind.mjs`) sets which of these
+    run. An ADR-only diff gets the spec review alone; a docs-only diff the
+    spec and claims reviews; a comments-only diff the spec, claims and
+    comment reviews; a tests-only diff all but the behaviour lens; a
+    small diff (at most 100 changed lines) all of them, with one code
+    reviewer holding both lenses; any other diff all of them. A PR that
+    closes no issue gets no spec review.
     Each review lists what it checked and returns every finding, one per
     defect: a claim, its class (the general rule it breaks), the evidence as
     `file:line` or a command and its output, and *blocking* or *note*. A
     finding is blocking when it breaks behaviour, leaves wrong state, states
     something false, or breaches a rule, an accepted ADR or the spec;
-    anything else is a note. A finding needs a concrete failure or a named
+    anything else is a note. A test for a case the spec does not name, or
+    defensive code, is a note. A finding needs a concrete failure or a named
     cost and who pays it; a diff touching a file the spec did not list is a
     note unless a user would see the difference. Whether CI is green is
     never a finding: CI proves it, and the gate checks it (rule 15).
@@ -244,7 +250,7 @@ is open, done means closed as completed.
     defect, and that no other instance of each fixed class is left. What a
     later round finds outside that is a note; a confirmed defect among those
     notes becomes a `bug:new` issue and does not block the PR. The claims
-    and comment reviews run every round. A commit pushed after a round that passed (a
+    and comment reviews its kind gets run every round. A commit pushed after a round that passed (a
     merge of the base branch, a fix the gate needed) gets the code and
     claims reviews of that fix alone, outside the count below: a confirmed
     finding there gets one fix run and one more such review, and one still
@@ -254,7 +260,8 @@ is open, done means closed as completed.
     message is not: its fix gets the review that raised it.
     Rounds run while they converge: round 2 runs after any confirmed spec or
     code finding, and each later round only when the one before confirmed
-    fewer spec and code findings than the round before it, up to five
+    fewer spec and code findings than the round before it, or a single one
+    that is not an earlier round's finding left unresolved, up to five
     rounds. A spec or code finding still confirmed when the count stops
     falling, or after round five, means the agent stops and hands off with
     the finding under Findings (rule 2), leaving the PR in draft. Claims
@@ -273,8 +280,8 @@ is open, done means closed as completed.
     `gh pr merge` themselves. The script merges only a ready PR with no
     `needs-hardware` label, a `## Review` section and no "spec needs" line,
     green CI, and no conflict. Before calling it the agent also checks what
-    the script cannot read: no blocking finding is open, and every surviving
-    mutant is explained in the PR body. A conflict, or red CI, gets one fix
+    the script cannot read: no blocking finding is open. A conflict, or red
+    CI, gets one fix
     run and the gate again. Anything else short of that parks the issue with
     a handoff and leaves the PR for the maintainer.
 

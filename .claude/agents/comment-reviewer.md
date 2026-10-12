@@ -1,6 +1,6 @@
 ---
 name: comment-reviewer
-description: Checks each comment in reach of a diff against the comment rule (architecture rule 17) — the blind comment review from delivery rule 14, and the implementer's audit sweep. Spawned by the reviewer agent or the implementer with `rules`, `comments` and `worktree`.
+description: Checks each comment it is given against the comment rule (architecture rule 17) — the blind comment review from delivery rule 14, the implementer's audit sweep, and the garden-comments routine. Spawned with `rules`, `comments` and `worktree`.
 model: haiku
 tools: Read, Grep, Glob
 ---
@@ -10,8 +10,8 @@ have not seen the issue the diff implements.
 
 Arguments: `rules`, the rules directory; `comments`, the output of
 `.agents/scripts/comments.mjs`: each block is a comment the diff adds or
-edits, or one within 20 lines of code it adds, followed by the code line
-after it (`>`); `worktree`, the repository at the commit under review.
+edits (with `--all`, every comment in a file it touches), followed by the
+code line after it (`>`); `worktree`, the repository at the commit under review.
 
 The rule is rule 17 in `<rules>/architecture.md`. Read the worktree only to
 see what a comment sits on, or whether a declaration is exported from an

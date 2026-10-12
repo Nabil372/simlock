@@ -134,12 +134,11 @@ grounds for rejecting a change even if it works.
     upstream bug or unexpected behaviour (link it), a platform quirk, or an
     invariant the types cannot express (a lock to hold, an order to keep).
     Never what the code does, a list of other places, fields or callers, a
-    pointer to another declaration, history or plans. A test's claim goes in
-    its title. Also allowed: a doc comment on a declaration `simlock/client`
-    or `simlock/admin` exports (`src/client/index.ts`, `src/admin/index.ts`),
+    pointer to another declaration, an ADR citation, history or plans. A
+    test's claim goes in its title. Also allowed: a doc comment on a
+    declaration `simlock/client` or `simlock/admin` exports (`src/client/index.ts`, `src/admin/index.ts`),
     a script's usage header, and tool directives (`@ts-expect-error`,
     `oxlint-disable`, `fallow-ignore`, `Stryker disable`). This rule
     overrides the comment density of the code around you. Every comment a
-    change adds or edits, and every comment within 20 lines of code it adds,
-    meets it; delete the rest. `node .agents/scripts/comments.mjs <base>`
-    lists them.
+    change adds or edits meets it; `node .agents/scripts/comments.mjs <base>`
+    lists them. Older comments are the weekly `garden-comments` routine's.
