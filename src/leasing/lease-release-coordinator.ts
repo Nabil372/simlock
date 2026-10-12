@@ -383,19 +383,38 @@ export class LeaseReleaseCoordinator
     const controller = new AbortController();
     const aborted = this.#maintenanceDepth > 0 || this.#stopping || this.#disposed;
     if (aborted) controller.abort();
-    const settled = participants.map(async (participant) => {
-      try {
-        await participant.leaseEnded(ended, controller.signal);
-      } catch (error: unknown) {
-        this.#logger.error("lease-end participant failed", {
-          ...context,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    });
+    const settled = participants.map(async (participant) =>
+      this.#callOne(participant, ended, controller.signal),
+    );
     // why: aborted before the call: nothing waits and no ceiling is armed.
     if (aborted) return undefined;
+    const calls = this.#armCeiling(clock, endWaitMs, controller, context, settled);
+    return waitable ? calls : undefined;
+  }
 
+  async #callOne(
+    participant: LeaseEndParticipant,
+    ended: EndedLease,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      await participant.leaseEnded(ended, signal);
+    } catch (error: unknown) {
+      this.#logger.error("lease-end participant failed", {
+        deviceId: ended.deviceId,
+        error: error instanceof Error ? error.message : String(error),
+        leaseId: ended.leaseId,
+      });
+    }
+  }
+
+  #armCeiling(
+    clock: Clock,
+    endWaitMs: number,
+    controller: AbortController,
+    context: { readonly deviceId: string; readonly leaseId: string },
+    settled: readonly Promise<void>[],
+  ): ParticipantCalls {
     let timer: TimerHandle | undefined;
     let finish!: () => void;
     const done = new Promise<void>((resolve) => {
@@ -425,7 +444,7 @@ export class LeaseReleaseCoordinator
       stop();
     });
     void Promise.all(settled).then(stop);
-    return waitable ? calls : undefined;
+    return calls;
   }
 
   async #releaseAll(
