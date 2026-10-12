@@ -61,6 +61,10 @@ mount option that lets an optional module serve routes under `/v1/<prefix>`,
 and the lease-end port of ADR 0024. The edge is off unless the operator
 turns it on.
 
+The core still names agent-device in two places, as data rather than code:
+the `agentDevice` config keys, and one `simlock doctor` finding kind,
+`agent-device-unavailable`, which the edge fills. Neither imports the edge.
+
 ### 2. The simlock lease is the only clock
 
 An agent-device lease and its simlock lease share one id (the CLI chooses
@@ -83,20 +87,26 @@ it; ADR 0020 lets simlock keep it) and one lifetime.
   fails the command instead of quietly leasing a new device.
 
 The agent-device daemon is started with a lease ceiling far above simlock's,
-so an agent-device lease never ends before its simlock lease.
+and the front raises the `ttlMs` of every lease call it forwards to that
+ceiling, so an agent-device lease never ends before its simlock lease.
 
 ### 3. simlock runs the agent-device daemon
 
 One agent-device daemon per worker, started and watched by the host's
 supervisor:
 
-- installed by the operator, never downloaded; a version outside the range
-  the pinned proxy supports, or a daemon that cannot start, leaves the edge
-  unmounted while the rest of simlock runs, and `simlock doctor` says why;
-- a private state directory, so it shares nothing with an agent-device the
-  operator runs by hand;
+- installed by the operator, never downloaded; a version simlock does not
+  support, or a daemon that cannot start, leaves the rest of simlock
+  running. While the edge is turned on, its routes stay mounted and answer
+  every request with why agent-device is not available, and
+  `simlock doctor` says the same. Turned off, nothing is mounted;
+- a private state directory, device claims included, so it shares nothing
+  with an agent-device the operator runs by hand;
 - every simlock driver's lease environment, passed through unread, so it
-  sees simlock's devices and no others;
+  sees simlock's devices and no others. One key is also mapped: the iOS
+  driver's device set becomes agent-device's daemon-wide device set
+  (`AGENT_DEVICE_IOS_SIMULATOR_DEVICE_SET`), so agent-device lists only
+  simlock's simulators. The driver itself names nothing of agent-device;
 - a policy file that refuses `boot` and `shutdown`: simlock owns whether a
   device runs;
 - reaped and restarted when the simlock daemon starts, and restarted when it
