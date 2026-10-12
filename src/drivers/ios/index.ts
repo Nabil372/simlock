@@ -1579,16 +1579,16 @@ export class IosSimctlDriver implements Driver {
         "Refusing `simlock devicectl`: Simlock has no local devicectl wrapper. Run `xcrun devicectl` directly, or use `device.exec` on a lease.",
       );
     }
-    if (!isPhysicalDriverDevice(device)) {
-      throw new PassthroughRefusedError(
-        tool,
-        "Refusing `devicectl`: it only serves a physical device, and this lease holds a simulator. Use `simctl`.",
-      );
-    }
     if (context?.platform !== undefined && context.platform !== this.platform) {
       throw new PassthroughRefusedError(
         tool,
         `Refusing \`devicectl\`: it only serves a physical iOS device, and this lease is on the ${context.platform} platform.`,
+      );
+    }
+    if (!isPhysicalDriverDevice(device)) {
+      throw new PassthroughRefusedError(
+        tool,
+        "Refusing `devicectl`: it only serves a physical device, and this lease holds a simulator. Use `simctl`.",
       );
     }
     return devicectlExecCommand(device.deviceId, args);
