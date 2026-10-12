@@ -197,6 +197,7 @@ async function buildDispatcher(
      * `device.exec` command a *real* `NodeProcessRunner` can actually spawn (`node -e ...`
      * takes no `--set`), rather than `ScriptedProcessRunner`'s scripted chunks. */
     readonly passthroughOverride?: PassthroughResolver;
+    readonly execEnv?: NodeJS.ProcessEnv;
     /** Stands in for the event history, so `events.replay` can be checked against it. */
     readonly eventHistory?: Pick<EventHistory, "replay">;
     /** `status.get`'s host block; a fixed machine with no tools by default. */
@@ -330,7 +331,7 @@ async function buildDispatcher(
     ...(overrides.includeEnrollment === true ? { enrollment: engine.core.enrollment } : {}),
     passthrough: resolvePassthroughOverride(engine, overrides.passthroughOverride),
     ...(overrides.processRunner === undefined ? {} : { processRunner: overrides.processRunner }),
-    execEnv: { PATH: "/usr/bin" },
+    execEnv: overrides.execEnv ?? { PATH: "/usr/bin" },
     queue: engine,
     reaper,
     registry,
@@ -2874,6 +2875,37 @@ describe("Dispatcher: device.exec", () => {
     // Order across both streams, and each chunk exactly as written: a handler that buffered or
     // line-joined would show two stdout chunks merged, or stderr after both of them.
     expect(seen).toEqual(["stdout:first", "stderr:warning\n", "stdout: and second\n"]);
+  });
+
+  it("spawns without a key of the daemon's environment that the command's unsetEnv names, and keeps every other key and the command's own env", async () => {
+    const runner = new ScriptedProcessRunner([{ match: command }]);
+    const resolver = recordingResolver([], () =>
+      Promise.resolve({
+        args: command.args,
+        command: command.command,
+        env: { SIMLOCK_SCOPED: "1" },
+        unsetEnv: ["ANDROID_ADB_SERVER_ADDRESS", "ANDROID_SERIAL"],
+      }),
+    );
+    const { dispatcher, leaseId } = await withLease({
+      execEnv: {
+        ANDROID_ADB_SERVER_ADDRESS: "other-host",
+        ANDROID_SERIAL: "someone-elses-phone",
+        PATH: "/usr/bin",
+        UNRELATED: "kept",
+      },
+      passthroughOverride: resolver,
+      processRunner: runner,
+    });
+
+    await dispatcher.dispatch(
+      "device.exec",
+      { args: ["list", "devices"], leaseId, tool: "simctl" },
+      session({ principal: "tok_agent" }),
+    );
+
+    const env = runner.calls[0]?.options.env;
+    expect(env).toEqual({ PATH: "/usr/bin", SIMLOCK_SCOPED: "1", UNRELATED: "kept" });
   });
 
   it("writes stdin to the child once and closes it", async () => {

@@ -1571,27 +1571,6 @@ describe("AndroidDriver", () => {
     expect(reality.processes).toEqual([expect.objectContaining({ deviceId: "simlock_running" })]);
   });
 
-  it("inspectPhysical refuses every ID as not-connected, with a message that it cannot read physical devices yet, and starts no process", async () => {
-    const filesystem = await androidFilesystem();
-    const runner = new ScriptedProcessRunner([]);
-    const driver = await createDriver(filesystem, runner);
-    const callsBefore = runner.calls.length;
-
-    const reads = await Promise.all([
-      driver.inspectPhysical("R58M123ABC"),
-      driver.inspectPhysical("emulator-5554"),
-    ]);
-
-    for (const read of reads) {
-      expect(read).toEqual({
-        enrollable: false,
-        message: "this driver cannot read physical devices yet",
-        reason: "not-connected",
-      });
-    }
-    expect(runner.calls).toHaveLength(callsBefore);
-  });
-
   it("hands a lease holder of a physical device its serial and the default adb server", async () => {
     const driver = await createDriver(await androidFilesystem(), new ScriptedProcessRunner([]));
 
@@ -1610,37 +1589,6 @@ describe("AndroidDriver", () => {
     expect(driver.reclaimStrategy(VIRTUAL_DEVICE, { clean: "standard" })).toBe("snapshot");
     expect(driver.reclaimStrategy(PHYSICAL_DEVICE, { clean: "standard" })).toBe("uninstall");
     expect(driver.reclaimStrategy(PHYSICAL_DEVICE, { clean: "full" })).toBe("uninstall");
-  });
-
-  it("answers each given ID not present from listPresentPhysical, starting no process", async () => {
-    const filesystem = await androidFilesystem();
-    const runner = new ScriptedProcessRunner([]);
-    const driver = await createDriver(filesystem, runner);
-    const callsBefore = runner.calls.length;
-
-    const present = await driver.listPresentPhysical(["R58M123ABC", "emulator-5554"]);
-
-    expect(present).toEqual([
-      { driverDeviceId: "R58M123ABC", present: false },
-      { driverDeviceId: "emulator-5554", present: false },
-    ]);
-    expect(runner.calls).toHaveLength(callsBefore);
-  });
-
-  it("rejects reclaim of a physical device for being physical, not for its driver data, starting no process", async () => {
-    const filesystem = await androidFilesystem();
-    const runner = new ScriptedProcessRunner([]);
-    const driver = await createDriver(filesystem, runner);
-    const callsBefore = runner.calls.length;
-
-    const failure = await driver
-      .reclaim(PHYSICAL_DEVICE, { clean: "standard" })
-      .catch((error: unknown) => error);
-
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).not.toMatch(/driver data/i);
-    expect((failure as Error).message).toBe("a physical device cannot be reclaimed yet");
-    expect(runner.calls).toHaveLength(callsBefore);
   });
 
   it("listManaged passes a 30-second timeout to adb devices", async () => {
@@ -2601,14 +2549,13 @@ describe("AndroidDriver.create", () => {
     expect((driver as unknown as { passthroughTools: unknown }).passthroughTools).toEqual(["adb"]);
   });
 
-  it("gives the same adb command with a virtual device, a physical one and none", async () => {
+  it("gives the same adb command with a virtual device and none", async () => {
     const filesystem = await androidFilesystem();
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
     const args = ["shell", "input", "tap", "100", "200"];
 
     const without = await passthroughOf(driver, args);
     const virtual = await passthroughOf(driver, args, undefined, VIRTUAL_DEVICE);
-    const physical = await passthroughOf(driver, args, undefined, PHYSICAL_DEVICE);
 
     expect(without).toEqual({
       args: ["-P", String(adbServerPort), ...args],
@@ -2616,7 +2563,6 @@ describe("AndroidDriver.create", () => {
       env: { ANDROID_ADB_SERVER_PORT: String(adbServerPort) },
     });
     expect(virtual).toEqual(without);
-    expect(physical).toEqual(without);
   });
 
   it("rejects a refusal with PassthroughRefusedError naming adb, never throwing it synchronously", async () => {
