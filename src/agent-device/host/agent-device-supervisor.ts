@@ -154,16 +154,12 @@ export class AgentDeviceSupervisor {
   #child: Child | undefined;
   #current: Promise<void> = Promise.resolve();
   #retry: TimerHandle | undefined;
-  readonly #stopRequested: Promise<"stopped">;
-  #requestStop!: () => void;
+  readonly #stopWaiters = new Set<() => void>();
 
   constructor(options: AgentDeviceSupervisorOptions) {
     this.#o = options;
     this.#stateDir = `${options.home}/agent-device`;
     this.#recordPath = `${options.home}/agent-device-daemon.json`;
-    this.#stopRequested = new Promise<"stopped">((resolve) => {
-      this.#requestStop = () => resolve("stopped");
-    });
     this.#availability = options.config.enabled ? { state: "starting" } : { state: "off" };
   }
 
@@ -177,7 +173,7 @@ export class AgentDeviceSupervisor {
 
   async stop(): Promise<void> {
     this.#stopped = true;
-    this.#requestStop();
+    for (const wake of this.#stopWaiters) wake();
     this.#cancelRetry();
     await this.#current;
     const child = this.#child;
@@ -246,6 +242,7 @@ export class AgentDeviceSupervisor {
   }
 
   #fail(reason: UnavailableReason, message: string, remedyKind?: RemedyKind): void {
+    if (reason === "start-failed") this.#o.logger.warn(`agent-device start failed: ${message}`);
     this.#availability = {
       state: "unavailable",
       reason,
@@ -264,7 +261,7 @@ export class AgentDeviceSupervisor {
     const found = await this.#checkInstall();
     if (found === undefined || this.#stopped) return;
     const env = await this.#prepareLaunch();
-    if (env === undefined) return;
+    if (env === undefined || this.#stopped) return;
     const child = await this.#launch(found.entry, realHome, env);
     if (child === undefined) return;
     await this.#awaitReady(child, found.version);
@@ -547,7 +544,7 @@ export class AgentDeviceSupervisor {
     signal: { aborted: boolean },
   ): Promise<ReadyOutcome> {
     for (;;) {
-      await Promise.race([this.#sleep(POLL_MS), this.#stopRequested]);
+      await this.#untilStop(this.#sleep(POLL_MS));
       if (signal.aborted || this.#stopped) return { kind: "cancelled" };
       if (child.exit !== undefined) return { kind: "exited" };
       const outcome = await this.#probe(child, version);
@@ -563,7 +560,7 @@ export class AgentDeviceSupervisor {
     const baseUrl = `http://127.0.0.1:${endpoint.httpPort}`;
     let body: unknown;
     try {
-      const read = await Promise.race([o.healthProbe.read(baseUrl), this.#stopRequested]);
+      const read = await this.#untilStop(o.healthProbe.read(baseUrl));
       if (read === "stopped") return { kind: "cancelled" };
       body = read;
     } catch {
@@ -597,6 +594,9 @@ export class AgentDeviceSupervisor {
       this.#fail(reason, message, remedyKind);
       return;
     }
+    this.#o.logger.warn(
+      `agent-device daemon pid ${child.pid} is still alive after SIGKILL; its record is kept for the next start`,
+    );
     this.#fail(
       reason,
       `${message}; pid ${child.pid} is still alive and its record is kept`,
@@ -729,6 +729,21 @@ export class AgentDeviceSupervisor {
 
   async #removeRecord(): Promise<void> {
     await this.#o.filesystem.rm(this.#recordPath);
+  }
+
+  // why: a waiter per poll on one never-settling promise would pile up reactions across retries.
+  async #untilStop<T>(work: Promise<T>): Promise<T | "stopped"> {
+    if (this.#stopped) return "stopped";
+    let wake!: () => void;
+    const stopped = new Promise<"stopped">((resolve) => {
+      wake = () => resolve("stopped");
+    });
+    this.#stopWaiters.add(wake);
+    try {
+      return await Promise.race([work, stopped]);
+    } finally {
+      this.#stopWaiters.delete(wake);
+    }
   }
 
   #sleep(ms: number): Promise<void> {

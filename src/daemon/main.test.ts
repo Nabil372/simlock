@@ -2445,6 +2445,45 @@ describe("startDaemon with the agent-device edge", () => {
     expect(events).toEqual(["agent-device exited", "driver disposed"]);
   });
 
+  async function spawnedEnvironment(drivers: (clock: FakeClock) => StartDaemonOptions["drivers"]) {
+    const setup = await setUp({ agentDevice: { command, enabled: true } });
+    const runner = versionAndDaemon(setup.directory);
+    await startEdge(setup, {
+      drivers: drivers(new FakeClock(1_000)),
+      processRunner: runner,
+      processSupervisor: new FakeProcessSupervisor(),
+    });
+    await pollUntil(() => runner.calls.length === 2);
+    return runner.calls[1]?.options.env ?? {};
+  }
+
+  it("hands the drivers' lease environment to the agent-device daemon", async () => {
+    const env = await spawnedEnvironment((clock) => [
+      new FakeDriver({
+        availableOsVersions: ["26.5"],
+        clock,
+        leaseEnvironment: { SIMLOCK_IOS_DEVICE_SET: "/sets/ios", SIMLOCK_TEST_MARKER: "kept" },
+        platform: "ios",
+      }),
+    ]);
+
+    expect(env["SIMLOCK_TEST_MARKER"]).toBe("kept");
+    expect(env["AGENT_DEVICE_IOS_SIMULATOR_DEVICE_SET"]).toBe("/sets/ios");
+  });
+
+  it("hides a platform whose driver is off from the agent-device daemon, and only that one", async () => {
+    const iosOnly = await spawnedEnvironment((clock) => [
+      new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" }),
+    ]);
+    const both = await spawnedEnvironment((clock) => [
+      new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" }),
+      new FakeDriver({ availableOsVersions: ["14"], clock, platform: "android" }),
+    ]);
+
+    expect(iosOnly["AGENT_DEVICE_ANDROID_DEVICE_ALLOWLIST"]).toBe("simlock-no-android-device");
+    expect(both["AGENT_DEVICE_ANDROID_DEVICE_ALLOWLIST"]).toBeUndefined();
+  });
+
   it("still starts and grants a lease when agent-device is not found", async () => {
     const setup = await setUp({
       agentDevice: { command: "/opt/missing/agent-device", enabled: true },

@@ -925,6 +925,7 @@ describe("AgentDeviceSupervisor failed starts", () => {
   it("reports start-failed and writes no record when the spawn throws", async () => {
     const harness = await run({ spawnThrows: new Error("EACCES: permission denied") });
 
+    expect(warnings(harness).some((line) => line.includes("EACCES"))).toBe(true);
     expect(unavailable(harness)).toMatchObject({ reason: "start-failed" });
     expect(unavailable(harness).message).toContain("EACCES");
     await expect(harness.filesystem.exists(recordPath)).resolves.toBe(false);
@@ -1097,14 +1098,16 @@ describe("AgentDeviceSupervisor reaping a daemon a killed simlock left", () => {
       [psRun(900, ownLine("/elsewhere/daemon.js"))],
     ],
   ] as const)("removes the record and signals nothing for %s", async (_case, livePids, ps) => {
+    // why: the spawn throws, so no new record can stand in for the old one: only a removal empties it.
     const harness = await run({
       expectations: [...ps, versionRun(), daemonSpawn()],
       livePids,
       record: record(900),
+      spawnThrows: new Error("no spawn"),
     });
 
     expect(harness.processes.signals).toEqual([]);
-    expect(await readJson(harness, recordPath)).toMatchObject({ pid: harness.children[0]?.pid });
+    expect(await harness.filesystem.exists(recordPath)).toBe(false);
   });
 
   it("signals nothing when daemon.json names another pid than the recorded one", async () => {
@@ -1121,6 +1124,21 @@ describe("AgentDeviceSupervisor reaping a daemon a killed simlock left", () => {
     expect(harness.processes.signals).toEqual([]);
     expect(await readJson(harness, recordPath)).toMatchObject({ pid: harness.children[0]?.pid });
     expect(stateOf(harness)).toBe("running");
+  });
+
+  it("removes the record when daemon.json names another pid than the recorded one", async () => {
+    const harness = await run({
+      expectations: [psRun(900, ownLine()), versionRun(), daemonSpawn()],
+      livePids: [900],
+      record: record(900),
+      spawnThrows: new Error("no spawn"),
+      stateDirContents: async (filesystem) => {
+        await filesystem.mkdir(stateDir, { mode: 0o700 });
+        await filesystem.writeFileAtomic(daemonJsonPath, JSON.stringify({ pid: 777 }));
+      },
+    });
+
+    expect(await harness.filesystem.exists(recordPath)).toBe(false);
   });
 
   it.each([
@@ -1204,6 +1222,30 @@ describe("AgentDeviceSupervisor after the daemon is running", () => {
     expect(daemonSpawns(harness)).toHaveLength(1);
     await advanceUntil(harness, () => stateOf(harness) === "running", 5_000);
     expect(daemonSpawns(harness)).toHaveLength(2);
+  });
+
+  it("times the stable uptime from ready, not from the spawn: a child ready 10 s after the spawn that exits 62 s after it is start-failed", async () => {
+    const harness = await arrange({
+      daemonJson: () => "none",
+      expectations: [versionRun(), daemonSpawn(), versionRun(), daemonSpawn()],
+    });
+    void harness.begin();
+    await advanceUntil(harness, () => harness.children.length === 1, 5_000);
+    const spawnedAt = harness.clock.now();
+    await advanceBy(harness, 10_000);
+    await harness.filesystem.writeFileAtomic(
+      daemonJsonPath,
+      JSON.stringify({ httpPort, pid: harness.children[0]?.pid, token }),
+    );
+    harness.probe.startListening(httpPort);
+    await advanceUntil(harness, () => stateOf(harness) === "running", 5_000);
+    await advanceBy(harness, spawnedAt + 62_000 - harness.clock.now());
+
+    harness.children[0]?.exit(9);
+    await flush();
+
+    expect(unavailable(harness)).toMatchObject({ reason: "start-failed" });
+    expect(daemonSpawns(harness)).toHaveLength(1);
   });
 
   it("reports start-failed for a child that exits 59 s after ready instead of starting it at once", async () => {
@@ -1340,6 +1382,37 @@ describe("AgentDeviceSupervisor.stop", () => {
 
     expect(await readJson(harness, recordPath)).toMatchObject({ pid });
     expect(warnings(harness).some((line) => line.includes(String(pid)))).toBe(true);
+    expect(stateOf(harness)).toBe("off");
+  });
+
+  it("warns naming the pid and keeps the record when stop() ends a start whose child survives SIGKILL", async () => {
+    const harness = await arrange({ daemonJson: () => "none" });
+    harness.begin();
+    await advanceBy(harness, 1_000);
+    const pid = harness.children[0]?.pid as number;
+    harness.processes.behaviours.set(pid, "immortal");
+
+    await advancing(harness, harness.agentDevice.stop());
+    await advancing(harness, harness.started as Promise<void>);
+
+    expect(await readJson(harness, recordPath)).toMatchObject({ pid });
+    expect(warnings(harness).some((line) => line.includes(String(pid)))).toBe(true);
+    expect(stateOf(harness)).toBe("off");
+  });
+
+  it("spawns nothing when stop() is asked while the state directory is being prepared", async () => {
+    const harness = await arrange();
+    const writeFileAtomic = harness.filesystem.writeFileAtomic.bind(harness.filesystem);
+    let stopping: Promise<void> | undefined;
+    vi.spyOn(harness.filesystem, "writeFileAtomic").mockImplementation(async (path, data) => {
+      if (path === `${stateDir}/policy.json`) stopping = harness.agentDevice.stop();
+      await writeFileAtomic(path, data);
+    });
+
+    await advancing(harness, harness.begin());
+    await advancing(harness, stopping as Promise<void>);
+
+    expect(daemonSpawns(harness)).toHaveLength(0);
     expect(stateOf(harness)).toBe("off");
   });
 
