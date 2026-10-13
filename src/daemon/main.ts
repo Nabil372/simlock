@@ -5,7 +5,12 @@ import { pathToFileURL } from "node:url";
 import {
   agentDeviceFindings,
   AgentDeviceSupervisor,
+  cancelWaitingAllocates,
+  createAgentDeviceEdgeParts,
+  createAgentDeviceFront,
+  SupervisorAgentDeviceUpstream,
   type AgentDeviceHealthProbe,
+  type AgentDeviceUpstream,
   NodeAgentDeviceHealthProbe,
 } from "../agent-device/index.js";
 import { EVENT_FILE_NAME, EventBus, EventHistory, type EventBusLogger } from "../bus/index.js";
@@ -51,6 +56,7 @@ import {
   iosPrerequisites,
 } from "../drivers/ios/index.js";
 import { createHttpApp } from "../http/app.js";
+import type { HttpDispatch } from "../http/dispatcher-session.js";
 import { HttpGateway } from "../http/server.js";
 import { TokenStore } from "../http/token-store.js";
 import {
@@ -108,6 +114,7 @@ import { createCredentialRoleResolver } from "./session.js";
 
 export interface StartDaemonOptions {
   readonly agentDeviceHealth?: AgentDeviceHealthProbe;
+  readonly agentDeviceUpstream?: AgentDeviceUpstream;
   readonly clock?: Clock;
   readonly configOverrides?: ConfigOverrides;
   readonly configPath?: string;
@@ -426,6 +433,13 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     processSupervisor,
     tcpProbe,
   });
+  // why: the edge needs nothing from leasing, so it is built here, with the supervisor it reads.
+  const agentDeviceParts = config.agentDevice.enabled
+    ? createAgentDeviceEdgeParts(
+        options.agentDeviceUpstream ?? new SupervisorAgentDeviceUpstream(agentDevice),
+        clock,
+      )
+    : undefined;
   const daemon = new DaemonServer({
     // Closes the warm pool the moment a stop is asked for, ahead of every await in the stop.
     beginStop: () => core.closeWarmPool(),
@@ -505,6 +519,9 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     // standalone `daemon.stop()` call after it, already handle that -- so it is swallowed
     // here.
     stopAuxiliary: async () => {
+      if (agentDeviceParts !== undefined) {
+        await cancelWaitingAllocates(agentDeviceParts, (id) => leasing.cancelPending(id));
+      }
       await gatewayStarted.catch(() => undefined);
       await stopHttpGateway?.();
       // Stopped with the other auxiliary frontends, and for the same reason: the uplink is a
@@ -525,7 +542,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
       socketClaimed = true;
       // why: not awaited, since simlock's start never waits for agent-device, and a daemon that lost
       // the socket race never gets here, so it reaps nothing.
-      void agentDevice.start();
+      if (options.agentDeviceUpstream === undefined) void agentDevice.start();
       // Dialled here, once the socket is claimed and `#readyPromise` is set. The gateway's first
       // `status.get` never parks (it still answers `starting` during convergence), but its
       // `events.subscribe` does park on startup readiness, so the refresh that follows the
@@ -547,14 +564,26 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
 
   async function startHttpGateway(): Promise<void> {
     const httpLogger = logger.child("http");
+    const dispatch: HttpDispatch = (operation, input, session) =>
+      daemon.dispatch(operation, input, session);
     const app = createHttpApp({
       clock,
       config,
-      dispatch: (operation, input, session) => daemon.dispatch(operation, input, session),
+      dispatch,
       eventBus,
       idGenerator,
       leaseRequests: leasing.requests,
       logger: httpLogger,
+      mounts:
+        agentDeviceParts === undefined
+          ? []
+          : [
+              createAgentDeviceFront(agentDeviceParts, {
+                clock,
+                dispatch,
+                logger: logger.child("agent-device"),
+              }),
+            ],
       ownerRoutedFacts: daemon.ownerRoutedFacts,
       registry,
       tokens,

@@ -1,0 +1,110 @@
+import type { TokenIdentity } from "../../http/token-store.js";
+import type { Clock } from "../../ports/index.js";
+
+const MAX_PRINCIPALS_PER_REFRESH = 100;
+
+export interface FrontMapEntry {
+  readonly identity: TokenIdentity;
+  readonly address: string;
+  readonly ttlMs: number;
+  readonly deadline: number;
+}
+
+export interface ListedLease {
+  readonly id: string;
+  readonly ttlDeadline: number;
+}
+
+interface Held {
+  readonly identity: TokenIdentity;
+  readonly address: string;
+  readonly ttlMs: number;
+  deadline: number;
+  endedAt?: number;
+}
+
+export class FrontMap {
+  readonly #held = new Map<string, Held>();
+  readonly #waiting = new Map<string, number>();
+
+  startWaiting(leaseId: string): void {
+    this.#waiting.set(leaseId, (this.#waiting.get(leaseId) ?? 0) + 1);
+  }
+
+  stopWaiting(leaseId: string): void {
+    const left = (this.#waiting.get(leaseId) ?? 0) - 1;
+    if (left > 0) this.#waiting.set(leaseId, left);
+    else this.#waiting.delete(leaseId);
+  }
+
+  waitingIds(): readonly string[] {
+    return [...this.#waiting.keys()];
+  }
+
+  constructor(readonly clock: Clock) {}
+
+  add(leaseId: string, entry: FrontMapEntry): void {
+    this.#prune();
+    this.#held.set(leaseId, { ...entry });
+  }
+
+  get(leaseId: string): (FrontMapEntry & { readonly endedAt?: number }) | undefined {
+    this.#prune();
+    return this.#held.get(leaseId);
+  }
+
+  markEnded(leaseId: string): void {
+    const held = this.#held.get(leaseId);
+    if (held !== undefined) held.endedAt ??= this.clock.now();
+  }
+
+  async refresh(list: (identity: TokenIdentity) => Promise<readonly ListedLease[]>): Promise<void> {
+    this.#prune();
+    const now = this.clock.now();
+    const byPrincipal = new Map<
+      string,
+      { identity: TokenIdentity; oldest: number; ids: string[] }
+    >();
+    for (const [id, held] of this.#held) {
+      if (held.endedAt !== undefined || held.deadline > now) continue;
+      const group = byPrincipal.get(held.identity.requesterId);
+      if (group === undefined) {
+        byPrincipal.set(held.identity.requesterId, {
+          identity: held.identity,
+          ids: [id],
+          oldest: held.deadline,
+        });
+      } else {
+        group.ids.push(id);
+        group.oldest = Math.min(group.oldest, held.deadline);
+      }
+    }
+    const groups = [...byPrincipal.values()]
+      .sort((a, b) => a.oldest - b.oldest)
+      .slice(0, MAX_PRINCIPALS_PER_REFRESH);
+    await Promise.all(
+      groups.map(async (group) => {
+        let listed: readonly ListedLease[];
+        try {
+          listed = await list(group.identity);
+        } catch {
+          return;
+        }
+        for (const id of group.ids) {
+          const held = this.#held.get(id);
+          if (held === undefined) continue;
+          const found = listed.find((lease) => lease.id === id);
+          if (found === undefined) held.endedAt ??= this.clock.now();
+          else held.deadline = found.ttlDeadline;
+        }
+      }),
+    );
+  }
+
+  #prune(): void {
+    const now = this.clock.now();
+    for (const [id, held] of this.#held) {
+      if (held.endedAt !== undefined && now - held.endedAt >= held.ttlMs) this.#held.delete(id);
+    }
+  }
+}

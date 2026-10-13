@@ -211,6 +211,9 @@ importers:
 
   .:
     dependencies:
+      '@agent-device/proxy':
+        specifier: file:vendor/agent-device-proxy-0.21.27-dev-54e4e4d.tgz
+        version: file:vendor/agent-device-proxy-0.21.27-dev-54e4e4d.tgz
       '@hono/node-server':
         specifier: 2.0.10
         version: 2.0.10(hono@4.13.5)
@@ -310,6 +313,11 @@ importers:
         version: 4.1.10(@types/node@26.1.1)(vite@8.3.2(@types/node@26.1.1)(jiti@2.7.0))
 
 packages:
+
+  '@agent-device/proxy@file:vendor/agent-device-proxy-0.21.27-dev-54e4e4d.tgz':
+    resolution: {integrity: sha512-/Q0a2HgHF82DmisG8y5sYsguc5sBc8nEuWuylaemVUWaPmqpJTvwV6aVVsGcluJInU29361hyN27zSbl1v7FiQ==, tarball: file:vendor/agent-device-proxy-0.21.27-dev-54e4e4d.tgz}
+    version: 0.21.27-dev
+    engines: {node: '>=22.12'}
 
   '@axe-core/playwright@4.13.0':
     resolution: {integrity: sha512-6YLx+kxXu5GJceG4ozFg+33a2EMTdjYwWGloJ3sb9Kta5pp+ZNS53uxGVog5JetIY8s++P5UrtX+cri+u0VAVg==}
@@ -3092,6 +3100,8 @@ packages:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
+
+  '@agent-device/proxy@file:vendor/agent-device-proxy-0.21.27-dev-54e4e4d.tgz': {}
 
   '@axe-core/playwright@4.13.0(playwright-core@1.63.0)':
     dependencies:

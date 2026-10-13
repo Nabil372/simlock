@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 
 import type { EventBus } from "../bus/index.js";
@@ -80,6 +80,12 @@ export interface HttpGatewayDeps {
   /** `false` on a gateway, which never downloads: `allowDownload` then does not answer the lease
    * request `POST` early. Default `true`. */
   readonly answerDownloadsEarly?: boolean | undefined;
+  readonly mounts?: readonly HttpMount[];
+}
+
+export interface HttpMount {
+  readonly prefix: string;
+  handle(request: Request, identity: TokenIdentity): Promise<Response>;
 }
 
 type Env = AuthEnv;
@@ -712,6 +718,12 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
       },
     });
   });
+
+  for (const mount of deps.mounts ?? []) {
+    const handler = (c: Context<Env>) => mount.handle(c.req.raw, c.get("identity"));
+    app.all(`/v1/${mount.prefix}`, agentAuth, handler);
+    app.all(`/v1/${mount.prefix}/*`, agentAuth, handler);
+  }
 
   // `notices` holds a subscription for the app's lifetime -- exposed here rather than left to
   // leak, so a caller composing this app into a longer-lived process (the daemon) can

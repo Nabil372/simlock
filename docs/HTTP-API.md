@@ -1453,6 +1453,72 @@ from that worker's local agents, each with the **`workerId`** whose queue it
 is in. A request the gateway has sent to a worker is listed once, as the
 gateway's own. A worker's `createdAt` comes from that worker's clock.
 
+### `/v1/agent-device/*`
+
+A **worker** with `agentDevice.enabled` and `http.enabled` both `true` serves
+agent-device's proxy URL here. Point the agent-device CLI at it and give it
+your Simlock token:
+
+```bash
+export AGENT_DEVICE_DAEMON_AUTH_TOKEN=<simlock token>
+agent-device connect proxy --daemon-base-url http://<worker>:<port>/v1/agent-device
+agent-device open MyApp --platform ios --device "iPhone 17 Pro"
+agent-device snapshot
+agent-device close
+```
+
+With `agentDevice.enabled` `false`, and on a gateway, every `/v1/agent-device`
+URL answers `404`.
+
+- **Every route needs the Simlock token.** No token is `401`, a worker join
+  token is `403`, and so is an `operator` token, with
+  `refused: agent-device through simlock needs an agent token`.
+- **Each agent needs its own Simlock token.** Simlock tells agents apart by
+  token: two agents sharing one token share one agent-device session.
+- **`open` leases a device from Simlock.** The device is picked by Simlock,
+  and waits in Simlock's queue, up to 330 seconds, when every match is taken.
+  The lease is an ordinary Simlock lease: `simlock list` shows it, owned by the
+  token's principal, and the lease ID is the 32-hex ID the CLI chose. `close`
+  ends the agent-device lease and then frees the Simlock lease, so Simlock
+  wipes the device for the next agent.
+- **Heartbeats** reach agent-device unchanged. They do not renew the Simlock
+  lease yet, so a Simlock lease ends at its own TTL; pass `ttlMs` on `open`
+  for a longer one.
+
+What `open` asks Simlock for:
+
+| The agent passes | Simlock is asked for |
+| --- | --- |
+| `--platform ios` or `android` | that platform, any device Simlock grants |
+| `--target mobile`, `tv`, `desktop` | the class `phone`, `tv`, `desktop` |
+| `--device "iPhone 17 Pro"` | that model, and no class: the model wins over `--target` |
+| `ttlMs` | that TTL, at least 5 seconds; none sent means `lease.defaultTtlMs` |
+
+Messages the route prints. The agent-device CLI reads the message in the body
+(a JSON-RPC error on `/rpc`, `{ "ok": false, "error", "code" }` elsewhere), not
+the status.
+
+- `agent-device is not available on this simlock: <reason>`: agent-device is
+  turned on but missing, too old, starting or crashed. The rest of Simlock
+  works as before.
+- `timed out waiting for a device; nothing was leased`.
+- `refused by simlock: <message>`: Simlock refused the lease request, for
+  example a model it does not know, or a `ttlMs` above `lease.maxTtlMs`.
+- `refused: only iOS and Android`, `refused: name --platform ios or android`.
+- `refused: simlock picks the device`: `--udid` or `--serial` on `open`.
+- `refused: this agent-device is too old for simlock; upgrade it`: the CLI
+  sent no lease ID.
+- `refused: send lease calls as lease RPCs`: a lease call inside
+  `agent_device.command`.
+- `refused: ttlMs must be a positive number of milliseconds`.
+- `refused: simlock leases only plain devices`: `backend`,
+  `retainOnClose: true`, a `provider*` or `aws*` key, or a `leaseProvider`
+  other than `proxy`.
+- `refused: agent-device through simlock needs an agent token`.
+- `refused: request body over 1 MiB` and `refused: send one JSON-RPC request`
+  (a body that is not JSON, a JSON array, or an object with no string
+  `method`); both answer with `id: null`.
+
 ## Errors
 
 Every failure is the same shape the daemon protocol uses:
