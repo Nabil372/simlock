@@ -872,7 +872,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(await waiting(rig)).toEqual([]);
   });
 
-  it("stopping the daemon while an allocate waits ends with no simlock lease and no lease request stored", async () => {
+  it("stopping the daemon while an allocate waits ends with no simlock lease, and the lease request it waited on is cancelled, not open, in state.json", async () => {
     const rig = await setUp({ maxRunning: 1 });
     await granted(rig, 1, {}, { token: secrets.two });
     const second = track(allocate(rig, 2));
@@ -884,7 +884,13 @@ describe("the agent-device front, through the whole worker daemon", () => {
     const state = await rig.filesystem.readFile(rig.statePath);
     expect(second.done()).toBe(true);
     expect(state).toContain(hex(1));
-    expect(state).not.toContain(hex(2));
+    const records = JSON.parse(state ?? "{}") as {
+      leaseRequests?: readonly { leaseId?: string; state: string }[];
+    };
+    expect(records.leaseRequests?.filter((record) => record.leaseId === hex(2))).toEqual([
+      expect.objectContaining({ state: "cancelled" }),
+    ]);
+    expect(records.leaseRequests?.some((record) => record.state === "open")).toBe(false);
   });
 
   it("an allocate still waiting 330 s after the front admitted it answers `timed out waiting for a device; nothing was leased`, and simlock's queue is empty", async () => {

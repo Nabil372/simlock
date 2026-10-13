@@ -27,6 +27,14 @@ export function createAgentDeviceEdgeParts(
   return { link: new InProcessHostLink(new AgentDeviceHost(upstream)), map: new FrontMap(clock) };
 }
 
+// why: a stop refuses every dispatch, so waiting allocates' lease requests are cancelled through leasing directly, before the gateway stops; otherwise they stay open across a restart.
+export async function cancelWaitingAllocates(
+  parts: AgentDeviceEdgeParts,
+  cancel: (requesterId: string) => Promise<unknown>,
+): Promise<void> {
+  await Promise.allSettled(parts.map.waitingIds().map((id) => cancel(id)));
+}
+
 export function createAgentDeviceFront(
   parts: AgentDeviceEdgeParts,
   deps: { readonly dispatch: HttpDispatch; readonly clock: Clock; readonly logger: Logger },

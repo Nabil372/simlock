@@ -25,6 +25,19 @@ interface Held {
 
 export class FrontMap {
   readonly #held = new Map<string, Held>();
+  readonly #waiting = new Set<string>();
+
+  startWaiting(leaseId: string): void {
+    this.#waiting.add(leaseId);
+  }
+
+  stopWaiting(leaseId: string): void {
+    this.#waiting.delete(leaseId);
+  }
+
+  waitingIds(): readonly string[] {
+    return [...this.#waiting];
+  }
 
   constructor(readonly clock: Clock) {}
 

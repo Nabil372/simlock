@@ -156,6 +156,7 @@ async function requestLease(
     if (admitted) startCancel();
   };
   signal.addEventListener("abort", onAbort, { once: true });
+  context.map.startWaiting(plan.leaseId);
   try {
     const grant = await context.dispatch(
       "lease.request",
@@ -187,6 +188,7 @@ async function requestLease(
     };
   } finally {
     settled = true;
+    context.map.stopWaiting(plan.leaseId);
     wakeCancel?.();
     signal.removeEventListener("abort", onAbort);
   }

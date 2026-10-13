@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import {
   agentDeviceFindings,
   AgentDeviceSupervisor,
+  cancelWaitingAllocates,
   createAgentDeviceEdgeParts,
   createAgentDeviceFront,
   SupervisorAgentDeviceUpstream,
@@ -518,6 +519,9 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     // standalone `daemon.stop()` call after it, already handle that -- so it is swallowed
     // here.
     stopAuxiliary: async () => {
+      if (agentDeviceParts !== undefined) {
+        await cancelWaitingAllocates(agentDeviceParts, (id) => leasing.cancelPending(id));
+      }
       await gatewayStarted.catch(() => undefined);
       await stopHttpGateway?.();
       // Stopped with the other auxiliary frontends, and for the same reason: the uplink is a
