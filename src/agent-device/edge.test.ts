@@ -1602,6 +1602,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(await listed(rig)).toEqual([hex(2)]);
 
     await rig.daemon.dispatch("lease.release-all", {}, adminSession);
+    await advance(rig, 125_000, 25_000);
     await granted(rig, 3);
     const received = heartbeatsReceived(rig);
 
@@ -1660,7 +1661,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     await granted(rig, 2, { ttlMs: 30_000 });
     rig.fake.failNextCommand({ code: "COMMAND_FAILED", message: "the command failed" });
     const failing = await runningCommand(rig, 1);
-    await advance(rig, 25_000, 5_000);
+    await advance(rig, 15_000, 5_000);
     rig.fake.releaseCommand();
     const failure = await envelopeOf(await failing.promise);
     expect(failure.error).toMatchObject({ message: "the command failed" });
@@ -1669,13 +1670,13 @@ describe("the agent-device front, through the whole worker daemon", () => {
 
     const hangUp = new AbortController();
     const hanging = await runningCommand(rig, 2, { signal: hangUp.signal });
-    await advance(rig, 25_000, 5_000);
+    await advance(rig, 15_000, 5_000);
     hangUp.abort();
     await hanging.promise.catch(() => undefined);
     await expect.poll(() => deadlineOf(rig, 2)).toBe(rig.clock.now() + 30_000);
     const afterHangUp = await deadlineOf(rig, 2);
 
-    await advance(rig, 29_000, 5_000);
+    await advance(rig, 14_000, 2_000);
     expect(await deadlineOf(rig, 1)).toBe(afterFailure);
     expect(await deadlineOf(rig, 2)).toBe(afterHangUp);
   });
