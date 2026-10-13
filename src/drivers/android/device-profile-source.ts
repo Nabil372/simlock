@@ -1,23 +1,6 @@
 import { DriverCrashError, UnknownModelError, type DeviceClass } from "../../core/index.js";
 import type { Filesystem, ProcessRunner } from "../../ports/index.js";
 
-/**
- * One device profile a `DeviceProfileSource` can create an AVD from. `builtin` is today's
- * `avdmanager -d <id>` path; `properties` is a hardware descriptor applied to `config.ini`
- * after `avdmanager create avd` (see `AndroidDriver#provision`) -- there is no `avdmanager`
- * device id for it because it never came from `avdmanager list device`. `name` is the
- * source's own canonical spelling of the model (case may differ from what the caller asked
- * for), which `AndroidDriver` needs so `DeviceSpec.model` and cache lookups stay stable.
- *
- * A `properties` profile has no tag and counts as a `phone`.
- *
- * A `builtin` profile is `custom` when `avdmanager` lists it with `OEM : User`: that is how it
- * prints a profile from Android Studio's `devices.xml`, which it reads itself.
- *
- * `names` is every name the profile answers to, `name` first, no two equal ignoring case.
- * `DeviceProfileRegistry` matches a requested model against it and lists the rest as the
- * model's other names, so the two can never disagree.
- */
 export type DeviceProfile =
   | {
       readonly kind: "builtin";
@@ -27,6 +10,20 @@ export type DeviceProfile =
       readonly custom: boolean;
       /** From the entry's `Tag :` line (ADR 0015 §3); `undefined` for a tag the table does not know. */
       readonly deviceClass: DeviceClass | undefined;
+    }
+  | {
+      readonly kind: "library";
+      readonly name: string;
+      readonly id: string;
+      readonly names: readonly string[];
+      readonly deviceClass: DeviceClass;
+      readonly imageKind: string | undefined;
+      readonly apiRange: { readonly min: number; readonly max?: number };
+      readonly playStore: boolean;
+      readonly tablet: boolean;
+      readonly hardware: Readonly<Record<string, string>>;
+      readonly bootProperties: Readonly<Record<string, string>>;
+      readonly copiedFrom: string;
     }
   | {
       readonly kind: "properties";
@@ -118,7 +115,7 @@ export class DeviceProfileRegistry {
     });
     const modelClasses: Record<string, DeviceClass> = {};
     for (const profile of listed.values()) {
-      const deviceClass = profile.kind === "builtin" ? profile.deviceClass : "phone";
+      const deviceClass = profile.kind === "properties" ? "phone" : profile.deviceClass;
       if (deviceClass !== undefined) modelClasses[profile.name] = deviceClass;
     }
     return { customModels, modelAliases, modelClasses, models };
@@ -150,7 +147,7 @@ export class DeviceProfileRegistry {
 
 /** Made on this machine rather than shipped with the SDK. */
 function isCustom(profile: DeviceProfile): boolean {
-  return profile.kind === "properties" || profile.custom;
+  return profile.kind === "properties" || (profile.kind === "builtin" && profile.custom);
 }
 
 /** The first profile any of whose names is `model`, ignoring case. */
@@ -444,7 +441,7 @@ export function parseDevicesXml(contents: string): readonly DevicesXmlProfile[] 
 }
 
 /** CR, LF, or NUL -- see the rejection check at the top of the `<d:device>` loop above. */
-function containsForbiddenCharacter(value: string): boolean {
+export function containsForbiddenCharacter(value: string): boolean {
   // oxlint-disable-next-line no-control-regex -- NUL rejection is intentional, not an accidental control-character match.
   return /[\r\n\u0000]/.test(value);
 }
