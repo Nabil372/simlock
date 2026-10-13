@@ -253,6 +253,7 @@ export interface Config {
   readonly agentDevice: {
     readonly enabled: boolean;
     readonly command: string;
+    readonly leaseTtlCapMs?: number;
   };
   /**
    * ADR 0005 §3/§6. Both sides of the fleet live under one key, and which half is read depends
@@ -406,6 +407,7 @@ export async function loadConfig({
     overrideConfig,
   ) as unknown as Config;
   validateLeaseTtls(merged);
+  validateAgentDeviceTtlCap(merged);
   validateEventLogBounds(merged);
   if (mode === "gateway") {
     warnWorkerOnlyKeys([fromFile, fromOverrides], warn);
@@ -443,6 +445,16 @@ export function effectiveAllowDownload(policy: DownloadPolicy, requested: boolea
 function validateLeaseTtls(config: Config): void {
   if (config.lease.defaultTtlMs > config.lease.maxTtlMs) {
     throw invalidValue("lease.defaultTtlMs", "at most lease.maxTtlMs");
+  }
+}
+
+/** why: agent-device's shortest lease window, so a cap below it would shorten leases past what agent-device keeps. */
+const MIN_AGENT_DEVICE_LEASE_TTL_MS = 5_000;
+
+function validateAgentDeviceTtlCap(config: Config): void {
+  const cap = config.agentDevice.leaseTtlCapMs;
+  if (cap !== undefined && cap > config.lease.maxTtlMs) {
+    throw invalidValue("agentDevice.leaseTtlCapMs", "at most lease.maxTtlMs");
   }
 }
 
@@ -875,7 +887,11 @@ function configValidators(strategy: CapacityStrategyName): Record<string, Valida
         bootAnimation: booleanValue,
       }),
     }),
-    agentDevice: objectValidator({ enabled: booleanValue, command: nonEmptyString }),
+    agentDevice: objectValidator({
+      enabled: booleanValue,
+      command: nonEmptyString,
+      leaseTtlCapMs: integerInRange(MIN_AGENT_DEVICE_LEASE_TTL_MS, Number.MAX_SAFE_INTEGER),
+    }),
     stalledTransition: objectValidator({
       thresholdMultiplier: numberAtLeast(1),
       minimumThresholdMs: nonNegativeNumber,

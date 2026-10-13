@@ -1,9 +1,22 @@
-export type ReplyCode = "INVALID_ARGS" | "COMMAND_FAILED";
+export type ReplyCode = "INVALID_ARGS" | "COMMAND_FAILED" | "UNAUTHORIZED";
 
 export interface FrontReply {
   readonly message: string;
   readonly code: ReplyCode;
   readonly status: number;
+  readonly details?: { readonly reason: string };
+}
+
+const LEASE_ENDED_MESSAGE = "lease ended by simlock; run disconnect, then open";
+
+/** why: the CLI allocates a new lease only for agent-device's own lease-gone reasons, so this one fails the command and prints the message. */
+export function leaseEndedByHost(): FrontReply {
+  return {
+    code: "UNAUTHORIZED",
+    details: { reason: "LEASE_ENDED_BY_HOST" },
+    message: LEASE_ENDED_MESSAGE,
+    status: 200,
+  };
 }
 
 export function notAvailable(reason: string): FrontReply {
@@ -33,7 +46,11 @@ export function frontReply(reply: FrontReply, rpc: { readonly id: unknown } | un
     {
       error: {
         code: -32000,
-        data: { code: reply.code, message: reply.message },
+        data: {
+          code: reply.code,
+          ...(reply.details === undefined ? {} : { details: reply.details }),
+          message: reply.message,
+        },
         message: reply.message,
       },
       id: rpc.id,

@@ -7,12 +7,22 @@ import type { TokenIdentity } from "../../http/token-store.js";
 import type { Clock } from "../../ports/index.js";
 import { frontReply, failure, refusal, type FrontReply } from "../shared/replies.js";
 import { leaseCallFields, leaseIdOf, type RpcRead } from "../shared/rpc.js";
-import { exchange, leaseCall, releaseSimlock, relay, type FrontContext } from "./context.js";
+import {
+  ALLOCATE_SCOPE_KEYS,
+  REPLY_SCOPE_KEYS,
+  exchange,
+  leaseCall,
+  releaseAgentDevice,
+  releaseSimlock,
+  relay,
+  scopeOf,
+  type FrontContext,
+} from "./context.js";
+import { chosenTtl } from "./ttl.js";
 
 type Grant = z.infer<(typeof OPERATIONS)["lease.request"]["output"]>;
 
 const QUEUE_WAIT_MS = 330_000;
-const MIN_TTL_MS = 5_000;
 const CANCEL_RETRY_MS = 1_000;
 const LEASE_GONE = new Set(["LEASE_NOT_FOUND", "LEASE_EXPIRED", "LEASE_REVOKED"]);
 const CLASS_OF_TARGET: Record<string, "phone" | "tv" | "desktop"> = {
@@ -20,9 +30,6 @@ const CLASS_OF_TARGET: Record<string, "phone" | "tv" | "desktop"> = {
   mobile: "phone",
   tv: "tv",
 };
-const CALL_SCOPE_KEYS = ["runId", "leaseProvider", "clientId"] as const;
-// why: only agent-device's reply names the device key it gave the lease, since the front stripped the CLI's key from the allocate it forwarded.
-const REPLY_SCOPE_KEYS = [...CALL_SCOPE_KEYS, "deviceKey"] as const;
 
 const present = (value: unknown): boolean => value !== undefined && value !== null;
 
@@ -72,16 +79,17 @@ function refusalFor(params: Record<string, unknown>): FrontReply | undefined {
   return undefined;
 }
 
-function planOf(params: Record<string, unknown>): Plan {
+function planOf(params: Record<string, unknown>, cap: number | undefined): Plan {
   const fields = leaseCallFields(params);
   const device =
     typeof fields.device === "string" && fields.device !== "" ? fields.device : undefined;
   const klass = typeof fields.target === "string" ? CLASS_OF_TARGET[fields.target] : undefined;
+  const ttlMs = chosenTtl(fields.ttlMs, cap);
   return {
     leaseId: fields.leaseId as string,
     platform: fields.platform as "ios" | "android",
     ...(device === undefined ? (klass === undefined ? {} : { class: klass }) : { model: device }),
-    ...(typeof fields.ttlMs === "number" ? { ttlMs: Math.max(fields.ttlMs, MIN_TTL_MS) } : {}),
+    ...(ttlMs === undefined ? {} : { ttlMs }),
   };
 }
 
@@ -196,31 +204,6 @@ async function requestLease(
   }
 }
 
-function scopeOf(
-  source: Record<string, unknown> | undefined,
-  keys: readonly string[],
-): Record<string, unknown> {
-  const scope: Record<string, unknown> = {};
-  for (const key of keys) {
-    if (source?.[key] !== undefined) scope[key] = source[key];
-  }
-  return scope;
-}
-
-async function releaseAgentDevice(
-  context: FrontContext,
-  request: Request,
-  identity: TokenIdentity,
-  leaseId: string,
-  scope: Record<string, unknown>,
-) {
-  return exchange(
-    context,
-    leaseCall(request, "agent_device.lease.release", { ...scope, leaseId }, "simlock-release"),
-    identity,
-  );
-}
-
 function forwardedBody(
   call: RpcRead & { kind: "request" },
   plan: Plan,
@@ -260,7 +243,7 @@ export async function allocate(
 ): Promise<Response | undefined> {
   const refused = refusalFor(call.params);
   if (refused !== undefined) return frontReply(refused, call);
-  const plan = planOf(call.params);
+  const plan = planOf(call.params, context.leaseTtlCapMs);
   await context.map.refresh((who) => listLeases(context, who));
   if (request.signal.aborted) return undefined;
   const outcome = await requestLease(context, identity, plan, request.signal);
@@ -328,7 +311,7 @@ async function settleNoReply(
     request,
     identity,
     plan.leaseId,
-    scopeOf(call.params, CALL_SCOPE_KEYS),
+    scopeOf(call.params, ALLOCATE_SCOPE_KEYS),
   );
   const holds =
     ended.reading.kind === "error" &&
