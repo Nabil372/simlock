@@ -9,6 +9,8 @@ export type RenewOutcome =
   | { readonly kind: "failed"; readonly message: string };
 
 const TICKS_PER_TTL = 3;
+// why: a timer delay above this overflows and fires at once.
+const LONGEST_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 export async function renewLease(
   context: FrontContext,
@@ -65,7 +67,7 @@ export class Renewals {
       if (limit !== undefined) this.clock.cancel(limit);
       this.#finish(context, leaseId, running);
     };
-    limit = this.clock.setTimer(maxRunMs, end);
+    limit = this.clock.setTimer(Math.min(maxRunMs, LONGEST_TIMER_DELAY_MS), end);
     return end;
   }
 
@@ -96,9 +98,12 @@ export class Renewals {
     this.#disarm(running);
     const entry = context.map.get(leaseId);
     if (entry === undefined || entry.endedAt !== undefined) return;
-    const timer = this.clock.setTimer(entry.ttlMs / TICKS_PER_TTL, () => {
-      void this.#tick(context, leaseId, running, timer);
-    });
+    const timer = this.clock.setTimer(
+      Math.min(entry.ttlMs / TICKS_PER_TTL, LONGEST_TIMER_DELAY_MS),
+      () => {
+        void this.#tick(context, leaseId, running, timer);
+      },
+    );
     running.timer = timer;
   }
 

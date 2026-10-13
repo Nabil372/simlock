@@ -1677,10 +1677,14 @@ describe("the agent-device front, through the whole worker daemon", () => {
     await rig.daemon.dispatch("lease.release-all", {}, adminSession);
     await release(rig, 1);
     const received = rig.fake.requests.length;
+    const tap = tapDispatch(rig);
 
     expectEndedBySimlock(await envelopeOf(await heartbeat(rig, 1)));
+    await advance(rig, 120_000, 10_000);
 
     expect(rig.fake.requests).toHaveLength(received);
+    expect(tap.operations).not.toContain("lease.list");
+    expect(tap.operations).not.toContain("lease.renew");
   });
 
   it("a release for a lease simlock ended answers the agent-device daemon's reply as a success, and the agent-device lease is released", async () => {
