@@ -16,8 +16,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: Quality
+  # why: `pnpm check` runs these one after another in ~5 min; split, the slowest part (one e2e
+  # shard) sets the wall time. Keep the steps below in step with `pnpm check`.
+  static:
+    name: Static checks
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -26,7 +28,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The comment lint in `pnpm check` diffs against origin/main.
+          # why: the comment lint diffs against origin/main.
           fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -37,8 +39,88 @@ jobs:
           corepack prepare pnpm@11.22.0+sha512.1ff870c4c6133dfd88fb2afc46dd13d47f09c9794b438c6fdb47ca98caf3bc16381ee0be93a091b8e3824cf01f889f46d7d9e20910fb0be1ab0fb5baa80dd621 --activate
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Quality checks
-        run: pnpm check
+      - name: Typecheck
+        run: pnpm run typecheck && pnpm run typecheck:e2e
+      - name: Lint
+        run: pnpm run lint && pnpm run lint:comments
+      - name: Format
+        run: pnpm run format:check
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0+sha512.1ff870c4c6133dfd88fb2afc46dd13d47f09c9794b438c6fdb47ca98caf3bc16381ee0be93a091b8e3824cf01f889f46d7d9e20910fb0be1ab0fb5baa80dd621 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Unit tests
+        run: pnpm run test:unit
+
+  e2e:
+    name: E2E (${{ matrix.shard }}/3)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    strategy:
+      # why: one red shard must not cancel the others, or their failures go unreported.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.22.0+sha512.1ff870c4c6133dfd88fb2afc46dd13d47f09c9794b438c6fdb47ca98caf3bc16381ee0be93a091b8e3824cf01f889f46d7d9e20910fb0be1ab0fb5baa80dd621 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build
+        run: pnpm run build && pnpm run build:e2e
+      - name: E2E tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: pnpm exec vitest run --project e2e --tags-filter='!slow' --shard="$SHARD/3"
+
+  # why: branch protection requires the check named Quality, so this job stands for all of the
+  # above. `always()` makes it report a failure when a job it needs fails, where a job skipped
+  # by a failed need would count as passed.
+  quality:
+    name: Quality
+    needs: [static, unit, e2e]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions: {}
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case $result in
+              success | skipped) ;;
+              *) echo "a job Quality needs ended $result" >&2; exit 1 ;;
+            esac
+          done
 
   # Decides whether the Console job has work to do. A workflow-level `paths` filter would leave
   # the required Console check pending forever on a PR it skips; a job skipped by `if` reports
