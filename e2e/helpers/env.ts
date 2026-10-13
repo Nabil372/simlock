@@ -357,7 +357,10 @@ async function teardown(state: TeardownState): Promise<void> {
   // unlinked its socket on the way out but never actually terminated.
   const pidsBeforeStop = await pidsHoldingSocket(socketPath);
   await cli(["daemon", "stop"], env).catch(() => undefined);
-  await waitFor(() => !existsSync(socketPath), { timeout: 5_000 }).catch(() => undefined);
+  // why: a daemon a test SIGKILLed leaves its socket file behind, and nobody will remove it.
+  if (pidsBeforeStop.length > 0) {
+    await waitFor(() => !existsSync(socketPath), { timeout: 5_000 }).catch(() => undefined);
+  }
 
   // A process can keep running for a little while after its socket is unlinked
   // (event-loop drain, especially under load) -- give `pidsBeforeStop` a real grace

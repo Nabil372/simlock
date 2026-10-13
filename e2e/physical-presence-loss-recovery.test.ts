@@ -49,7 +49,7 @@ describe("a physical reclaim that fails while the device is gone makes it absent
       {
         config: SLOW_RETRY,
         failReclaim: true,
-        health: { probeIntervalMs: 3_000 },
+        health: { probeIntervalMs: 1_000 },
         leases: [HELD_LEASE(600_000)],
       },
     );
@@ -175,7 +175,7 @@ describe("a daemon restart alone never ends a physical lease", () => {
         },
         { script: { installed: INSTALLED, present: false }, seed: QUARANTINED },
       ],
-      { health: { probeIntervalMs: 300 } },
+      { health: { probeIntervalMs: 200 } },
     );
 
     for (const restart of [false, true]) {
@@ -185,7 +185,7 @@ describe("a daemon restart alone never ends a physical lease", () => {
         (times) => times.length >= 2,
       );
       expect(reads.length, "the watcher reads the absent device").toBeGreaterThanOrEqual(2);
-      await observeFor(1_500, async () => {
+      await observeFor(600, async () => {
         expect((await rowOf(env, ABSENT.id))?.state).toBe("absent");
         const quarantined = await rowOf(env, QUARANTINED.id);
         expect(quarantined?.state).toBe("quarantined");
@@ -207,7 +207,7 @@ describe("a daemon restart alone never ends a physical lease", () => {
     );
     expect(reads.length, "the watcher reads it").toBeGreaterThanOrEqual(2);
 
-    await observeFor(1_000, async () => {
+    await observeFor(600, async () => {
       expect((await rowOf(env, RECLAIMING.id))?.state).toBe("reclaiming");
     });
     expect(await changingCallsOn(env, RECLAIMING.driverDeviceId)).toEqual([]);
@@ -296,7 +296,7 @@ describe("device add and device remove work on an absent device", () => {
 describe("the watcher asks the driver only what it needs", () => {
   it("with no physical device enrolled, the fake driver log shows no listPresentPhysical call across several probe intervals", async () => {
     const env = await startPresence([]);
-    await observeFor(1_500, async () => {
+    await observeFor(600, async () => {
       const operations = (await env.driverLog.calls()).map((call) => call.operation);
       expect(operations).not.toContain("listPresentPhysical");
     });

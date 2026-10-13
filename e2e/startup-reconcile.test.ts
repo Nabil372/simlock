@@ -294,7 +294,7 @@ describe("startup ends every lease whose device is not running", () => {
     await script(env, "ios", [{ deviceId: held.driverDeviceId, runState: "stopped" }]);
     await stopDaemon(env);
     await prepare(env, {
-      latencyMs: { listManaged: 3_000 },
+      latencyMs: { listManaged: 1_500 },
       managedReality: { devices: [{ deviceId: held.driverDeviceId, runState: "stopped" }] },
     });
 

@@ -192,7 +192,7 @@ describe("a released physical device is reclaimed by uninstalling the apps enrol
 
   it("an expired physical lease is reclaimed the same way", async () => {
     const env = await startWith(LEASED, {
-      leases: [HELD_LEASE(6_000)],
+      leases: [HELD_LEASE(2_000)],
       script: { installed: [...ENROLLED, ...AGENT_APPS] },
     });
 
@@ -331,7 +331,7 @@ describe("a physical device that was mid-reclaim or quarantined when the daemon 
   });
 
   it("a daemon restarted with a quarantined physical device in state.json retries it after its quarantineNextRetryAt", async () => {
-    const nextRetryAt = Date.now() + 10_000;
+    const nextRetryAt = Date.now() + 2_500;
     const env = await startWith(
       { ...READY, state: "quarantined" },
       {

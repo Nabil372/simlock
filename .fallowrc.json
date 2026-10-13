@@ -61,7 +61,8 @@
     // ]
   },
   "rules": {
-    "unused-dependencies": "warn"
+    "unused-dependencies": "warn",
+    "stale-suppressions": "error"
   },
   "health": {
     "thresholdOverrides": [

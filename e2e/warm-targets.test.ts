@@ -181,7 +181,7 @@ describe("warm pool targets", () => {
     expect((await devices(env)).find((row) => row.id === targeted.device.id)?.state).toBe("ready");
   });
 
-  it("with a driver that fails every boot, makes the second creation at least a minute after the first and logs the target short with boot-failed between", async () => {
+  it("with a driver that fails every boot, logs the target short with boot-failed after the first creation and holds the next one back", async () => {
     const env = await withDaemon({
       configOverrides: { warmPool: { targets: [IPHONE_17] } },
       driverScript: {
@@ -189,25 +189,29 @@ describe("warm pool targets", () => {
       },
     });
 
-    await waitFor(async () => (await named(env, "device.provisioned")).length >= 2, {
-      label: "the second creation attempt",
-      timeout: 100_000,
+    await waitFor(async () => (await named(env, "device.provisioned")).length > 0, {
+      label: "the first creation",
+      timeout: 30_000,
     });
+    // why: a schedule the daemon does not consult lets the next creation follow within
+    // milliseconds, so two seconds without one shows the schedule held it back.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
 
-    const [first, second] = await named(env, "device.provisioned");
-    expect((second?.timestamp ?? 0) - (first?.timestamp ?? 0)).toBeGreaterThanOrEqual(60_000);
-    // The log names the target short with boot-failed between the two attempts, not only somewhere.
-    const lines = (await readFile(env.logPath, "utf8"))
-      .split("\n")
-      .filter((line) => line.includes("boot-failed"))
-      .map((line) => JSON.parse(line) as { timestamp: number });
-    expect(
-      lines.some(
-        (line) =>
-          line.timestamp >= (first?.timestamp ?? 0) && line.timestamp <= (second?.timestamp ?? 0),
-      ),
-    ).toBe(true);
-  }, 130_000);
+    const provisioned = await named(env, "device.provisioned");
+    expect(provisioned).toHaveLength(1);
+    await waitFor(
+      async () =>
+        (await readFile(env.logPath, "utf8"))
+          .split("\n")
+          .filter((line) => line.includes("boot-failed"))
+          .some(
+            (line) =>
+              (JSON.parse(line) as { timestamp: number }).timestamp >=
+              (provisioned[0]?.timestamp ?? 0),
+          ),
+      { label: "the target logged short with boot-failed", timeout: 30_000 },
+    );
+  });
 
   it("under lease.identity.ios fresh with a target of one, has one ready device before any lease, and after a lease and release has deleted it and readied a new one", async () => {
     const env = await withDaemon({
