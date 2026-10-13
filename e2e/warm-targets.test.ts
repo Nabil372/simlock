@@ -194,7 +194,7 @@ describe("warm pool targets", () => {
       timeout: 30_000,
     });
     // why: a schedule the daemon does not consult lets the next creation follow within
-    // milliseconds; the minute it waits instead is retry.test.ts's and converger.test.ts's claim.
+    // milliseconds, so two seconds without one shows the schedule held it back.
     await new Promise((resolve) => setTimeout(resolve, 2_000));
 
     const provisioned = await named(env, "device.provisioned");
