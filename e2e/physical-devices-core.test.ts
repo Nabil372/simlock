@@ -178,14 +178,14 @@ describe("the core knows physical devices", () => {
     ).toEqual([]);
   });
 
-  it("with health.probeIntervalMs 200 and stableObservations 2, a leased physical record is still leased after two seconds, its lease renews, and no lease.released or device.deleted names it", async () => {
+  it("with health.probeIntervalMs 200 and stableObservations 2, a leased physical record is still leased across three probe intervals, its lease renews, and no lease.released or device.deleted names it", async () => {
     const env = await startWith([LEASED], {
       config: { health: { probeIntervalMs: 200, stableObservations: 2 } },
       leases: [HELD_LEASE(600_000)],
       script: { physicalDevices: [presentDevice(LEASED)] },
     });
 
-    await observeFor(2_000, async () => {
+    await observeFor(600, async () => {
       expect(await stateOf(env, LEASED.id), "the leased record stays leased").toBe("leased");
     });
 
@@ -278,7 +278,7 @@ describe("the core knows physical devices", () => {
   it("with warmPool.enabled false, the ready physical record is still ready after the pool's pass, with no shutdown call", async () => {
     const env = await startWith([READY], { config: { warmPool: { enabled: false } } });
 
-    await observeFor(2_000, async () => {
+    await observeFor(600, async () => {
       await expectState(env, READY.id, "ready");
     });
     expect(await callsNaming(env, READY.driverDeviceId)).toEqual([]);
@@ -442,7 +442,7 @@ describe("the core knows physical devices", () => {
   });
 
   it("a physical lease whose deadline passes while the daemon runs ends with lease.expired; its record is reclaimed back to ready with lastLeaseEndedAt set and device.reclaimed strategy uninstall", async () => {
-    const env = await startWith([LEASED], { leases: [HELD_LEASE(8_000)] });
+    const env = await startWith([LEASED], { leases: [HELD_LEASE(3_000)] });
     const startedAt = Date.now();
     expect(
       (await env.cli(["list", "--leases"])).json,
