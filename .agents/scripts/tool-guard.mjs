@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PreToolUse hook (Bash, Agent): refuses two tool calls the delivery rules forbid.
+// PreToolUse hook (Bash, Agent): refuses three kinds of tool call the delivery rules forbid.
 //
 //   check      a sub-agent runs a check from toolchain.md's "Checks agents never run" (`pnpm
 //              check`, `pnpm fallow`, ...) or a tool behind one, from any path. The commit hook,
@@ -29,6 +29,7 @@ const SCRIPTS = new Set([
 const TOOLS = new Set(["tsc", "oxlint", "oxfmt", "fallow", "stryker"]);
 const NODE_SCRIPTS = new Set(["comment-lint.mjs", "mutate.mjs"]);
 const WRAPPERS = new Set(["time", "nice", "env", "command", "exec"]);
+const PNPM_VALUE_FLAGS = new Set(["-C", "--dir", "-F", "--filter", "--workspace", "--reporter"]);
 const STAGES = new Set(["implementer", "reviewer", "hardware-verifier"]);
 const HOOK_BYPASS = [
   /--no-verify\b/,
@@ -102,13 +103,24 @@ function isForbidden(words) {
 }
 
 function isForbiddenPnpm(args) {
-  const operands = args.filter((w) => !w.startsWith("-"));
+  const operands = pnpmOperands(args);
   const [sub, ...after] = operands[0] === "run" ? operands.slice(1) : operands;
   if (sub === "exec" || sub === "dlx") return isTool(after[0]);
+  // why: pnpm runs a binary it does not know as a script, so `pnpm tsc` is `pnpm exec tsc`.
+  if (isTool(sub)) return true;
   // why: these scripts are allowed only in their narrow forms: named e2e files, Chromium only.
   if (sub === "test:e2e") return after.length === 0;
   if (sub === "test:console") return !args.includes("--project=chromium");
   return SCRIPTS.has(sub);
+}
+
+function pnpmOperands(args) {
+  const operands = [];
+  for (let i = 0; i < args.length; i++) {
+    if (PNPM_VALUE_FLAGS.has(args[i])) i++;
+    else if (!args[i].startsWith("-")) operands.push(args[i]);
+  }
+  return operands;
 }
 
 function isTool(word) {

@@ -39,6 +39,10 @@ describe("tool-guard.mjs", () => {
     "pnpm test:console",
     "sed -i '' 's/a/b/' f.ts && pnpm check 2>&1 | tail -5",
     "timeout 100 pnpm fallow",
+    "pnpm tsc --noEmit",
+    "pnpm oxlint src",
+    "pnpm --dir . check",
+    "pnpm -C . run lint",
     "(FORCE_COLOR=0 pnpm lint | tail -3)",
   ])("refuses a sub-agent's check: %s", (command) => {
     const result = bash(command);
@@ -59,6 +63,7 @@ describe("tool-guard.mjs", () => {
     "sed -i '' 's/oxfmt/oxlint/' docs/a.md",
     "grep -n tsc package.json",
     "python3 - <<'E'\nprint(\"pnpm check\")\nE\ngit status --short",
+    "cat > x.sh <<EOF\npnpm check\nEOF\nchmod +x x.sh",
   ])("lets a sub-agent run a test, or a command that only names a check: %s", (command) => {
     expect(bash(command)).toEqual({ status: 0, stderr: "" });
   });

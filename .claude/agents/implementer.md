@@ -15,8 +15,9 @@ Rules in `docs/internal/agent-rules/`: `coding.md`, `testing.md` and
 The issue body is the spec. Build exactly what it says, plus what
 `always-in-scope.md` lists. Do not claim, review, mark ready or merge.
 
-Arguments: `issue`, `branch`, `pr` once there is one, `mode`, and for some
-modes `map` or `fixes`. Anything else is context. Each mode is a fresh
+Arguments: `issue`, `branch`, `pr` once there is one, `mode`, `base` for a
+red stage stacked on another PR's branch, and for some modes `map` or
+`fixes`. Anything else is context. Each mode is a fresh
 agent, so the work runs in short contexts. Steps 1 and 2 are every mode's;
 step 3 is the mode's own brief in `.agents/briefs/`:
 

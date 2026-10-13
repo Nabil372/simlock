@@ -177,8 +177,9 @@ they name; never build again or restart review at round 1.
      told to edit tests, comments and docs only, no review; list them in
      the PR body's `## Review` section as fixed unreviewed. One `src` line
      (after `fix-check`): the findings are open; park (step 6).
-   - A commit after the reviews passed (a merge of the base branch, a fix
-     the gate needed): `reviewer` with `fix-check`, `previous <Commit>` and
+   - A commit after the reviews passed (a merge of the base branch that
+     needed conflicts resolved, a fix the gate needed): `reviewer` with
+     `fix-check`, `previous <Commit>` and
      no Fix lines, then the hardware check again if one ran, before the
      gate. A CI fix that changes only tests the PR's diff does not touch
      (a flaky test elsewhere) gets no fix check: list it under `## Review`

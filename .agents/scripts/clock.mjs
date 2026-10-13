@@ -28,7 +28,13 @@ try {
 } catch {}
 
 let slept = 0;
-if (awake !== null && typeof state.wall === "number" && typeof state.awake === "number") {
+// why: the awake clock restarts at a reboot; a smaller reading than the last says nothing.
+if (
+  awake !== null &&
+  typeof state.wall === "number" &&
+  typeof state.awake === "number" &&
+  awake >= state.awake
+) {
   const gap = now - state.wall - (awake - state.awake);
   if (gap >= NOISE_MS) slept = gap;
 }

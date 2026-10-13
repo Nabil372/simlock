@@ -118,6 +118,8 @@ jobs:
 
             let changed = null;
             if (context.eventName === "pull_request") {
+              // why: a merged PR closes its issue, and the issues event re-checks the same tasks.
+              if (context.payload.pull_request.merged) return;
               const m = /^task\/(\d+)$/.exec(context.payload.pull_request.head.ref);
               if (m === null) return;
               changed = Number(m[1]);

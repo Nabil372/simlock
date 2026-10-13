@@ -102,7 +102,14 @@ members=$(echo "$stack" | sed "/^$target\$/q")
 for pr in $members; do gates; done
 
 if [ "$members" = "$target" ]; then
-  out=$(gh pr merge "$target" --squash 2>&1) || fail "$out"
+  if ! out=$(gh pr merge "$target" --squash 2>&1); then
+    # why: the last open PR of a stack whose lower PRs merged is still stacked, and GitHub
+    # refuses a plain merge of a stacked PR.
+    case $out in
+      *stack*) gh stack merge "$target" --yes --squash ;;
+      *) fail "$out" ;;
+    esac
+  fi
 else
   gh stack merge "$target" --yes --squash
 fi

@@ -24,7 +24,8 @@ lines:
 - `round 2`: the code and claims reviews on the fix of round 1's `src`
   findings.
 - `fix-check`: the code and claims reviews on a fix made after the reviews
-  passed: round 2's `src` findings, a merge of the base branch, a fix the
+  passed: round 2's `src` findings, a merge of the base branch that needed
+  conflicts resolved, a fix the
   merge gate needed.
 
 With a branch instead of a PR, find its PR with `gh pr list --head <branch>`.
