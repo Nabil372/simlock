@@ -128,9 +128,14 @@ Write each body so the spec check finds nothing:
   when both act;
 - every list given as complete (ports, callers, files, steps, triggers)
   checked against a search of the code;
-- two tasks that touch the same file, or overlap by a project check in
-  `toolchain.md`, run one after the other: the later lists the earlier under
-  Depends on. That holds for an open task of another feature too;
+- two tasks run one after the other (the later lists the earlier under
+  Depends on) only when one uses what the other adds, both change the same
+  function or the same lines, or both trip a project check in
+  `toolchain.md`. Two tasks that only add to the same file in different
+  places run at once: the one that merges second takes the base branch.
+  That holds for an open task of another feature too;
+- every sentence about what existing code does today checked against that
+  code;
 - a Done when line that needs the slow lane says so and names its test, as
   `toolchain.md` asks;
 - nothing `always-in-scope.md` covers.

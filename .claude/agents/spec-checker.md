@@ -102,12 +102,17 @@ what goes wrong because of it.
    files to move, steps, triggers, events, dependencies) that a search of
    the code contradicts: an entry missing or one too many. Run the search;
    quote its output as evidence.
-7. **overlap** (`feature` scope). Two tasks that touch the same file, or
-   overlap by a project check in `toolchain.md`, with neither under the
-   other's Depends on. Check every open task of other features too
+7. **overlap** (`feature` scope). Two tasks where one uses what the other
+   adds, both change the same function or the same lines, or both trip a
+   project check in `toolchain.md`, with neither under the other's Depends
+   on. Check every open task of other features too
    (`gh issue list --search 'label:task:draft,task:ready' --json number,title,body`). Two agents
    editing the same lines at once is a merge conflict the second one
-   resolves blind.
+   resolves blind. The reverse is a finding too: a Depends on between two
+   tasks that share none of these. Delivery runs two tasks at once, and a
+   needless Depends on makes the later one wait for the earlier one's
+   whole run; two tasks that only add to the same file in different places
+   can run at once. Quote the shared symbol or lines, or their absence.
 8. **hardware.** A Done when line that needs the slow lane but does not say
    so the way `toolchain.md` asks, or names no slow-lane test that proves
    it.
@@ -121,6 +126,12 @@ what goes wrong because of it.
     Modules touched, with no line under Scope saying why it cannot split
     (spec-session's split mode sizes tasks so). Every stage of delivery
     grows with the task, and a big one costs review rounds and parks.
+11. **code-claim.** A sentence that says what existing code does today: it
+    names a file, function, field or event ("`stopAuxiliary` stops the
+    gateway first, which aborts open requests", "`settle` rejects
+    waiters"). Read the code each one names; a claim the code does not bear
+    out is a finding, with the line that contradicts it. An implementer
+    builds on these sentences, finds them false mid-task, and stops.
 
 In `feature` scope, also: a Completion condition no task delivers is a
 finding under unverifiable.
@@ -136,7 +147,7 @@ End with exactly this block, nothing after it:
 
 ```
 Issue: #N  Scope: task | feature  Checked: <#N and each issue read>  Findings: n
-Categories: contradiction <ok|n> · unverifiable <ok|n> · untested <ok|n> · failure-mode <ok|n> · interaction <ok|n> · derived-list <ok|n> · overlap <ok|n|n/a> · hardware <ok|n> · undefined <ok|n> · size <ok|n|n/a>
+Categories: contradiction <ok|n> · unverifiable <ok|n> · untested <ok|n> · failure-mode <ok|n> · interaction <ok|n> · derived-list <ok|n> · overlap <ok|n|n/a> · hardware <ok|n> · undefined <ok|n> · size <ok|n|n/a> · code-claim <ok|n|n/a>
 - [<category>] #<issue> "<the line, quoted short>" — <what goes wrong>. Evidence: <file:line, rule or ADR number, or the command and its output>
 Verdict: ready | fix first
 ```

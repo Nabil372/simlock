@@ -85,6 +85,17 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/scripts/clock.mjs"
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "matcher": "implementer|reviewer|hardware-verifier",

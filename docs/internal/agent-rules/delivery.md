@@ -92,7 +92,10 @@ is open, done means closed as completed.
    spec: into a task or feature body, as a line in the section it settles
    and a Tests line that pins it; for a bug, whose body stays the reporter's
    (rule 5), as one comment headed `## Decision`, read with the triage
-   report.
+   report. When the delivery orchestrator decides such a question itself,
+   rather than stop (the `deliver` skill), it folds its own choice in the
+   same way, marked as pending the maintainer, and tells the maintainer in
+   a PR comment; a later answer that differs is a fix run or a new task.
 
 4. **Every spec session starts by reconciling.** Before writing anything, the
    session fetches every comment created after the body's `lastEditedAt`, on
@@ -260,12 +263,13 @@ is open, done means closed as completed.
     defect. A *src* finding round 2 confirms gets one fix run and one *fix
     check*, the code and claims reviews on that fix alone; a commit pushed
     after the reviews passed (a merge of the base branch, a fix the gate
-    needed) gets a fix check too. A *src* finding a fix check confirms means
+    needed) gets a fix check too, unless it changes only tests the PR's
+    diff does not touch (a flaky test elsewhere): that one is listed under
+    `## Review` as fixed unreviewed. A *src* finding a fix check confirms means
     the agent stops and hands off with it under Findings (rule 2), leaving
-    the PR in draft. *Text* findings never stop delivery: their fix gets one
-    claims-only check, and what it still confirms is fixed in one last run
-    that edits tests, comments and docs only, with no review, listed under
-    `## Review` as fixed unreviewed.
+    the PR in draft. *Text* findings never stop delivery and get no further review:
+    they are fixed in one run that edits tests, comments and docs only,
+    listed under `## Review` as fixed unreviewed.
     Notes are not verified and never start a round: after the last check
     they go out once, as one comment on the PR. A note becomes an issue only
     when a person opens one. A PR from a person gets the same reviews when

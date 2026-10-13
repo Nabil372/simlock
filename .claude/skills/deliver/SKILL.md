@@ -60,7 +60,9 @@ HH:MM #<task> (X/Z) <stage> → <started | outcome in a few words>
 Stages: `spec`, `implement`, `implement fix`, `review r<n>`, `hardware`,
 `gate`, `park`. Outcomes are facts from the report: `done, PR #380, 6/6
 green`, `2 fixes`, `pass`, `merged`, `parked: <reason>`. Drop `(X/Z)` for a
-single issue. Time from `date +%H:%M`.
+single issue. The time is the `Local time` your last tool result ends with
+(a hook adds it); never write a time you did not read there. When that
+line says the computer slept, end the status line with `(slept <m> min)`.
 
 Asked how it is going: answer from the PR status lines (step 3) and the
 status lines so far. To look inside a running agent, ask it with
@@ -70,15 +72,31 @@ SendMessage.
 first time a report lists `hardware` lines: may the slow lane run for every PR
 of this run (rule 16). Record the answer in that PR's `### Status`. Then
 never stop to ask: post PR bodies and comments directly, merge every PR the
-gate accepts, and apply rule 14's round cap. Ask a person only about what
-parks an issue. Unattended, ask nothing: the slow lane runs when its lock is
-free.
+gate accepts, and apply rule 14's round cap. Never ask anything else with
+a dialog: it stops every task in flight until someone answers. Unattended,
+ask nothing: the slow lane runs when its lock is free.
 
-**Park only for a person's decision.** A small spec gap is an `Assumption:`
-line, not a stop (rule 3). Park only for:
+**Decide, then tell.** A small spec gap is an `Assumption:` line (rule 3).
+A bigger one (`spec needs` in a report, or behaviour a user would see that
+nobody decided) does not stop the run either:
 
-- a contradiction with the body, a rule or an accepted ADR;
-- behaviour a user would see that nobody decided;
+1. Take the conservative option: the one closest to what the code does
+   today and the easiest to reverse.
+2. Fold it into the issue body as rule 3 says, the line ending
+   `(decided in delivery, pending the maintainer)`, with a Tests line that
+   pins it.
+3. Start the next stage on it, with a `decision:` line naming it.
+4. Post one PR comment headed `## Decision taken`: the question, each
+   option and what a user would see, the one taken and why, and what
+   reverting it takes. Say the same in the session, in plain text.
+
+The PR merges through the gate as usual. An answer that picks another
+option is a fix run while the PR is open, and a new `task:draft` issue under
+the feature after it merged.
+
+**Park only for:**
+
+- a contradiction with a rule or an accepted ADR;
 - a slow-lane check that cannot run;
 - a blocking finding the review reports open after its last round (rule 14);
 - what the gate refuses (step 3).
@@ -124,7 +142,7 @@ they name; never build again or restart review at round 1.
    `mode: green` with the report's `map`; while a `green` report still lists
    `failing` and turned at least one test green since the last, another
    `green` with its `map`; then `mode: audit`. `spec needs` under `open`
-   in any report: park (step 6).
+   in any report: decide, then tell (above).
 2. **Review**: `reviewer` with the PR number. The diff's kind sets which
    reviews run (rule 14): a tests-only or docs-only diff gets fewer, a
    large one two code reviewers.
@@ -137,27 +155,26 @@ they name; never build again or restart review at round 1.
    asking to merge the base branch. With no fix run due, they get one
    before the round.
 3. **Decide** on the review report:
-   - Fix lines with `Rerun: round 2`, `claims-only` or `fix-check`: one
-     `implementer` run with `mode: fix` and the Fix lines pasted under
-     `fixes` (for `claims-only`, told to edit tests, comments and docs
-     only), then `reviewer` with that check's name, `previous <Commit>` and
-     the Fix lines pasted.
-   - `Rerun: none` with Fix lines, after `claims-only`: one more
-     `implementer` fix run, told to edit tests, comments and docs only, no
-     review; list them in the PR body's `## Review` section as fixed
-     unreviewed. After `fix-check`: the findings are open; park (step 6).
+   - Fix lines with `Rerun: round 2` or `fix-check`: one `implementer` run
+     with `mode: fix` and the Fix lines pasted under `fixes`, then
+     `reviewer` with that check's name, `previous <Commit>` and the Fix
+     lines pasted.
+   - `Rerun: none` with Fix lines, all `text`: one `implementer` fix run,
+     told to edit tests, comments and docs only, no review; list them in
+     the PR body's `## Review` section as fixed unreviewed. One `src` line
+     (after `fix-check`): the findings are open; park (step 6).
    - A commit after the reviews passed (a merge of the base branch, a fix
      the gate needed): `reviewer` with `fix-check`, `previous <Commit>` and
      no Fix lines, then the hardware check again if one ran, before the
-     gate.
+     gate. A CI fix that changes only tests the PR's diff does not touch
+     (a flaky test elsewhere) gets no fix check: list it under `## Review`
+     as fixed unreviewed.
    - After every check, add its counts and Rejected lines to the PR body's
      `## Review` section (step 4), and its Notes under `Notes so far:`
      there; step 5 moves them into one comment.
    - Out of scope lines: open one `bug:new` issue each, naming the PR. They
      do not block it.
-   - Spec needs: park. When a person answers a Spec needs, write the answer
-     into the issue body, with a Tests line that pins it (delivery rule 3),
-     before the fix run.
+   - Spec needs: decide, then tell (above), before the fix run.
    - No Fix lines, and the audit reported `hardware` lines:
      `hardware-verifier` with the PR, the branch and those lines, on the
      commit the review passed (rule 16). On `fail`: one `implementer` fix
@@ -187,7 +204,7 @@ they name; never build again or restart review at round 1.
    `<m>` those confirmed and fixed, `<k>` its notes; `skipped` in place of
    the counts for a review the diff's kind left out (for an ADR-only diff:
    `Code review: skipped. Claims review: skipped.`). `<n>` is the number of
-   rounds, 1 or 2; a claims-only check or a fix check adds none. `<t>` is
+   rounds, 1 or 2; a fix check adds none. `<t>` is
    `tokens=` from `node .agents/scripts/usage.mjs`, this session's usage so
    far. Every blocking finding not fixed is a Rejected line; omit
    "Rejected:" when there is none. Then run
@@ -222,8 +239,8 @@ they name; never build again or restart review at round 1.
 
    Exit 0: merged. A conflict: an `implementer` fix run that merges the
    base branch. Red CI: one `implementer` fix run with the failing test
-   titles and the run id. Either way, the `fix-check` review in step 3,
-   then the gate again. Any other exit, or red CI a second time: park with the
+   titles and the run id. Either way, the `fix-check` review in step 3
+   (none for a fix to tests outside the PR's diff), then the gate again. Any other exit, or red CI a second time: park with the
    line it printed.
 
 After every stage, update the PR body's `### Status` section so any session
@@ -274,9 +291,15 @@ Post one comment on the feature (or the single issue):
 Merged: #PR (#task), ...
 Parked: #task — <reason, one line>, ...
 Waiting: #task — on #dependency, ...
+Decided: #task — <question> → <option taken>, ...
+Asleep: <m> min
 
 _Written by an agent._
 ```
+
+`Asleep` is the session total the clock hook last gave; leave the line out
+when it never said the computer slept. A closed lid sleeps a laptop, and
+nothing runs until it wakes.
 
 Then send the maintainer a push notification with the same three counts, if
 a tool for it exists.

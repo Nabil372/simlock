@@ -91,5 +91,6 @@ and names the slow-lane test that proves it.
   `tools/list`, HTTP error bodies, CLI help. A refinement can empty a
   published schema while every unit test stays green.
 - **Contract shapes.** Every change to a contract shape bumps
-  `DAEMON_PROTOCOL_VERSION` by one, so two tasks that change contract shapes
+  `DAEMON_PROTOCOL_VERSION` by one in the same PR (a spec's "protocol +1 at
+  merge" means this too), so two tasks that change contract shapes
   overlap even when they touch different files.
