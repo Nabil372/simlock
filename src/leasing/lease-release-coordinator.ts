@@ -155,7 +155,6 @@ export class LeaseReleaseCoordinator
   }
 
   /** why: a lease already gone is not an error: the release that took it came first. */
-  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's releaser port.
   async endForAbsentDevice(
     leaseId: string,
     absentReason: AbsentReason,

@@ -573,7 +573,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
   }
 
   /** why: `announceLeaseEnd` runs after the commit and before `device.absence-detected`, so the lease's fact comes first. */
-  // fallow-ignore-next-line unused-class-member -- called through LeaseLifecycle's registry port.
   async endLeaseAndMarkDeviceAbsent(
     leaseId: string,
     absentReason: AbsentReason,
@@ -604,7 +603,6 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
     return ended;
   }
 
-  // fallow-ignore-next-line unused-class-member -- called through PhysicalDeviceWatcher's registry port.
   async rewriteAbsentReason(deviceId: string, absentReason: AbsentReason): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (!device.physical || device.state !== "absent") {
