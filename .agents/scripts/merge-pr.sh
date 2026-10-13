@@ -3,7 +3,9 @@
 #
 #   .agents/scripts/merge-pr.sh <pr>
 #
-# Gates, in order: the PR is open and not a draft; it carries no needs-hardware label; its body
+# A PR in a stack (a feature's task PRs, delivery rule 15) is merged with every PR below it, so
+# every one of them must pass the gates; `gh stack merge` then merges them bottom to top, all or
+# nothing. Gates, in order, for each: the PR is open and not a draft; it carries no needs-hardware label; its body
 # passes pr-body-check.mjs (a `## Review` section with its counts line, no "spec needs" line,
 # the agent footer); every CI check passed or was skipped; and GitHub calls it mergeable. Waits up to 30 minutes for pending checks. Prints the first gate
 # that fails and exits 1, or exits 2 when checks are still pending at the deadline.
@@ -13,22 +15,16 @@
 # open `flaky-test` issue (testing rule 5). MERGE_PR_POLL_SECONDS sets the poll interval.
 #
 # Agents may not run `gh pr merge` themselves (.claude/settings.json); this script is the one
-# place a delivery PR is merged from. A stacked PR is merged with `gh stack merge`, which merges
-# everything below it too, bottom to top.
+# place a delivery PR is merged from.
 set -eu
 
-pr=${1:?usage: merge-pr.sh <pr>}
+target=${1:?usage: merge-pr.sh <pr>}
 fail() {
   echo "not merged: $*" >&2
   exit 1
 }
 
 view() { gh pr view "$pr" --json "$1" -q "$2"; }
-
-[ "$(view state .state)" = OPEN ] || fail "PR #$pr is not open"
-[ "$(view isDraft .isDraft)" = false ] || fail "PR #$pr is still a draft"
-view labels '.labels[].name' | grep -qx needs-hardware && fail "PR #$pr is labelled needs-hardware"
-node "$(dirname "$0")/pr-body-check.mjs" "$pr" || fail "PR #$pr body fails pr-body-check.mjs (above)"
 
 poll=${MERGE_PR_POLL_SECONDS:-30}
 
@@ -77,30 +73,50 @@ rerunnable_runs() {
     done | sort -u
 }
 
-red_checks
-if [ -n "$bad" ]; then
-  runs=$(rerunnable_runs)
-  if [ -n "$runs" ] && ! echo "$runs" | grep -qx none; then
-    echo "re-running the failed jobs once: cancelled, or failed only on open flaky-test issues"
-    for run in $runs; do gh run rerun "$run" --failed; done
-    sleep "$poll"
-    red_checks
+gates() {
+  [ "$(view state .state)" = OPEN ] || fail "PR #$pr is not open"
+  [ "$(view isDraft .isDraft)" = false ] || fail "PR #$pr is still a draft"
+  view labels '.labels[].name' | grep -qx needs-hardware && fail "PR #$pr is labelled needs-hardware"
+  node "$(dirname "$0")/pr-body-check.mjs" "$pr" || fail "PR #$pr body fails pr-body-check.mjs (above)"
+
+  red_checks
+  if [ -n "$bad" ]; then
+    runs=$(rerunnable_runs)
+    if [ -n "$runs" ] && ! echo "$runs" | grep -qx none; then
+      echo "PR #$pr: re-running the failed jobs once: cancelled, or failed only on open flaky-test issues"
+      for run in $runs; do gh run rerun "$run" --failed; done
+      sleep "$poll"
+      red_checks
+    fi
   fi
-fi
-[ -z "$bad" ] || fail "CI not green: $(echo "$bad" | tr '\n' ';')"
+  [ -z "$bad" ] || fail "CI not green on PR #$pr: $(echo "$bad" | tr '\n' ';')"
 
-# GitHub computes mergeability lazily; UNKNOWN settles within seconds.
-for _ in 1 2 3 4 5 6; do
-  mergeable=$(view mergeable .mergeable)
-  [ "$mergeable" = UNKNOWN ] || break
-  sleep 5
-done
-[ "$mergeable" = MERGEABLE ] || fail "GitHub reports PR #$pr as $mergeable"
+  # why: GitHub computes mergeability lazily; UNKNOWN settles within seconds.
+  for _ in 1 2 3 4 5 6; do
+    mergeable=$(view mergeable .mergeable)
+    [ "$mergeable" = UNKNOWN ] || break
+    sleep 5
+  done
+  [ "$mergeable" = MERGEABLE ] || fail "GitHub reports PR #$pr as $mergeable"
+}
 
-if ! out=$(gh pr merge "$pr" --squash 2>&1); then
-  case $out in
-    *stack*) gh stack merge "$pr" --yes --squash ;;
-    *) fail "$out" ;;
-  esac
+nwo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+stack=$(gh api "repos/$nwo/stacks?pull_request=$target" \
+  -q '[.[] | select(.open)][0].pull_requests // [] | .[] | select(.state == "open") | .number')
+members=$(echo "$stack" | sed "/^$target\$/q")
+[ -n "$members" ] || members=$target
+for pr in $members; do gates; done
+
+if [ "$members" = "$target" ]; then
+  if ! out=$(gh pr merge "$target" --squash 2>&1); then
+    # why: the last open PR of a stack whose lower PRs merged is still stacked, and GitHub
+    # refuses a plain merge of a stacked PR.
+    case $out in
+      *stack*) gh stack merge "$target" --yes --squash ;;
+      *) fail "$out" ;;
+    esac
+  fi
+else
+  gh stack merge "$target" --yes --squash
 fi
-echo "merged #$pr"
+echo "merged #$(echo "$members" | tr '\n' ' ' | sed 's/ $//; s/ / #/g')"

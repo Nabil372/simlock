@@ -177,8 +177,13 @@ body, the rules and the ADRs all leave a smaller gap open, `implement`
 closes it the conservative way and records it as an `Assumption:` line in
 the PR body. An assumption is a proposal you can see and reject, not a
 change to the spec.
-The run parks only for a contradiction with the body, a rule or an accepted
-ADR, or a choice a user would notice that nobody made.
+The run parks only for a contradiction with a rule or an accepted ADR. A
+choice a user would notice that nobody made does not stop it: the
+orchestrator takes the conservative option, writes it into the issue body
+as pending the maintainer, merges, and posts a `## Decision taken` comment
+on the PR saying how to reverse it. A question left to a person used to stop
+the run until they answered: five hours one night in #466, though the
+maintainer picked the recommended option 15 times of 16.
 
 A PR leaves draft reviewed; it is not reviewed on arrival. The `review`
 skill builds the reviewers' inputs with `.agents/scripts/review-inputs.sh`
@@ -247,9 +252,10 @@ Round 1 reviews the whole diff. Round 2 runs only after a confirmed *src*
 finding and reviews the fix alone; a *src* finding it confirms gets one fix
 and one fix check of that fix; one still confirmed then is a contested
 change: the agent hands off with it and leaves the PR in draft. *Text*
-findings never park a PR: the claims review checks their fix once, and what
-it still finds is fixed, in tests, comments and docs only, without another
-review. Five rounds used to be allowed; rounds 3 to 5 confirmed almost
+findings never park a PR and get no further review: they are fixed once, in
+tests, comments and docs only. A check of those fixes ran in the #466
+delivery three times and found one docs line a round 1 note had already
+named. Five rounds used to be allowed; rounds 3 to 5 confirmed almost
 nothing a person then kept. Notes are not verified and never start a round;
 they reach you once, as one "Review notes" comment on the PR, and become
 issues only when you open one.
@@ -334,6 +340,19 @@ tune its brief, or what `always-in-scope.md` lists. A rejection that keeps
 coming back for the same reason is a missing rule or a missing spec line;
 `--calibration` prints the recent ones as the brief every reviewer reads.
 
+## A feature merges as one stack
+
+A feature's PRs form one GitHub stack (`gh stack`): its accepted ADR PRs at
+the bottom, then each task's PR in the order its review passed, each
+targeting the branch below it. A reviewed PR stays open, and the next task
+starts on top of it: the issue-state workflow counts a reviewed task of the
+same feature as done. When every task has joined, `merge-pr.sh` on the top
+PR checks each PR's gates and `gh stack merge` merges them all at once, or
+none. So `main` never holds half a feature, and a task never waits for the
+CI run and merge of the one below it (2 to 6 minutes per task in the #466
+run). A single task, a bug, or a feature delivered as one PR merges on its
+own, as before, unless its feature has an open ADR PR to stack on.
+
 ## `main` and releases
 
 `main` takes changes only through a pull request whose Quality, Fallow and
@@ -376,10 +395,16 @@ a fixed layout:
   `stale-refs.sh`, `comments.mjs`, `comment-lint.mjs`, `ci-failures.mjs`,
   `merge-pr.sh`, `pr-body-check.mjs`, `delivery-stats.mjs`, `usage.mjs`,
   `session-env.sh`, `budget-guard.mjs` (a token and turn cap per sub-agent,
-  a token and time cap per session, and a stall check) and
-  `report-guard.mjs` (a stage agent may not stop before its report block).
+  a token and time cap per session, and a stall check),
+  `report-guard.mjs` (a stage agent may not stop before its report block),
+  `tool-guard.mjs` (a sub-agent may not run a check toolchain.md
+  forbids or skip the git hooks, and a stage agent is not started in a
+  worktree of its own) and
+  `clock.mjs` (the orchestrator's tool results end with the local time,
+  and how long the computer slept).
   `worktree.sh` and `ensure-pnpm.sh` are this project's (they install its
-  dependencies); the others are not. `.agents/briefs/`: the stage agents'
+  dependencies), and so is `tool-guard.mjs`'s list of checks; the others
+  are not. `.agents/briefs/`: the stage agents'
   and reviewers' briefs, and `calibration.md`.
 - `.github/workflows/issue-state.yml` and the labels in `.github/labels.json`.
 
@@ -419,7 +444,8 @@ To move it: copy the agents, skills, briefs, scripts, workflow, labels,
   commit hook and `pnpm lint:comments`), `.agents/scripts/ci-failures.mjs`,
   `.agents/scripts/diff-kind.mjs`, `.agents/scripts/report-guard.mjs`
   (a SubagentStop hook in `.claude/settings.json`),
-  `.agents/scripts/budget-guard.mjs` (a PreToolUse hook),
+  `.agents/scripts/budget-guard.mjs` and `.agents/scripts/tool-guard.mjs`
+  (PreToolUse hooks), `.agents/scripts/clock.mjs` (a PostToolUse hook),
   `.agents/scripts/merge-pr.sh`, `.agents/scripts/pr-body-check.mjs`,
   `.agents/scripts/delivery-stats.mjs`, `.agents/scripts/usage.mjs`,
   `scripts/slow-e2e.sh`, `scripts/mutate.mjs` (`pnpm mutate`)

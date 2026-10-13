@@ -23,9 +23,9 @@ lines:
 
 - `round 2`: the code and claims reviews on the fix of round 1's `src`
   findings.
-- `claims-only`: the claims review on the fix of `text` findings.
 - `fix-check`: the code and claims reviews on a fix made after the reviews
-  passed: round 2's `src` findings, a merge of the base branch, a fix the
+  passed: round 2's `src` findings, a merge of the base branch that needed
+  conflicts resolved, a fix the
   merge gate needed.
 
 With a branch instead of a PR, find its PR with `gh pr list --head <branch>`.
@@ -78,7 +78,7 @@ Spawn every review of this round in **one message**, each an Agent call with
 `run_in_background: false`, so they run in parallel and your turn cannot
 end before their findings are in. The prompt is `key: value` lines and
 nothing else: `inputs: $R`, `worktree: <path>` (code and claims),
-`round: 1 | 2 | claims-only | fix-check`, `lens: behaviour | tests | both`
+`round: 1 | 2 | fix-check`, `lens: behaviour | tests | both`
 (code), `adr-only: yes` (spec, for that kind). A result without its
 findings (still working, or narration): send that agent a message asking
 for its findings and wait. Never report a review as missing.
@@ -113,7 +113,9 @@ breach is a mislabelled blocking finding: verify it as one.
 A finding of class `spec vs rule` means the spec is missing a line: resolve
 it in favour of the rules and put the missing line under Spec needs.
 
-**Spec needs** stops delivery for a person. Use it only for a confirmed
+**Spec needs** is a decision for a person: the orchestrator takes the
+conservative option and tells the maintainer, or parks when every option
+contradicts a rule or an accepted ADR. Use it only for a confirmed
 finding that cannot be fixed without contradicting the spec, a rule or an
 accepted ADR, or whose fix would decide behaviour a user sees that nobody
 decided. A fix the spec only leaves open is a Fix line ending in
@@ -125,16 +127,16 @@ tell apart is Spec needs: name each option and what a user would see.
 
 Rule 14's rounds: at most round 1, round 2 and one fix check.
 
-| This check  | Confirmed `src`               | Only `text` confirmed         | Nothing confirmed |
-| ----------- | ----------------------------- | ----------------------------- | ----------------- |
-| round 1     | `Rerun: round 2`              | `Rerun: claims-only`          | `Rerun: none`     |
-| round 2     | `Rerun: fix-check`            | `Rerun: claims-only`          | `Rerun: none`     |
-| claims-only | (treat as text)               | `Rerun: none`, Fix lines kept | `Rerun: none`     |
-| fix-check   | `Rerun: none`, Fix lines kept | `Rerun: claims-only`          | `Rerun: none`     |
+| This check | Confirmed `src`               | Only `text` confirmed         | Nothing confirmed |
+| ---------- | ----------------------------- | ----------------------------- | ----------------- |
+| round 1    | `Rerun: round 2`              | `Rerun: none`, Fix lines kept | `Rerun: none`     |
+| round 2    | `Rerun: fix-check`            | `Rerun: none`, Fix lines kept | `Rerun: none`     |
+| fix-check  | `Rerun: none`, Fix lines kept | `Rerun: none`, Fix lines kept | `Rerun: none`     |
 
-`Rerun: none` with Fix lines means: after `claims-only`, the orchestrator
-runs one last text-only fix with no review; after `fix-check`, the finding
-is open and the orchestrator parks the issue.
+`Rerun: none` with Fix lines means: when every Fix line is `text`, the
+orchestrator runs one text-only fix with no review; when one is `src`
+(after `fix-check`), the finding is open and the orchestrator parks the
+issue.
 
 ## 6. Report
 
@@ -142,14 +144,14 @@ End with exactly this block and nothing else: no summary before it, no
 note after it.
 
 ```
-PR: #M  Round: <1 | 2 | claims-only | fix-check>  Kind: <the content of $R/kind>  Commit: <sha reviewed>
+PR: #M  Round: <1 | 2 | fix-check>  Kind: <the content of $R/kind>  Commit: <sha reviewed>
 Spec review: n findings (b blocking) | skipped  Code review: n findings (b blocking) | skipped  Claims review: n findings (b blocking) | skipped
 Fix: <one per line, `spec|code|claims: <path:line> <defect> [<class>] src|text`, or "none">
 Out of scope: <one per line, `<path:line> <defect>`, or "none">
 Notes: <one per line, `spec|code|claims: <path:line> <what could be better>`, or "none">
 Rejected: <one per line, `spec|code|claims: <path:line> <claim> — <reason>`, or "none">
 Spec needs: <the line the spec is missing, or "none">
-Rerun: round 2 | claims-only | fix-check | none
+Rerun: round 2 | fix-check | none
 ```
 
 Code review counts both lenses. Every line must stand alone: the

@@ -7,9 +7,14 @@ a timeout (testing rule 2). Then:
 
 ```bash
 git add <test files> && git commit -m "test: <issue title, imperative> (#<N>)"
-git push -u origin <kind>/<N>
-gh pr create --draft --title "<type>(<scope>): <summary>" --body-file <scratch>/pr-<N>.md
+LEFTHOOK_EXCLUDE=fallow git push -u origin <kind>/<N>
+gh pr create --draft --base <base, or main> --title "<type>(<scope>): <summary>" --body-file <scratch>/pr-<N>.md
 ```
+
+The push skips Fallow alone: the placeholders that let the red tests compile
+are dead code until green replaces them, and CI's Fallow job reports them
+meanwhile. Every other push runs every hook. With a `base` argument (a task
+stacked on its feature's last reviewed PR), the PR targets that branch.
 
 The PR body, in this order: `Closes #<N>`; a `### Status` section the
 orchestrator keeps current; the Done when lines as an unchecked list;

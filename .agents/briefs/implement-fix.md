@@ -23,7 +23,11 @@ rule it breaks), and ends in `src` (the fix changes production source) or
      test;
    - a `ci:` line: the named test failed in CI; a line asking to merge the
      base branch: merge it and resolve the conflicts.
-3. One commit per finding or closely related group. Then the audit
+3. Run only the commands under "Tests agents run" in `toolchain.md`. Never
+   run a check listed under "Checks agents never run", nor a tool behind it,
+   from any path: the commit and push hooks run them, and their errors show
+   in the hook's output.
+4. One commit per finding or closely related group. Then the audit
    (`implement-audit.md`, with the sweep) and the test check on every test
    the fix touched or added. Recheck every `Assumption:` line in the PR
    body, not only those this fix touched.

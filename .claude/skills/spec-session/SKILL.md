@@ -95,10 +95,12 @@ empty.
 **`technical`** (a feature delivered as one PR): fill the Technical spec
 section. First ask whether any decision here constrains more than one future
 change or would be expensive to reverse. Each such decision becomes an ADR:
-draft it in `docs/internal/adr/` at status _Proposed_ on a branch, with the
-diagrams `docs/internal/adr/README.md` asks for, and add its line to
-Decisions. Tell the maintainer the feature cannot leave `feature:spec` until
-that ADR is accepted. Write only what
+draft it in `docs/internal/adr/` at status _Proposed_ on branch
+`feature/<N>-adr`, with the diagrams `docs/internal/adr/README.md` asks for,
+open its PR, and add its line to Decisions. Tell the maintainer the feature
+cannot leave `feature:spec` until that ADR is accepted. An accepted ADR's PR
+stays open: it is the bottom of the feature's stack and merges with the
+feature's last task (delivery rule 15). Write only what
 `docs/internal/agent-rules/always-in-scope.md` does not cover. End with the
 spec check (step 5) on the posted body.
 
@@ -128,9 +130,14 @@ Write each body so the spec check finds nothing:
   when both act;
 - every list given as complete (ports, callers, files, steps, triggers)
   checked against a search of the code;
-- two tasks that touch the same file, or overlap by a project check in
-  `toolchain.md`, run one after the other: the later lists the earlier under
-  Depends on. That holds for an open task of another feature too;
+- two tasks run one after the other (the later lists the earlier under
+  Depends on) only when one uses what the other adds, both change the same
+  function or the same lines, or both trip a project check in
+  `toolchain.md`. Two tasks that only add to the same file in different
+  places run at once: the one that merges second takes the base branch.
+  That holds for an open task of another feature too;
+- every sentence about what existing code does today checked against that
+  code;
 - a Done when line that needs the slow lane says so and names its test, as
   `toolchain.md` asks;
 - nothing `always-in-scope.md` covers.

@@ -4,7 +4,10 @@ name: Issue state
 # mechanically:
 # - one <kind>:<state> label per issue (adding the next label drops the old);
 # - task:draft becomes task:ready when approved, specified, and unblocked, and
-#   task:ready goes back to task:draft when that stops being true;
+#   task:ready goes back to task:draft when that stops being true. A dependency
+#   unblocks when it is closed, or when it is a task of the same feature whose
+#   PR passed review (open, not a draft): the feature's PRs stack and merge
+#   together at the end of its delivery;
 # - a reporter's reply moves bug:needs-info back to bug:triage, reopening the
 #   issue if the stale job closed it (agents post under a maintainer's
 #   account, so comments carrying the agent footer from rule 12 do not count);
@@ -26,7 +29,7 @@ on:
   issue_comment:
     types: [created]
   pull_request:
-    types: [opened, edited, synchronize, closed, ready_for_review]
+    types: [opened, edited, synchronize, closed, ready_for_review, converted_to_draft]
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
@@ -68,9 +71,12 @@ jobs:
   task-ready:
     name: Promote or demote between task:draft and task:ready
     if: >-
-      github.event_name == 'issues' &&
-      (github.event.action == 'closed' || github.event.action == 'reopened' ||
-       (github.event.action == 'edited' && github.event.changes.body != null))
+      (github.event_name == 'issues' &&
+       (github.event.action == 'closed' || github.event.action == 'reopened' ||
+        (github.event.action == 'edited' && github.event.changes.body != null))) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.action == 'ready_for_review' || github.event.action == 'converted_to_draft' ||
+        github.event.action == 'closed'))
     runs-on: ubuntu-24.04
     permissions:
       issues: write
@@ -95,13 +101,37 @@ jobs:
                 .some((line) => line.trim() !== "" && !line.startsWith("#") && line.trim() !== "- ...");
             };
             const approved = (body) => /^- \[x\] Approved for delivery/im.test(body);
+            const parentOf = async (number) => {
+              const data = await github.graphql(
+                `query($owner:String!,$repo:String!,$number:Int!){
+                  repository(owner:$owner,name:$repo){ issue(number:$number){ parent{ number } } } }`,
+                { ...context.repo, number },
+              );
+              return data.repository.issue?.parent?.number ?? null;
+            };
+            const reviewedPr = async (number) => {
+              const { data } = await github.rest.pulls.list({
+                ...context.repo, state: "open", head: `${context.repo.owner}:task/${number}`,
+              });
+              return data.some((pr) => !pr.draft);
+            };
+
+            let changed = null;
+            if (context.eventName === "pull_request") {
+              // why: a merged PR closes its issue, and the issues event re-checks the same tasks.
+              if (context.payload.pull_request.merged) return;
+              const m = /^task\/(\d+)$/.exec(context.payload.pull_request.head.ref);
+              if (m === null) return;
+              changed = Number(m[1]);
+            } else if (context.payload.action !== "edited") {
+              changed = context.payload.issue.number;
+            }
 
             const candidates = [];
-            if (context.payload.action === "edited") {
+            if (changed === null) {
               const issue = context.payload.issue;
               if (hasLabel(issue, "task:draft") || hasLabel(issue, "task:ready")) candidates.push(issue);
             } else {
-              const changed = context.payload.issue.number;
               for (const labels of ["task:draft", "task:ready"]) {
                 const issues = await github.paginate(github.rest.issues.listForRepo, {
                   ...context.repo, state: "open", labels, per_page: 100,
@@ -118,9 +148,13 @@ jobs:
               if (!approved(body)) why.push("approval box not ticked");
               if (!specified(body)) why.push("Technical spec section empty");
               const open = [];
+              let parent;
               for (const n of dependencies(body)) {
                 const dep = await github.rest.issues.get({ ...context.repo, issue_number: n });
-                if (dep.data.state !== "closed") open.push(`#${n}`);
+                if (dep.data.state === "closed") continue;
+                parent ??= await parentOf(issue.number);
+                if (parent !== null && (await parentOf(n)) === parent && (await reviewedPr(n))) continue;
+                open.push(`#${n}`);
               }
               if (open.length) why.push(`waiting on ${open.join(", ")}`);
               const ready = why.length === 0;
@@ -133,7 +167,7 @@ jobs:
                 const deps = dependencies(body).map((n) => `#${n}`);
                 await github.rest.issues.createComment({
                   ...context.repo, issue_number,
-                  body: `Now \`task:ready\`: approved, technical spec present${deps.length ? `, ${deps.join(", ")} closed` : ""}.`,
+                  body: `Now \`task:ready\`: approved, technical spec present${deps.length ? `, ${deps.join(", ")} closed or reviewed in this feature's stack` : ""}.`,
                 });
                 core.info(`#${issue_number}: task:draft -> task:ready`);
               } else if (!ready && isReady) {

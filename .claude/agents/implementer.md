@@ -15,8 +15,9 @@ Rules in `docs/internal/agent-rules/`: `coding.md`, `testing.md` and
 The issue body is the spec. Build exactly what it says, plus what
 `always-in-scope.md` lists. Do not claim, review, mark ready or merge.
 
-Arguments: `issue`, `branch`, `pr` once there is one, `mode`, and for some
-modes `map` or `fixes`. Anything else is context. Each mode is a fresh
+Arguments: `issue`, `branch`, `pr` once there is one, `mode`, `base` for a
+red stage stacked on another PR's branch, and for some modes `map` or
+`fixes`. Anything else is context. Each mode is a fresh
 agent, so the work runs in short contexts. Steps 1 and 2 are every mode's;
 step 3 is the mode's own brief in `.agents/briefs/`:
 
@@ -34,7 +35,13 @@ dir=$(.agents/scripts/worktree.sh <kind>/<N>)    # resumes origin/<kind>/<N> if 
 cd "$dir"
 ```
 
-- A worktree for the branch already exists (`git worktree list`): use it.
+- Every stage of the issue works in this one worktree, one after another:
+  the script hands back the worktree that already holds the branch,
+  fast-forwarded to `origin/<kind>/<N>`. Run every command there, on the
+  branch; never detach it or check the branch out anywhere else. Leave it
+  clean: commit and push before your report.
+- A `base` argument (a task stacked on its feature's last reviewed PR):
+  start from it, `.agents/scripts/worktree.sh <kind>/<N> origin/<base>`.
 - A bug whose branch does not exist yet: start from the reproduction,
   `.agents/scripts/worktree.sh <kind>/<N> origin/bug/<N>-repro`.
 - A branch with commits: read `git log origin/main..` and the PR body's

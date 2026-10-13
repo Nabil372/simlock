@@ -19,11 +19,14 @@ command of their own: they take every command from here.
 
 Hooks and CI run these. Never run them by hand, and never the tools behind
 them (from `node_modules/.bin` or any other path): `pnpm check`, `pnpm test`,
-`pnpm typecheck`, `pnpm lint`, `pnpm lint:comments`, `pnpm format:check`,
+`pnpm typecheck`, `pnpm typecheck:e2e`, `pnpm lint`, `pnpm lint:comments`,
+`pnpm format`, `pnpm format:check`,
 `pnpm fallow`, `pnpm mutate` (outside the `harden-tests` routine), the whole
 e2e suite, the console lane in every browser (`pnpm test:console`), `tsc`,
 `oxlint`, `oxfmt`, `fallow`, `stryker`, `.agents/scripts/comment-lint.mjs`
-(outside the `garden-comments` routine).
+(outside the `garden-comments` routine). A PreToolUse hook
+(`.agents/scripts/tool-guard.mjs`) refuses them in every sub-agent; keep its
+list and this one the same.
 
 - **Commit hook:** formats the staged files and stages the result, then
   lint, the comment lint (architecture rule 17) and typecheck. Errors show
@@ -92,5 +95,6 @@ and names the slow-lane test that proves it.
   `tools/list`, HTTP error bodies, CLI help. A refinement can empty a
   published schema while every unit test stays green.
 - **Contract shapes.** Every change to a contract shape bumps
-  `DAEMON_PROTOCOL_VERSION` by one, so two tasks that change contract shapes
+  `DAEMON_PROTOCOL_VERSION` by one in the same PR (a spec's "protocol +1 at
+  merge" means this too), so two tasks that change contract shapes
   overlap even when they touch different files.

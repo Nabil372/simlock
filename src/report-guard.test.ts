@@ -22,7 +22,7 @@ function stop(agentType: string, lastMessage: string): string {
 describe("report-guard.mjs", () => {
   it("lets each stage agent stop once its last message holds its report block", () => {
     expect(
-      stop("implementer", "```\nissue: 438  branch: task/438  pr: 456  mode: audit\n```"),
+      stop("implementer", "```\nissue: 438  branch: task/438  pr: 456  mode: green\n```"),
     ).toBe("");
     expect(stop("reviewer", "PR: #456  Round: 2  Kind: full  Commit: abc")).toBe("");
     expect(stop("hardware-verifier", "PR: #456  Hardware: pass\nRan: e2e/x.test.ts")).toBe("");
@@ -36,6 +36,16 @@ describe("report-guard.mjs", () => {
 
     expect(JSON.parse(output)).toMatchObject({ decision: "block" });
     expect(JSON.parse(output).reason).toContain("report block");
+  });
+
+  it("blocks an implementer's audit report that has no audit line, and lets one with it stop", () => {
+    const head =
+      "issue: 472  branch: task/472  pr: 497  mode: audit  head: 9d78eb95\ntests: 49/49\n";
+
+    expect(
+      JSON.parse(stop("implementer", `${head}fixes:\n  a -> found 1 fixed 1\n`)).reason,
+    ).toContain("no `audit:` line");
+    expect(stop("implementer", `${head}audit: stale 0  replaced 0  donewhen 5/5\n`)).toBe("");
   });
 
   it("blocks a reviewer whose block belongs to another agent, and lets any other agent stop", () => {

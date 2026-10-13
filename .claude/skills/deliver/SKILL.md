@@ -1,6 +1,6 @@
 ---
 name: deliver
-description: Deliver a ready issue end to end, unattended — a task, a bug, or a whole feature:ready feature (spec its tasks, then walk them in dependency order, two at a time). Claims, delegates implement, review and hardware checks to background agents (two issues at once), reports progress as it goes, reasons only over their report blocks, and merges each PR through the gate. Use when the user says "deliver #N", "pick up the next ready issue", or "ship #N".
+description: Deliver a ready issue end to end, unattended — a task, a bug, or a whole feature:ready feature (spec its tasks, then walk them in dependency order, two at a time). Claims, delegates implement, review and hardware checks to background agents (two issues at once), reports progress as it goes, reasons only over their report blocks, and merges through the gate (a feature's PRs stack and merge together at the end). Use when the user says "deliver #N", "pick up the next ready issue", or "ship #N".
 model: opus
 effort: medium
 ---
@@ -19,7 +19,8 @@ of `key: value` lines and nothing else: `issue`, `branch`, `pr` once there
 is one, `mode` or `round`, and what the stage works on, pasted from the last
 report (`map`, `fixes`, the reviewer's arguments). No prose, and no
 reminders of what the agent's own instructions already say. Never pass a
-model. Never invoke the stage skills from here: a skill waits for an
+model or `isolation`: every stage of a task works in the task's one
+worktree, one after another. Never invoke the stage skills from here: a skill waits for an
 earlier run of itself, so two implements would run one after the other.
 
 Every stage is a new agent. Never send a finished agent its next stage
@@ -59,7 +60,9 @@ HH:MM #<task> (X/Z) <stage> → <started | outcome in a few words>
 Stages: `spec`, `implement`, `implement fix`, `review r<n>`, `hardware`,
 `gate`, `park`. Outcomes are facts from the report: `done, PR #380, 6/6
 green`, `2 fixes`, `pass`, `merged`, `parked: <reason>`. Drop `(X/Z)` for a
-single issue. Time from `date +%H:%M`.
+single issue. The time is the `Local time` your last tool result ends with
+(a hook adds it); never write a time you did not read there. When that
+line says the computer slept, end the status line with `(slept <m> min)`.
 
 Asked how it is going: answer from the PR status lines (step 3) and the
 status lines so far. To look inside a running agent, ask it with
@@ -69,15 +72,31 @@ SendMessage.
 first time a report lists `hardware` lines: may the slow lane run for every PR
 of this run (rule 16). Record the answer in that PR's `### Status`. Then
 never stop to ask: post PR bodies and comments directly, merge every PR the
-gate accepts, and apply rule 14's round cap. Ask a person only about what
-parks an issue. Unattended, ask nothing: the slow lane runs when its lock is
-free.
+gate accepts, and apply rule 14's round cap. Never ask anything else with
+a dialog: it stops every task in flight until someone answers. Unattended,
+ask nothing: the slow lane runs when its lock is free.
 
-**Park only for a person's decision.** A small spec gap is an `Assumption:`
-line, not a stop (rule 3). Park only for:
+**Decide, then tell.** A small spec gap is an `Assumption:` line (rule 3).
+A bigger one (`spec needs` in a report, or behaviour a user would see that
+nobody decided) does not stop the run either:
 
-- a contradiction with the body, a rule or an accepted ADR;
-- behaviour a user would see that nobody decided;
+1. Take the conservative option: the one closest to what the code does
+   today and the easiest to reverse.
+2. Fold it into the issue body as rule 3 says, the line ending
+   `(decided in delivery, pending the maintainer)`, with a Tests line that
+   pins it.
+3. Start the next stage on it, with a `decision:` line naming it.
+4. Post one PR comment headed `## Decision taken`: the question, each
+   option and what a user would see, the one taken and why, and what
+   reverting it takes. Say the same in the session, in plain text.
+
+The PR goes on as usual, to the gate or into its stack. An answer that picks another
+option is a fix run while the PR is open, and a new `task:draft` issue under
+the feature after it merged.
+
+**Park only for:**
+
+- a contradiction with a rule or an accepted ADR;
 - a slow-lane check that cannot run;
 - a blocking finding the review reports open after its last round (rule 14);
 - what the gate refuses (step 3).
@@ -91,6 +110,16 @@ git fetch -q origin && git diff --quiet HEAD origin/main -- .claude .agents
 Exit 1: this checkout's agents and skills are behind `main`, and the
 session loaded the old ones. Stop and tell the maintainer to run
 `git pull --ff-only` and start a new session.
+
+```bash
+git status --porcelain -- .claude .agents docs/internal/agent-rules
+```
+
+Any output: someone is editing the rules in this checkout, and every agent
+of the run would read their unfinished edits (the hooks come from this
+checkout too). Stop and tell the maintainer to start the run from a
+checkout nobody edits, such as `git worktree add ../simlock-delivery
+origin/main`.
 
 ```bash
 gh issue view <N> --json number,title,labels,assignees,body
@@ -115,15 +144,19 @@ it under Blocked on.
 ## 3. Deliver one issue
 
 Claim it: `gh issue edit <N> --add-assignee @me`. Its branch is
-`<kind>/<N>`. If it already has a PR, read the PR body's `### Status`
+`<kind>/<N>`. A task of a feature, or an issue whose feature has an open
+ADR PR, is stacked (step 4): its red stage gets `base:` and its PR waits
+in the stack instead of the gate. If it already has a PR, read the PR body's `### Status`
 section and the latest `## Handoff` comment, and go on from the next stage
 they name; never build again or restart review at round 1.
 
 1. **Implement**, one fresh `implementer` per mode: `mode: red`; then
    `mode: green` with the report's `map`; while a `green` report still lists
    `failing` and turned at least one test green since the last, another
-   `green` with its `map`; then `mode: audit`. `spec needs` under `open`
-   in any report: park (step 6).
+   `green` with its `map`; then `mode: audit`. An audit run takes no
+   `fixes`: an agent given both does the fixes and skips the audit, so a
+   CI failure waits for the fix run after the audit (step 2). `spec needs`
+   under `open` in any report: decide, then tell (above).
 2. **Review**: `reviewer` with the PR number. The diff's kind sets which
    reviews run (rule 14): a tests-only or docs-only diff gets fewer, a
    large one two code reviewers.
@@ -136,27 +169,27 @@ they name; never build again or restart review at round 1.
    asking to merge the base branch. With no fix run due, they get one
    before the round.
 3. **Decide** on the review report:
-   - Fix lines with `Rerun: round 2`, `claims-only` or `fix-check`: one
-     `implementer` run with `mode: fix` and the Fix lines pasted under
-     `fixes` (for `claims-only`, told to edit tests, comments and docs
-     only), then `reviewer` with that check's name, `previous <Commit>` and
-     the Fix lines pasted.
-   - `Rerun: none` with Fix lines, after `claims-only`: one more
-     `implementer` fix run, told to edit tests, comments and docs only, no
-     review; list them in the PR body's `## Review` section as fixed
-     unreviewed. After `fix-check`: the findings are open; park (step 6).
-   - A commit after the reviews passed (a merge of the base branch, a fix
-     the gate needed): `reviewer` with `fix-check`, `previous <Commit>` and
+   - Fix lines with `Rerun: round 2` or `fix-check`: one `implementer` run
+     with `mode: fix` and the Fix lines pasted under `fixes`, then
+     `reviewer` with that check's name, `previous <Commit>` and the Fix
+     lines pasted.
+   - `Rerun: none` with Fix lines, all `text`: one `implementer` fix run,
+     told to edit tests, comments and docs only, no review; list them in
+     the PR body's `## Review` section as fixed unreviewed. One `src` line
+     (after `fix-check`): the findings are open; park (step 6).
+   - A commit after the reviews passed (a merge of the base branch that
+     needed conflicts resolved, a fix the gate needed): `reviewer` with
+     `fix-check`, `previous <Commit>` and
      no Fix lines, then the hardware check again if one ran, before the
-     gate.
+     gate. A CI fix that changes only tests the PR's diff does not touch
+     (a flaky test elsewhere) gets no fix check: list it under `## Review`
+     as fixed unreviewed.
    - After every check, add its counts and Rejected lines to the PR body's
      `## Review` section (step 4), and its Notes under `Notes so far:`
      there; step 5 moves them into one comment.
    - Out of scope lines: open one `bug:new` issue each, naming the PR. They
      do not block it.
-   - Spec needs: park. When a person answers a Spec needs, write the answer
-     into the issue body, with a Tests line that pins it (delivery rule 3),
-     before the fix run.
+   - Spec needs: decide, then tell (above), before the fix run.
    - No Fix lines, and the audit reported `hardware` lines:
      `hardware-verifier` with the PR, the branch and those lines, on the
      commit the review passed (rule 16). On `fail`: one `implementer` fix
@@ -186,7 +219,7 @@ they name; never build again or restart review at round 1.
    `<m>` those confirmed and fixed, `<k>` its notes; `skipped` in place of
    the counts for a review the diff's kind left out (for an ADR-only diff:
    `Code review: skipped. Claims review: skipped.`). `<n>` is the number of
-   rounds, 1 or 2; a claims-only check or a fix check adds none. `<t>` is
+   rounds, 1 or 2; a fix check adds none. `<t>` is
    `tokens=` from `node .agents/scripts/usage.mjs`, this session's usage so
    far. Every blocking finding not fixed is a Rejected line; omit
    "Rejected:" when there is none. Then run
@@ -212,8 +245,10 @@ they name; never build again or restart review at round 1.
    Notes never become issues on their own: a person opens one when a note
    deserves it.
 
-6. **Ready and merge.** `gh pr ready <M>`, then run the gate in the
-   background and wait for its notification, without asking first:
+6. **Ready, then stack or merge.** `gh pr ready <M>`. A stacked PR joins
+   its feature's stack (step 4) and waits there: no gate. Any other PR:
+   run the gate in the background and wait for its notification, without
+   asking first:
 
    ```bash
    .agents/scripts/merge-pr.sh <M>
@@ -221,8 +256,8 @@ they name; never build again or restart review at round 1.
 
    Exit 0: merged. A conflict: an `implementer` fix run that merges the
    base branch. Red CI: one `implementer` fix run with the failing test
-   titles and the run id. Either way, the `fix-check` review in step 3,
-   then the gate again. Any other exit, or red CI a second time: park with the
+   titles and the run id. Either way, the `fix-check` review in step 3
+   (none for a fix to tests outside the PR's diff), then the gate again. Any other exit, or red CI a second time: park with the
    line it printed.
 
 After every stage, update the PR body's `### Status` section so any session
@@ -247,19 +282,44 @@ gh api graphql -F owner="$OWNER" -F repo="$REPO" -F number=<N> -f query='
         labels(first:5){nodes{name}} assignees(first:3){nodes{login}}}}}}}'
 ```
 
+**One stack per feature** (rule 15). The feature's PRs stay open and merge
+together at the end, so `main` never holds part of a feature. Bottom to top:
+the feature's open ADR PRs (branches `feature/<N>-adr*`, oldest first), then
+each task's PR in the order its review passed.
+
 Runnable: open, `task:ready`, unassigned. The issue-state workflow makes a
-task ready only once its Depends on are closed, so readiness is the order.
-After a merge the workflow takes a minute: watch its run
+task ready once each Depends on is closed, or is a task of this feature
+whose PR passed review (open, not a draft), so readiness is the order. After
+`gh pr ready` or a merge the workflow takes a minute: watch its run
 (`gh run list --workflow "Issue state" --limit 1`, then `gh run watch <id>`)
 and list again; do not diagnose why a task is not ready yet.
 
+- A task's red stage gets `base: <branch of the stack's top PR>`; with no
+  PR yet, no `base` (it starts from `main`).
+- Its review passed (step 3, item 6): when its PR's base is no longer the
+  stack's top (another task joined meanwhile), one `implementer` fix run
+  merges the top's branch into it, then `gh pr edit <M> --base <top
+branch>`; a merge with conflicts gets a fix check. Then `gh pr ready <M>`
+  and `gh stack link <PR below> <M>` (PR numbers, bottom to top; none
+  below yet: nothing to link). PR body Status: `Gate: waiting for the
+stack`.
 - Deliver up to two runnable tasks at once, each in its own worktree. Start
   a stage for one as soon as the other's agent is running; never wait on one
   task to move the other.
 - Both at the hardware check: the second `hardware-verifier` waits for the
   lane's lock (rule 16).
-- After each merge, list again.
-- A task parks: keep delivering the tasks that do not depend on it.
+- After each `gh pr ready`, list again.
+- A task parks: keep delivering the tasks that do not depend on it. The
+  stack stays open and nothing merges; the maintainer decides.
+
+**Merging the stack.** When every task has joined the stack and nothing is
+in flight, run the gate on the top PR: `merge-pr.sh <top>` gates every PR
+in the stack and merges them all, bottom to top. A conflict with `main`
+(another feature merged meanwhile): one fix run on the bottom PR that merges
+`origin/main`, then one on each PR above that merges its base, bottom to
+top; a merge with conflicts gets a fix check; then the gate again. Red CI:
+the fix run goes to the lowest red PR, and the PRs above it merge its
+branch the same way.
 
 Stop when nothing is runnable and nothing is in flight.
 
@@ -273,9 +333,15 @@ Post one comment on the feature (or the single issue):
 Merged: #PR (#task), ...
 Parked: #task — <reason, one line>, ...
 Waiting: #task — on #dependency, ...
+Decided: #task — <question> → <option taken>, ...
+Asleep: <m> min
 
 _Written by an agent._
 ```
+
+`Asleep` is the session total the clock hook last gave; leave the line out
+when it never said the computer slept. A closed lid sleeps a laptop, and
+nothing runs until it wakes.
 
 Then send the maintainer a push notification with the same three counts, if
 a tool for it exists.
