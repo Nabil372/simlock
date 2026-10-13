@@ -11,6 +11,9 @@ export type DeviceProfile =
       /** From the entry's `Tag :` line (ADR 0015 §3); `undefined` for a tag the table does not know. */
       readonly deviceClass: DeviceClass | undefined;
       readonly tag?: string | undefined;
+      readonly apiRange?: ApiRange | undefined;
+      readonly playStore?: boolean | undefined;
+      readonly tablet?: boolean | undefined;
     }
   | {
       readonly kind: "library";
@@ -31,7 +34,13 @@ export type DeviceProfile =
       readonly name: string;
       readonly names: readonly string[];
       readonly hardwareProperties: Readonly<Record<string, string>>;
+      readonly imageKind?: string | undefined;
+      readonly apiRange?: ApiRange | undefined;
+      readonly playStore?: boolean | undefined;
+      readonly tablet?: boolean | undefined;
     };
+
+type ApiRange = { readonly min: number; readonly max?: number };
 
 /**
  * Diagnostics a `DeviceProfileSource` can raise. Sources never throw out of `profiles` for a
@@ -124,7 +133,8 @@ export class DeviceProfileRegistry {
     });
     const modelClasses: Record<string, DeviceClass> = {};
     for (const profile of listed.values()) {
-      const deviceClass = profile.kind === "properties" ? "phone" : profile.deviceClass;
+      const deviceClass =
+        profile.kind === "properties" ? classOfTag(profile.imageKind) : profile.deviceClass;
       if (deviceClass !== undefined) modelClasses[profile.name] = deviceClass;
     }
     const modelProfiles = new Map<string, DeviceProfile>();
@@ -139,15 +149,23 @@ export class DeviceProfileRegistry {
   }
 
   /**
-   * Reads sources in order and stops at the first one with a match, so a built-in model never
-   * opens devices.xml. The first match in the first source that has one is the first match in
-   * the whole list, so this agrees with `catalog`.
+   * why: sources are read in order and stop at the first match, so a model that matches an
+   * SDK profile never opens devices.xml. A custom built-in match also reads every later source,
+   * for the devices.xml details it fits by. The first match in the first source that has one is
+   * the first match in the whole list, so this agrees with `catalog`.
    */
   async resolve(model: string): Promise<DeviceProfile> {
-    for (const source of this.#sources) {
+    for (const [index, source] of this.#sources.entries()) {
       const profile = matchProfile(await source.profiles(), model);
       if (profile !== undefined) {
-        return profile;
+        if (profile.kind !== "builtin" || !profile.custom) {
+          return profile;
+        }
+        const later: DeviceProfile[] = [];
+        for (const next of this.#sources.slice(index + 1)) {
+          later.push(...(await next.profiles()));
+        }
+        return withDevicesXmlDetails(profile, later);
       }
     }
     throw new UnknownModelError("android", model);
@@ -158,8 +176,26 @@ export class DeviceProfileRegistry {
     for (const source of this.#sources) {
       profiles.push(...(await source.profiles()));
     }
-    return profiles;
+    return profiles.map((profile) => withDevicesXmlDetails(profile, profiles));
   }
+}
+
+function withDevicesXmlDetails(
+  profile: DeviceProfile,
+  candidates: readonly DeviceProfile[],
+): DeviceProfile {
+  if (profile.kind !== "builtin" || !profile.custom) return profile;
+  const details = matchProfile(
+    candidates.filter((candidate) => candidate.kind === "properties"),
+    profile.name,
+  );
+  if (details?.kind !== "properties") return profile;
+  return {
+    ...profile,
+    apiRange: details.apiRange,
+    playStore: details.playStore,
+    tablet: details.tablet,
+  };
 }
 
 /** Made on this machine rather than shipped with the SDK. */
@@ -336,8 +372,12 @@ export class UserDeviceProfileSource implements DeviceProfileSource {
   /** Each profile answers to its `<d:name>` only. */
   async profiles(): Promise<readonly DeviceProfile[]> {
     return (await this.#devicesXmlProfiles()).map((profile) => ({
+      apiRange: profile.apiRange,
       hardwareProperties: profile.hardwareProperties,
+      imageKind: profile.imageKind,
       kind: "properties",
+      playStore: profile.playStore,
+      tablet: profile.tablet,
       name: profile.name,
       names: [profile.name],
     }));
@@ -375,10 +415,15 @@ export class UserDeviceProfileSource implements DeviceProfileSource {
 interface DevicesXmlProfile {
   readonly name: string;
   readonly hardwareProperties: Readonly<Record<string, string>>;
+  readonly imageKind: string | undefined;
+  readonly apiRange: ApiRange | undefined;
+  readonly playStore: boolean;
+  readonly tablet: boolean;
 }
 
 /**
- * Maps a `<d:device>` element to the `config.ini` hardware properties `avdmanager -d` would
+ * why: there is no official store to create an AVD from a devices.xml profile directly, so this
+ * maps a `<d:device>` element to the `config.ini` hardware properties `avdmanager -d` would
  * otherwise have produced. Mapped:
  *
  * - `<d:name>`               -> `hw.device.name`
@@ -390,12 +435,15 @@ interface DevicesXmlProfile {
  *
  * Deliberately skipped, because `config.ini`'s AVD-identity hash and the emulator's own
  * defaults cover them well enough that mirroring them exactly is not worth the parsing
- * surface: `<d:screen-size>` / `<d:diagonal-length>` / `<d:screen-ratio>` (physical form
- * factor, not a rendering input), `<d:xdpi>` / `<d:ydpi>` (physical DPI, distinct from the
+ * surface: `<d:screen-size>` / `<d:screen-ratio>` (physical form factor, not a rendering
+ * input), `<d:xdpi>` / `<d:ydpi>` (physical DPI, distinct from the
  * rendering `pixel-density` bucket this already maps), `<d:buttons-type>`, `<d:keyboard>`,
  * `<d:nav>`, `<d:camera>`, `<d:sensors>`, `<d:cpu>`, `<d:gpu>`, `<d:abi>` (the system image
- * the caller picked already determines the ABI), `<d:storage>`, and the whole `<d:software>`
- * block (API-level / feature compatibility simlock resolves separately via the system image).
+ * the caller picked already determines the ABI), `<d:storage>`, and the rest of `<d:software>`.
+ *
+ * Read for the system image a profile fits, not for the AVD: `<d:tag-id>`,
+ * `<d:software><d:api-level>`, `<d:playstore-enabled>`, `<d:diagonal-length>` and the
+ * `<d:x-folded-dimension>` / `<d:y-folded-dimension>` pair.
  * A device with multiple `<d:state>` hardware variants (e.g. a foldable's postures) is read
  * from whichever `<d:hardware>` block appears first in the file, matching `<d:screen>` /
  * `<d:ram>` textually rather than per-state.
@@ -442,6 +490,7 @@ export function parseDevicesXml(contents: string): readonly DevicesXmlProfile[] 
 
     applyScreenProperties(block, hardwareProperties);
     applyRamProperty(block, hardwareProperties);
+    const fit = readFitFields(block, name);
 
     // Defense in depth beyond the per-field checks above: every value about to leave this
     // parser (including ones a future field addition might forget to check individually) must
@@ -453,7 +502,7 @@ export function parseDevicesXml(contents: string): readonly DevicesXmlProfile[] 
       );
     }
 
-    profiles.push({ hardwareProperties, name });
+    profiles.push({ ...fit, hardwareProperties, name });
   }
   return profiles;
 }
@@ -462,6 +511,76 @@ export function parseDevicesXml(contents: string): readonly DevicesXmlProfile[] 
 export function containsForbiddenCharacter(value: string): boolean {
   // oxlint-disable-next-line no-control-regex -- NUL rejection is intentional, not an accidental control-character match.
   return /[\r\n\u0000]/.test(value);
+}
+
+const TAG_ID_PATTERN = /^[a-z0-9-]{1,64}$/;
+const API_LEVEL_PATTERN = /^(\d{1,3})?(-)?(\d{1,3})?$/;
+const MAX_API_LEVEL = 999;
+const TABLET_MIN_DIAGONAL_INCHES = 7;
+const MAX_DIAGONAL_INCHES = 100;
+
+function fitText(xml: string, tag: string, name: string, container = false): string | undefined {
+  const element = extractElement(xml, tag);
+  if (element === undefined) return undefined;
+  if (!container && containsForbiddenCharacter(element.raw)) {
+    throw new Error(
+      `devices.xml ${tag} for device "${name}" contains an embedded line break or NUL byte`,
+    );
+  }
+  return element.text;
+}
+
+function apiBound(value: string): number | undefined {
+  const number = Number(value);
+  return number >= 1 && number <= MAX_API_LEVEL ? number : undefined;
+}
+
+// fallow-ignore-next-line complexity -- the range forms are one pass over one pattern match.
+function parseApiRange(text: string | undefined): ApiRange | undefined {
+  const match = text === undefined ? null : API_LEVEL_PATTERN.exec(text);
+  if (match === null) return undefined;
+  const [, low = "", dash, high = ""] = match;
+  const min = apiBound(low);
+  const max = apiBound(high);
+  const bounded = (low === "" || min !== undefined) && (high === "" || max !== undefined);
+  if (!bounded || (low === "" && high === "") || (dash === undefined && high !== "")) {
+    return undefined;
+  }
+  if (dash === undefined) return { max: min as number, min: min as number };
+  const range = { ...(max === undefined ? {} : { max }), min: min ?? 1 };
+  return max !== undefined && range.min > max ? undefined : range;
+}
+
+// fallow-ignore-next-line complexity -- one bounded read per fit field of one <d:device> block.
+function readFitFields(
+  block: string,
+  name: string,
+): Pick<DevicesXmlProfile, "apiRange" | "imageKind" | "playStore" | "tablet"> {
+  const tagId = fitText(block, "tag-id", name);
+  const imageKind = tagId !== undefined && TAG_ID_PATTERN.test(tagId) ? tagId : undefined;
+  const software = fitText(block, "software", name, true);
+  const apiRange = parseApiRange(
+    software === undefined ? undefined : fitText(software, "api-level", name),
+  );
+  const playStore =
+    fitText(block, "playstore-enabled", name) !== "false" || imageKind === "android-wear";
+  const screen = fitText(block, "screen", name, true);
+  const inScreen = (tag: string): string | undefined =>
+    screen === undefined ? undefined : fitText(screen, tag, name);
+  const diagonalText = inScreen("diagonal-length");
+  const diagonal =
+    diagonalText !== undefined && /^\d+(\.\d+)?$/.test(diagonalText)
+      ? Number(diagonalText)
+      : undefined;
+  const folds =
+    Number(inScreen("x-folded-dimension")) > 0 && Number(inScreen("y-folded-dimension")) > 0;
+  const tablet =
+    imageKind === undefined &&
+    diagonal !== undefined &&
+    diagonal >= TABLET_MIN_DIAGONAL_INCHES &&
+    diagonal <= MAX_DIAGONAL_INCHES &&
+    !folds;
+  return { apiRange, imageKind, playStore, tablet };
 }
 
 function applyScreenProperties(
@@ -576,7 +695,13 @@ function extractText(xml: string, tag: string): string | undefined {
 function extractElement(
   xml: string,
   tag: string,
-): { readonly attributes: Readonly<Record<string, string>>; readonly text: string } | undefined {
+):
+  | {
+      readonly attributes: Readonly<Record<string, string>>;
+      readonly raw: string;
+      readonly text: string;
+    }
+  | undefined {
   const pattern = new RegExp(
     `<(?:[\\w.-]+:)?${tag}((?:\\s[^>]*)?)>([\\s\\S]*?)</(?:[\\w.-]+:)?${tag}>`,
     "i",
@@ -592,7 +717,7 @@ function extractElement(
       attributes[key] = value;
     }
   }
-  return { attributes, text: (match[2] ?? "").trim() };
+  return { attributes, raw: match[2] ?? "", text: (match[2] ?? "").trim() };
 }
 
 const XML_ENTITIES: Readonly<Record<string, string>> = {

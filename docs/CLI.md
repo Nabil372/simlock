@@ -1588,8 +1588,9 @@ needs Android 35 or newer), a Play Store image only goes with a model that
 allows Play Store (Pixel 6 does not), and a `tablet` image only with a tablet
 model. `runtimes`, `defaultRuntime` and `images` still list every installed
 image, so a level can be listed there and absent from every `modelRuntimes`
-list. A custom model made in Android Studio but not listed by `avdmanager` pairs
-with every installed level for now.
+list. A custom model made in Android Studio but not listed by `avdmanager` fits an
+image by the tag, API range, Play Store setting and screen size Android Studio
+saved for it.
 
 `modelAliases` lists, for a model, the other names `--device` accepts for it
 on that machine; a model with no other name has no entry. On Android a
@@ -1607,8 +1608,9 @@ device it is: `phone`, `tablet`, `watch`, `tv`, `vision`, `auto` or
 (iPhone, iPad, Apple Watch, Apple TV, Apple Vision). On Android it comes
 from the device profile's tag: `android-tv` is `tv`, `android-wear` is
 `watch`, `android-automotive` and its variants are `auto`, `android-desktop`
-is `desktop`, and a profile with no tag, or a custom profile from
-`devices.xml`, is `phone`. A profile Simlock ships carries its own class. A model whose tooling reports nothing usable has
+is `desktop`, and a profile with no tag is `phone`. A custom profile
+found only in `devices.xml` takes its class from the tag Android Studio saved
+for it, and is `phone` when it saved none. A profile Simlock ships carries its own class. A model whose tooling reports nothing usable has
 no entry, and is still listed and leasable by name.
 
 `classDefaults` says, for a class, which model Simlock would create for it on
@@ -1693,6 +1695,18 @@ them:
   directory. A custom profile exists only on the machine where it was made,
   so in a fleet only the worker that has it can lease it. To add one, create
   it with Android Studio's device manager on that machine.
+
+  Simlock finds `devices.xml` where `avdmanager` does: in
+  `$ANDROID_USER_HOME`, else `$ANDROID_PREFS_ROOT/.android`, else
+  `$ANDROID_SDK_HOME/.android`, else `.android` in your home directory.
+
+  A custom profile's API range, Play Store setting and screen size from
+  Android Studio decide which images it gets, with its device type. A
+  profile that needs API 31 or newer is never paired with an image below 31;
+  one with Play Store turned off gets no Play Store image (a Wear profile
+  always can); a profile with no device type and a screen of 7 inches or more
+  that does not fold also gets tablet images. A profile with none of these set
+  gets the phone images, as before.
 
 `avdmanager list device` prints both kinds; it shows a custom profile with
 `OEM : User`. Simlock also reads `devices.xml` itself. When a custom profile
