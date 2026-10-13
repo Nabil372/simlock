@@ -47,4 +47,53 @@ describe("the front map", () => {
     expect(map.get("fresh")).toMatchObject({ deadline: 9_000_000 });
     expect(map.get("fresh")?.endedAt).toBeUndefined();
   });
+
+  it("keeps a lease ID in the waiting list while any allocate with it still waits", () => {
+    const map = new FrontMap(new FakeClock(1_000));
+    map.startWaiting("lease-a");
+    map.startWaiting("lease-a");
+    map.startWaiting("lease-b");
+
+    map.stopWaiting("lease-a");
+    expect(map.waitingIds()).toEqual(["lease-a", "lease-b"]);
+
+    map.stopWaiting("lease-a");
+    map.stopWaiting("lease-b");
+    expect(map.waitingIds()).toEqual([]);
+  });
+
+  it("leaves every entry unchanged when lease.list fails for its principal", async () => {
+    const clock = new FakeClock(1_000);
+    const map = new FrontMap(clock);
+    map.add("lease-a", entry(2_000));
+    clock.advance(10_000);
+
+    await map.refresh(async () => {
+      throw new Error("lease.list refused");
+    });
+
+    expect(map.get("lease-a")).toMatchObject({ deadline: 2_000 });
+    expect(map.get("lease-a")?.endedAt).toBeUndefined();
+  });
+
+  it("asks lease.list for at most 100 principals, the ones holding the oldest deadlines", async () => {
+    const clock = new FakeClock(1_000);
+    const map = new FrontMap(clock);
+    for (let n = 0; n < 101; n += 1) {
+      const identity: TokenIdentity = { requesterId: `tok_${n}`, role: "agent" };
+      map.add(`lease-${n}`, { address: "a", deadline: 2_000 + n, identity, ttlMs });
+    }
+    clock.advance(10_000);
+    const asked: string[] = [];
+
+    await map.refresh(async (who) => {
+      asked.push(who.requesterId);
+      return [];
+    });
+
+    expect(asked).toHaveLength(100);
+    expect(asked).not.toContain("tok_100");
+    expect(map.get("lease-0")?.endedAt).toBeDefined();
+    expect(map.get("lease-100")?.endedAt).toBeUndefined();
+  });
 });

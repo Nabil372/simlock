@@ -2,9 +2,10 @@ import type { TokenIdentity } from "../../http/token-store.js";
 import type { AgentDeviceHost } from "../host/host.js";
 
 export interface HostLink {
-  status():
+  status(): Promise<
     | { readonly state: "running"; readonly leaseMaxTtlMs: number }
-    | { readonly state: "unavailable"; readonly reason: string };
+    | { readonly state: "unavailable"; readonly reason: string }
+  >;
   forward(request: Request, identity: TokenIdentity): Promise<Response>;
 }
 

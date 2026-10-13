@@ -9,7 +9,7 @@ import type { AgentDeviceUpstream } from "./host/upstream.js";
 
 export { agentDeviceFindings } from "./host/availability-findings.js";
 export { AgentDeviceSupervisor } from "./host/agent-device-supervisor.js";
-// fallow-ignore-next-line unused-type -- the availability contract the front (#472) and doctor (#471) read.
+// fallow-ignore-next-line unused-type -- the shape `AgentDeviceSupervisor.availability()` returns, which `agentDeviceFindings` reads.
 export type { AgentDeviceAvailability } from "./host/agent-device-supervisor.js";
 export type { AgentDeviceUpstream } from "./host/upstream.js";
 export { SupervisorAgentDeviceUpstream } from "./host/upstream.js";

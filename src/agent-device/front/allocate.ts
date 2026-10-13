@@ -20,7 +20,9 @@ const CLASS_OF_TARGET: Record<string, "phone" | "tv" | "desktop"> = {
   mobile: "phone",
   tv: "tv",
 };
-const SCOPE_KEYS = ["runId", "leaseProvider", "clientId", "deviceKey"] as const;
+const CALL_SCOPE_KEYS = ["runId", "leaseProvider", "clientId"] as const;
+// why: only agent-device's reply names the device key it gave the lease, since the front stripped the CLI's key from the allocate it forwarded.
+const REPLY_SCOPE_KEYS = [...CALL_SCOPE_KEYS, "deviceKey"] as const;
 
 const present = (value: unknown): boolean => value !== undefined && value !== null;
 
@@ -194,9 +196,12 @@ async function requestLease(
   }
 }
 
-function scopeOf(source: Record<string, unknown> | undefined): Record<string, unknown> {
+function scopeOf(
+  source: Record<string, unknown> | undefined,
+  keys: readonly string[],
+): Record<string, unknown> {
   const scope: Record<string, unknown> = {};
-  for (const key of SCOPE_KEYS) {
+  for (const key of keys) {
     if (source?.[key] !== undefined) scope[key] = source[key];
   }
   return scope;
@@ -303,7 +308,13 @@ async function keepOrRelease(
   const lease = reading.result["lease"];
   const named =
     typeof lease === "object" && lease !== null ? (lease as Record<string, unknown>) : {};
-  const ended = await releaseAgentDevice(context, request, identity, plan.leaseId, scopeOf(named));
+  const ended = await releaseAgentDevice(
+    context,
+    request,
+    identity,
+    plan.leaseId,
+    scopeOf(named, REPLY_SCOPE_KEYS),
+  );
   if (ended.reading.kind === "success") await releaseSimlock(context, identity, plan.leaseId);
   return undefined;
 }
@@ -317,7 +328,7 @@ async function settleNoReply(
     request,
     identity,
     plan.leaseId,
-    scopeOf(call.params),
+    scopeOf(call.params, CALL_SCOPE_KEYS),
   );
   const holds =
     ended.reading.kind === "error" &&

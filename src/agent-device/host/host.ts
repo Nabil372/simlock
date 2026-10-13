@@ -30,11 +30,11 @@ export class AgentDeviceHost {
 
   constructor(readonly upstream: AgentDeviceUpstream) {}
 
-  status(): HostStatus {
-    if (this.#loadError !== undefined) return { reason: this.#loadError, state: "unavailable" };
+  async status(): Promise<HostStatus> {
     const current = this.upstream.current();
     if (current.state === "unavailable") return current;
-    void this.#load();
+    await this.#load();
+    if (this.#loadError !== undefined) return { reason: this.#loadError, state: "unavailable" };
     return { leaseMaxTtlMs: current.leaseMaxTtlMs, state: "running" };
   }
 
@@ -52,7 +52,7 @@ export class AgentDeviceHost {
   }
 
   async forward(request: Request, identity: TokenIdentity): Promise<Response> {
-    const status = this.status();
+    const status = await this.status();
     if (status.state === "unavailable") throw new Error(status.reason);
     const module = await this.#load();
     const current = this.upstream.current();

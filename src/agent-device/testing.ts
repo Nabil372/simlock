@@ -103,6 +103,8 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
   #failAllocate: FakeFailure | undefined;
   #failRelease: FakeFailure | undefined;
   #allocateBody: string | undefined;
+  #replyDeviceKey: string | undefined;
+  #anyTenantReleases = false;
   #allocateGate: Gate | undefined;
   #commandGate: Gate | undefined;
   #streamChunks: readonly string[] | undefined;
@@ -144,6 +146,15 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
 
   answerNextAllocateWith(body: string): void {
     this.#allocateBody = body;
+  }
+
+  nameDeviceKeyInNextReply(deviceKey: string): void {
+    this.#replyDeviceKey = deviceKey;
+  }
+
+  // why: a daemon that finds a lease whichever tenant names it leaves only the front's own owner check to stop a cross-tenant release.
+  letAnyTenantRelease(): void {
+    this.#anyTenantReleases = true;
   }
 
   holdAllocate(): void {
@@ -239,10 +250,11 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     const leaseId = String(params["leaseId"]);
     const scope = {
       clientId: params["clientId"],
-      deviceKey: params["deviceKey"],
+      deviceKey: this.#replyDeviceKey ?? params["deviceKey"],
       leaseProvider: params["leaseProvider"],
       runId: params["runId"],
     };
+    this.#replyDeviceKey = undefined;
     this.leases.set(leaseId, { ended: false, leaseId, scope, tenant, ttlMs: params["ttlMs"] });
     return envelope(id, {
       lease: { ...scope, leaseId, tenantId: tenant, ttlMs: params["ttlMs"] },
@@ -255,13 +267,14 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     this.#failRelease = undefined;
     if (failure !== undefined) return errorEnvelope(id, failure);
     const lease = this.leases.get(String(params["leaseId"]));
-    if (lease === undefined || lease.tenant !== tenant) {
+    if (lease === undefined || (!this.#anyTenantReleases && lease.tenant !== tenant)) {
       return errorEnvelope(id, { code: "LEASE_NOT_FOUND", message: "lease not found" });
     }
     if (
       lease.scope.runId !== params["runId"] ||
       lease.scope.leaseProvider !== params["leaseProvider"] ||
-      lease.scope.clientId !== params["clientId"]
+      lease.scope.clientId !== params["clientId"] ||
+      lease.scope.deviceKey !== params["deviceKey"]
     ) {
       return errorEnvelope(id, { code: "UNAUTHORIZED", message: "lease scope mismatch" });
     }

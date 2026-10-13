@@ -490,7 +490,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     ]);
   });
 
-  it("allocate `--platform ios` makes a simlock lease whose ID and requester are the CLI's lease ID, owned by the token's principal, and the lease request names no osVersion, mode, imageTag or physical device and offers no download", async () => {
+  it("allocate `--platform ios` makes a simlock lease whose ID and requester are the CLI's lease ID, owned by the token's principal, and the lease request names no osVersion, mode, imageTag or physical device", async () => {
     const rig = await setUp();
 
     const answer = await allocate(rig, 1);
@@ -807,7 +807,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(allocatesReceived(ready, 3)).toEqual([]);
   });
 
-  it("a CLI that hangs up after device work started for it gets no agent-device lease: the grant that lands later is released at once and never reaches the agent-device daemon; when that device work fails and the request goes back to the queue, the front's repeated cancel removes it, and it is never granted", async () => {
+  it("a CLI that hangs up after device work started for it gets no agent-device lease: the grant that lands later is released at once and never reaches the agent-device daemon; when that device work fails and the request goes back to the queue, it is never granted", async () => {
     const slowDevice = (clock: FakeClock) => [
       new FakeDriver({
         ...phoneModels,
@@ -974,9 +974,22 @@ describe("the agent-device front, through the whole worker daemon", () => {
       .not.toContain(hex(4));
   });
 
+  it("the follow-up release after an allocate with no usable reply carries the allocate's runId, leaseProvider and clientId and not its deviceKey", async () => {
+    const rig = await setUp();
+    rig.fake.answerNextAllocateWith("<html>bad gateway</html>");
+
+    const answer = await envelopeOf(await allocate(rig, 1, { deviceKey: "saved-device" }));
+
+    expect(answer.error?.data?.code).toBe("COMMAND_FAILED");
+    const params = rig.fake.rpcRequests("agent_device.lease.release")[0]?.params;
+    expect(params).toMatchObject({ ...scope, leaseId: hex(1) });
+    expect(params).not.toHaveProperty("deviceKey");
+  });
+
   it("a CLI that hangs up while agent-device makes its lease leaves neither lease: the agent-device lease is released with the reply's scope, then the simlock lease; when that release fails, the simlock lease stays until its TTL", async () => {
     const rig = await setUp();
     rig.fake.holdAllocate();
+    rig.fake.nameDeviceKeyInNextReply("device-key-1");
     const hangUp = new AbortController();
     const first = track(allocate(rig, 1, {}, { signal: hangUp.signal }));
     await sleep(50);
@@ -990,7 +1003,10 @@ describe("the agent-device front, through the whole worker daemon", () => {
 
     await expect.poll(async () => (await leases(rig)).length).toBe(0);
     expect(rig.fake.leases.has(hex(1))).toBe(false);
-    expect(rig.fake.rpcRequests("agent_device.lease.release")[0]?.params).toMatchObject(scope);
+    expect(rig.fake.rpcRequests("agent_device.lease.release")[0]?.params).toMatchObject({
+      ...scope,
+      deviceKey: "device-key-1",
+    });
 
     rig.fake.holdAllocate();
     rig.fake.failNextRelease({ code: "COMMAND_FAILED", message: "release failed" });
@@ -1091,6 +1107,13 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(rig.fake.rpcRequests("agent_device.lease.release")).toHaveLength(1);
     expect((await leases(rig)).map((lease) => lease.id)).toEqual([hex(1)]);
     expect(rig.fake.leases.has(hex(1))).toBe(true);
+
+    rig.fake.letAnyTenantRelease();
+    const crossed = await envelopeOf(await release(rig, 1, { token: secrets.two }));
+
+    expect(crossed.result).toMatchObject({ ok: true });
+    expect(rig.fake.leases.has(hex(1))).toBe(false);
+    expect((await leases(rig)).map((lease) => lease.id)).toEqual([hex(1)]);
   });
 
   it("a command's reply, a streamed progress body included, reaches the CLI unchanged, and a CLI that hangs up during it aborts the request the agent-device daemon was answering", async () => {

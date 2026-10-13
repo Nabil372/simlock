@@ -45,7 +45,7 @@ async function handleRpc(
   if (read.kind === "malformed") {
     return frontReply(refusal("refused: send one JSON-RPC request"), { id: null });
   }
-  const status = context.link.status();
+  const status = await context.link.status();
   if (status.state === "unavailable") return frontReply(notAvailable(status.reason), read);
   const kind = classifyCall(read.method, read.params);
   if (kind === "wrapped-lease") {
@@ -92,7 +92,7 @@ export function createFront(context: FrontContext): HttpMount {
         return frontReply(refusal(AGENT_TOKEN_ONLY, 403), isRpc ? { id: null } : undefined);
       }
       if (isRpc) return handleRpc(context, request, identity);
-      const status = context.link.status();
+      const status = await context.link.status();
       if (status.state === "unavailable") return frontReply(notAvailable(status.reason), undefined);
       return passThrough(context, request, identity, undefined);
     },

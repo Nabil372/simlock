@@ -25,18 +25,20 @@ interface Held {
 
 export class FrontMap {
   readonly #held = new Map<string, Held>();
-  readonly #waiting = new Set<string>();
+  readonly #waiting = new Map<string, number>();
 
   startWaiting(leaseId: string): void {
-    this.#waiting.add(leaseId);
+    this.#waiting.set(leaseId, (this.#waiting.get(leaseId) ?? 0) + 1);
   }
 
   stopWaiting(leaseId: string): void {
-    this.#waiting.delete(leaseId);
+    const left = (this.#waiting.get(leaseId) ?? 0) - 1;
+    if (left > 0) this.#waiting.set(leaseId, left);
+    else this.#waiting.delete(leaseId);
   }
 
   waitingIds(): readonly string[] {
-    return [...this.#waiting];
+    return [...this.#waiting.keys()];
   }
 
   constructor(readonly clock: Clock) {}
