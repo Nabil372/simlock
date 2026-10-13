@@ -48,7 +48,10 @@ interface FakeAgentDeviceLease {
 interface FakeFailure {
   readonly code: string;
   readonly message: string;
+  readonly details?: Readonly<Record<string, unknown>>;
 }
+
+export type FakeLeaseGoneReason = "LEASE_NOT_FOUND" | "LEASE_EXPIRED" | "LEASE_REVOKED";
 
 interface Gate {
   readonly promise: Promise<void>;
@@ -98,10 +101,14 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
   generation = 1;
   leaseMaxTtlMs: number;
   onRelease: (() => Promise<void>) | undefined;
+  onHeartbeat: (() => Promise<void>) | undefined;
   #unavailable: string | undefined;
   #unreachable = false;
   #failAllocate: FakeFailure | undefined;
   #failRelease: FakeFailure | undefined;
+  #failHeartbeat: FakeFailure | undefined;
+  #failCommand: FakeFailure | undefined;
+  readonly #goneReasons = new Map<string, FakeLeaseGoneReason>();
   #allocateBody: string | undefined;
   #replyDeviceKey: string | undefined;
   #anyTenantReleases = false;
@@ -144,6 +151,20 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     this.#failRelease = failure;
   }
 
+  failNextHeartbeat(failure: FakeFailure): void {
+    this.#failHeartbeat = failure;
+  }
+
+  failNextCommand(failure: FakeFailure): void {
+    this.#failCommand = failure;
+  }
+
+  // why: agent-device answers a heartbeat for a lease it no longer holds with UNAUTHORIZED and one of three reasons; this makes it forget `leaseId` for the given one.
+  loseLease(leaseId: string, reason: FakeLeaseGoneReason): void {
+    this.leases.delete(leaseId);
+    this.#goneReasons.set(leaseId, reason);
+  }
+
   answerNextAllocateWith(body: string): void {
     this.#allocateBody = body;
   }
@@ -167,6 +188,10 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
 
   holdCommand(): void {
     this.#commandGate = gate();
+  }
+
+  releaseCommand(): void {
+    this.#commandGate?.open();
   }
 
   streamNextCommand(chunks: readonly string[]): void {
@@ -226,7 +251,8 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
       case "lease.allocate":
         return this.#allocate(id, params, tenant);
       case "lease.heartbeat":
-        return envelope(id, { lease: params, ok: true });
+        await this.onHeartbeat?.();
+        return this.#heartbeat(id, params, tenant);
       case "lease.release":
         await this.onRelease?.();
         return this.#release(id, params, tenant);
@@ -260,6 +286,23 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
       lease: { ...scope, leaseId, tenantId: tenant, ttlMs: params["ttlMs"] },
       ok: true,
     });
+  }
+
+  #heartbeat(id: unknown, params: Record<string, unknown>, tenant: string | undefined): Response {
+    const failure = this.#failHeartbeat;
+    this.#failHeartbeat = undefined;
+    if (failure !== undefined) return errorEnvelope(id, failure);
+    const leaseId = String(params["leaseId"]);
+    const lease = this.leases.get(leaseId);
+    if (lease === undefined || lease.tenant !== tenant) {
+      const reason = this.#goneReasons.get(leaseId) ?? "LEASE_NOT_FOUND";
+      return errorEnvelope(id, {
+        code: "UNAUTHORIZED",
+        details: { reason },
+        message: reason.toLowerCase().replaceAll("_", " "),
+      });
+    }
+    return envelope(id, { lease: params, ok: true });
   }
 
   #release(id: unknown, params: Record<string, unknown>, tenant: string | undefined): Response {
@@ -312,6 +355,9 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
         { headers: { "content-type": "application/x-ndjson" } },
       );
     }
+    const failure = this.#failCommand;
+    this.#failCommand = undefined;
+    if (failure !== undefined) return errorEnvelope(id, failure);
     const leaseId = meta["leaseId"];
     if (command === "close" && typeof leaseId === "string") {
       const lease = this.leases.get(leaseId);

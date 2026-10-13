@@ -1986,6 +1986,35 @@ describe("agentDevice config", () => {
     await expect(loadWith({ agentDevice: { command } })).rejects.toThrow("agentDevice.command");
   });
 
+  it("leaves agentDevice.leaseTtlCapMs unset by default", async () => {
+    const config = await loadWith({});
+
+    expect(dottedValue(config, "agentDevice.leaseTtlCapMs")).toBeUndefined();
+  });
+
+  it("accepts agentDevice.leaseTtlCapMs of 5000 and of lease.maxTtlMs", async () => {
+    const lowest = await loadWith({ agentDevice: { leaseTtlCapMs: 5_000 } });
+    const highest = await loadWith({
+      agentDevice: { leaseTtlCapMs: 7_200_000 },
+      lease: { maxTtlMs: 7_200_000 },
+    });
+
+    expect(dottedValue(lowest, "agentDevice.leaseTtlCapMs")).toBe(5_000);
+    expect(dottedValue(highest, "agentDevice.leaseTtlCapMs")).toBe(7_200_000);
+  });
+
+  it.each([
+    ["4999", 4_999],
+    ["a fraction", 5_000.5],
+    ["a value above lease.maxTtlMs", 14_400_001],
+  ])("refuses agentDevice.leaseTtlCapMs of %s, naming the key", async (_case, leaseTtlCapMs) => {
+    await expect(loadWith({ agentDevice: { leaseTtlCapMs: 5_000 } })).resolves.toBeDefined();
+
+    await expect(loadWith({ agentDevice: { leaseTtlCapMs } })).rejects.toThrow(
+      "agentDevice.leaseTtlCapMs",
+    );
+  });
+
   it("a loaded config parsed through configSchema keeps both keys", async () => {
     const config = await loadWith({ agentDevice: { command: "ad", enabled: true } });
 
