@@ -79,6 +79,7 @@ interface Rig {
   readonly driver: FakeDriver;
   readonly fake: FakeAgentDevice;
   readonly filesystem: MemoryFilesystem;
+  readonly logs: MemoryLogSink;
   readonly origin: string;
   readonly statePath: string;
   readonly started: Promise<DaemonServer>;
@@ -157,6 +158,7 @@ async function setUp(options: SetUpOptions = {}): Promise<Rig> {
   const fake = options.upstream ?? new FakeAgentDevice();
   const drivers = options.drivers?.(clock) ?? [iosDriver(clock)];
   const statePath = join(directory, "state.json");
+  const logs = new MemoryLogSink();
   const launch = () =>
     startDaemon({
       agentDeviceUpstream: fake,
@@ -178,7 +180,7 @@ async function setUp(options: SetUpOptions = {}): Promise<Rig> {
       dataDirectory: directory,
       drivers,
       filesystem,
-      logger: new JsonLinesLogger({ clock, level: "debug", sink: new MemoryLogSink() }),
+      logger: new JsonLinesLogger({ clock, level: "debug", sink: logs }),
       statePath,
       version: "1.2.3",
     } as StartDaemonOptions).then((daemon) => {
@@ -195,6 +197,7 @@ async function setUp(options: SetUpOptions = {}): Promise<Rig> {
       driver: drivers[0] as FakeDriver,
       fake,
       filesystem,
+      logs,
       origin,
       restart: () => Promise.reject(new Error("restart needs a started daemon")),
       started,
@@ -207,6 +210,7 @@ async function setUp(options: SetUpOptions = {}): Promise<Rig> {
     driver: drivers[0] as FakeDriver,
     fake,
     filesystem,
+    logs,
     origin,
     restart: async (between) => {
       await daemon.stop("test");
@@ -563,6 +567,9 @@ describe("the agent-device front, through the whole worker daemon", () => {
     const rpcAnswer = await allocate(rig, 1);
     const upload = await send(rig, "/upload/preflight", { body: "{}" });
 
+    expect(health.status).toBe(200);
+    expect(rpcAnswer.status).toBe(503);
+    expect(upload.status).toBe(503);
     expect(await health.text()).toContain(`${notAvailable}${reason}`);
     expect((await envelopeOf(rpcAnswer)).error?.message).toBe(`${notAvailable}${reason}`);
     expect(await upload.text()).toContain(`${notAvailable}${reason}`);
@@ -763,6 +770,11 @@ describe("the agent-device front, through the whole worker daemon", () => {
       },
       {
         message: plainOnly,
+        params: (n) => allocateParams(n, { backend: "android-instance" }),
+        title: "the Android backend on an iOS allocate",
+      },
+      {
+        message: plainOnly,
         params: (n) => allocateParams(n, { retainOnClose: true }),
         title: "retainOnClose: true",
       },
@@ -806,6 +818,25 @@ describe("the agent-device front, through the whole worker daemon", () => {
     );
   });
 
+  it("an allocate in the shape connect proxy sends, with backend ios-instance, is granted and keeps the backend toward the agent-device daemon", async () => {
+    const rig = await setUp();
+
+    const answer = await envelopeOf(
+      await allocate(rig, 1, {
+        backend: "ios-instance",
+        runId: "proxy-1",
+        session: "adc-1",
+        tenantId: "proxy",
+      }),
+    );
+
+    expect(answer.result).toMatchObject({ ok: true });
+    expect((await leases(rig)).map((lease) => lease.id)).toEqual([hex(1)]);
+    expect(allocatesReceived(rig, 1).map((received) => received.params?.["backend"])).toEqual([
+      "ios-instance",
+    ]);
+  });
+
   it("allocate and release sent as `agent-device.lease.allocate` and `agent-device.lease.release` act exactly as the `agent_device.lease.*` spelling", async () => {
     const rig = await setUp();
 
@@ -830,7 +861,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     const iosDevice = await grantedDevice(ios);
     const iosParams = receivedAllocate(ios, 1);
 
-    expect(iosAnswer.result).toMatchObject({ lease: { leaseId: hex(1) }, ok: true });
+    expect(iosAnswer.result).toMatchObject({ data: { lease: { leaseId: hex(1) } }, ok: true });
     expect(iosParams["udid"]).toBe(iosDevice.address);
     expect(iosParams).not.toHaveProperty("serial");
     for (const dropped of ["device", "deviceKey", "target"]) {
@@ -844,7 +875,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     const androidDevice = await grantedDevice(android);
     const androidParams = receivedAllocate(android, 2);
 
-    expect(androidAnswer.result).toMatchObject({ lease: { leaseId: hex(2) }, ok: true });
+    expect(androidAnswer.result).toMatchObject({ data: { lease: { leaseId: hex(2) } }, ok: true });
     expect(androidParams["serial"]).toBe(androidDevice.address);
     expect(androidParams["serial"]).not.toBe(androidDevice.driverDeviceId);
     expect(androidParams).not.toHaveProperty("udid");
@@ -863,7 +894,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     await release(rig, 1);
     const answer = await envelopeOf(await second.promise);
 
-    expect(answer.result).toMatchObject({ lease: { leaseId: hex(2) }, ok: true });
+    expect(answer.result).toMatchObject({ data: { lease: { leaseId: hex(2) } }, ok: true });
     expect((await leases(rig)).map((lease) => lease.id)).toEqual([hex(2)]);
   });
 
@@ -1793,6 +1824,20 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(await deadlineOf(rig, 1)).toBe(final);
   });
 
+  it("a command agent-device answers with a 5xx reaches the CLI unchanged, and simlock logs a warning with that status and the start of the body", async () => {
+    const rig = await setUp();
+    await granted(rig, 1);
+    rig.fake.failNextCommandWithStatus(500, "snapshot runner crashed");
+
+    const response = await command(rig, "snapshot", 1);
+
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("snapshot runner crashed");
+    await expect
+      .poll(() => rig.logs.records.find((record) => record.message.includes("5xx"))?.fields)
+      .toEqual({ body: "snapshot runner crashed", status: 500 });
+  });
+
   it("a command that fails, and one whose CLI hangs up, stop the renewals the same way", async () => {
     const rig = await setUp();
     await granted(rig, 1, { ttlMs: 30_000 });
@@ -2696,6 +2741,11 @@ function runCommand(
   });
 }
 
+// why: the fake agent-device names the device it leases `simlock-<id>`, as the real one does.
+function nameOf(rig: Rig, n: number): string {
+  return `simlock-${idOf(rig, n)}`;
+}
+
 function idOf(rig: Rig, n: number): string {
   const params = receivedAllocate(rig, n);
   return String(params["udid"] ?? params["serial"]);
@@ -3119,7 +3169,7 @@ describe("the agent-device front's request rules", () => {
       const steps = flagsOf(params)["batchSteps"] as { flags: Record<string, unknown> }[];
       expect(steps[0]?.flags["udid"]).toBe(idOf(rig, 1));
       expect(steps[0]?.flags).not.toHaveProperty("device");
-      expect(steps[1]?.flags["device"]).toBe(idOf(rig, 1));
+      expect(steps[1]?.flags["device"]).toBe(nameOf(rig, 1));
       await refused(
         rig,
         () => batch(rig, 1, [{ command: "snapshot", flags: { leaseId: hex(2) } }]),
@@ -3217,9 +3267,9 @@ describe("the agent-device front's request rules", () => {
       const one = await forwarded(rig, () => shard(rig, 1));
       const two = await forwarded(rig, () => shard(rig, 2, {}, secrets.two));
 
-      expect(flagsOf(one)["device"]).toBe(idOf(rig, 1));
+      expect(flagsOf(one)["device"]).toBe(nameOf(rig, 1));
       expect(String(flagsOf(two)["device"]).split(",").sort()).toEqual(
-        [idOf(rig, 2), idOf(rig, 3)].sort(),
+        [nameOf(rig, 2), nameOf(rig, 3)].sort(),
       );
     });
 
@@ -3238,9 +3288,9 @@ describe("the agent-device front's request rules", () => {
         shard(rig, 2, { platform: "android", shardAll: 1 }),
       );
 
-      expect(flagsOf(ios)["device"]).toBe(idOf(rig, 1));
-      expect(flagsOf(tv)["device"]).toBe(idOf(rig, 3));
-      expect(flagsOf(android)["device"]).toBe(idOf(rig, 2));
+      expect(flagsOf(ios)["device"]).toBe(nameOf(rig, 1));
+      expect(flagsOf(tv)["device"]).toBe(nameOf(rig, 3));
+      expect(flagsOf(android)["device"]).toBe(nameOf(rig, 2));
       const iosOnly = await setUp({ drivers: bothDrivers });
       await granted(iosOnly, 1);
       await forwarded(iosOnly, () => shard(iosOnly, 1, { platform: "ios", shardAll: 1 }));
@@ -3251,6 +3301,20 @@ describe("the agent-device front's request rules", () => {
       );
     });
 
+    it("`test --shard-all 2` names a device by the name agent-device gave it, and by its id when that name holds a comma or the reply named none", async () => {
+      const rig = await setUp();
+      rig.fake.nameDeviceInNextReply({ name: "Lab, left" });
+      await granted(rig, 1);
+      rig.fake.nameDeviceInNextReply("none");
+      await granted(rig, 2, {}, { token: secrets.two });
+
+      const comma = await forwarded(rig, () => shard(rig, 1));
+      const unnamed = await forwarded(rig, () => shard(rig, 2, {}, secrets.two));
+
+      expect(flagsOf(comma)["device"]).toBe(idOf(rig, 1));
+      expect(flagsOf(unnamed)["device"]).toBe(idOf(rig, 2));
+    });
+
     it('`test --shard-split 2` with `device: " , "` is filled as if no list were sent; from a token that holds no device it is refused with `refused: no device leased; run open first`', async () => {
       const rig = await setUp();
       await granted(rig, 1);
@@ -3259,7 +3323,7 @@ describe("the agent-device front's request rules", () => {
 
       const params = await forwarded(rig, () => split(secrets.one, 1));
 
-      expect(flagsOf(params)["device"]).toBe(idOf(rig, 1));
+      expect(flagsOf(params)["device"]).toBe(nameOf(rig, 1));
       await refused(rig, () => split(secrets.two, undefined), noDeviceLeased);
     });
   });

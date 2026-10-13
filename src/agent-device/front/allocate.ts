@@ -7,7 +7,7 @@ import type { TokenIdentity } from "../../http/token-store.js";
 import type { Clock } from "../../ports/index.js";
 import { frontReply, failure, refusal, type FrontReply } from "../shared/replies.js";
 import { validDeviceKey } from "../shared/release-scope.js";
-import { leaseCallFields, leaseIdOf, type RpcRead } from "../shared/rpc.js";
+import { leaseCallFields, leaseIdOf, replyData, type RpcRead } from "../shared/rpc.js";
 import { addressField, asRecord } from "../shared/selectors.js";
 import {
   ALLOCATE_SCOPE_KEYS,
@@ -44,10 +44,23 @@ interface Plan {
   readonly ttlMs?: number;
 }
 
+// why: connect proxy names the backend that rents the platform (ios-instance, android-instance) on every allocate; any other backend is a different kind of device.
+const BACKEND_OF_PLATFORM: Record<string, string> = {
+  android: "android-instance",
+  ios: "ios-instance",
+};
+
+function foreignBackend(params: Record<string, unknown>): boolean {
+  const backend = params["backend"];
+  if (!present(backend)) return false;
+  const platform = params["platform"];
+  return typeof platform !== "string" || BACKEND_OF_PLATFORM[platform] !== backend;
+}
+
 function notPlain(params: Record<string, unknown>): boolean {
   const provider = params["leaseProvider"];
   return (
-    present(params["backend"]) ||
+    foreignBackend(params) ||
     params["retainOnClose"] === true ||
     (present(provider) && provider !== "proxy") ||
     Object.entries(params).some(
@@ -288,7 +301,7 @@ async function keepOrRelease(
     });
     return relay(reply);
   }
-  const lease = reading.result["lease"];
+  const lease = replyData(reading.result)?.["lease"];
   const named =
     typeof lease === "object" && lease !== null ? (lease as Record<string, unknown>) : {};
   const ended = await releaseAgentDevice(
@@ -320,8 +333,9 @@ async function settleNoReply(
 }
 
 function replyFacts(result: Record<string, unknown>) {
-  const device = asRecord(result["device"]);
-  const deviceKey = asRecord(result["lease"])?.["deviceKey"];
+  const data = replyData(result);
+  const device = asRecord(data?.["device"]);
+  const deviceKey = asRecord(data?.["lease"])?.["deviceKey"];
   return {
     ...(device === undefined ? {} : { target: stringOr(device["target"], "mobile") }),
     ...(typeof device?.["name"] === "string" ? { name: device["name"] } : {}),

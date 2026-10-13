@@ -160,6 +160,7 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
   #failRelease: FakeFailure | undefined;
   #failHeartbeat: FakeFailure | undefined;
   #failCommand: FakeFailure | undefined;
+  #failCommandStatus: { readonly status: number; readonly body: string } | undefined;
   readonly #goneReasons = new Map<string, FakeLeaseGoneReason>();
   #allocateBody: string | undefined;
   #replyDeviceKey: string | undefined;
@@ -219,6 +220,10 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
 
   failNextCommand(failure: FakeFailure): void {
     this.#failCommand = failure;
+  }
+
+  failNextCommandWithStatus(status: number, body: string): void {
+    this.#failCommandStatus = { body, status };
   }
 
   // why: agent-device answers a heartbeat for a lease it no longer holds with UNAUTHORIZED and one of three reasons; this makes it forget `leaseId` for the given one.
@@ -418,10 +423,12 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
       ttlMs: params["ttlMs"],
     });
     return envelope(id, {
-      ...(picked === "none" || address === undefined
-        ? {}
-        : { device: { id: address, name: `simlock-${address}`, ...picked } }),
-      lease: { ...scope, ...edit, leaseId, tenantId: tenant, ttlMs: params["ttlMs"] },
+      data: {
+        ...(picked === "none" || address === undefined
+          ? {}
+          : { device: { id: address, name: `simlock-${address}`, ...picked } }),
+        lease: { ...scope, ...edit, leaseId, tenantId: tenant, ttlMs: params["ttlMs"] },
+      },
       ok: true,
     });
   }
@@ -440,7 +447,7 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
         message: reason.toLowerCase().replaceAll("_", " "),
       });
     }
-    return envelope(id, { lease: params, ok: true });
+    return envelope(id, { data: { lease: params }, ok: true });
   }
 
   #claimed(address: string): boolean {
@@ -549,6 +556,9 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     const failure = this.#failCommand;
     this.#failCommand = undefined;
     if (failure !== undefined) return errorEnvelope(id, failure);
+    const status = this.#failCommandStatus;
+    this.#failCommandStatus = undefined;
+    if (status !== undefined) return new Response(status.body, { status: status.status });
     const inventory = this.#devicesAnswer;
     if (command === "devices" && inventory !== undefined) {
       if ("body" in inventory) return new Response(inventory.body, { status: 200 });
