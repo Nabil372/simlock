@@ -111,7 +111,11 @@ export function commandLeaseId(params: unknown): string | undefined {
 
 export type ReplyReading =
   | { readonly kind: "success"; readonly result: Record<string, unknown> }
-  | { readonly kind: "error"; readonly code: string | undefined }
+  | {
+      readonly kind: "error";
+      readonly code: string | undefined;
+      readonly reason: string | undefined;
+    }
   | { readonly kind: "unusable" };
 
 export function readReply(text: string): ReplyReading {
@@ -125,12 +129,29 @@ export function readReply(text: string): ReplyReading {
   if (body === undefined || body["jsonrpc"] !== "2.0") return { kind: "unusable" };
   const error = record(body["error"]);
   if (error !== undefined) {
-    const code = record(error["data"])?.["code"];
-    return { code: typeof code === "string" ? code : undefined, kind: "error" };
+    const data = record(error["data"]);
+    const code = data?.["code"];
+    const reason = record(data?.["details"])?.["reason"];
+    return {
+      code: typeof code === "string" ? code : undefined,
+      kind: "error",
+      reason: typeof reason === "string" ? reason : undefined,
+    };
   }
   const result = record(body["result"]);
   if (result !== undefined && result["ok"] === true && body["error"] === undefined) {
     return { kind: "success", result };
   }
   return { kind: "unusable" };
+}
+
+const LEASE_GONE_REASONS = new Set(["LEASE_NOT_FOUND", "LEASE_EXPIRED", "LEASE_REVOKED"]);
+
+export function leaseGoneReason(reading: ReplyReading): string | undefined {
+  return reading.kind === "error" &&
+    reading.code === "UNAUTHORIZED" &&
+    reading.reason !== undefined &&
+    LEASE_GONE_REASONS.has(reading.reason)
+    ? reading.reason
+    : undefined;
 }

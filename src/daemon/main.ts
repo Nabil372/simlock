@@ -7,6 +7,7 @@ import {
   AgentDeviceSupervisor,
   cancelWaitingAllocates,
   createAgentDeviceEdgeParts,
+  disposeAgentDeviceEdge,
   createAgentDeviceFront,
   SupervisorAgentDeviceUpstream,
   type AgentDeviceHealthProbe,
@@ -520,6 +521,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     // here.
     stopAuxiliary: async () => {
       if (agentDeviceParts !== undefined) {
+        disposeAgentDeviceEdge(agentDeviceParts);
         await cancelWaitingAllocates(agentDeviceParts, (id) => leasing.cancelPending(id));
       }
       await gatewayStarted.catch(() => undefined);
@@ -582,6 +584,10 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
                 clock,
                 dispatch,
                 logger: logger.child("agent-device"),
+                maxRunMs: config.lease.maxTtlMs,
+                ...(config.agentDevice.leaseTtlCapMs === undefined
+                  ? {}
+                  : { leaseTtlCapMs: config.agentDevice.leaseTtlCapMs }),
               }),
             ],
       ownerRoutedFacts: daemon.ownerRoutedFacts,

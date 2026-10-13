@@ -4,6 +4,7 @@ import type { Clock, Logger } from "../ports/index.js";
 import { FrontMap } from "./front/front-map.js";
 import { createFront } from "./front/front.js";
 import { InProcessHostLink, type HostLink } from "./front/host-link.js";
+import { Renewals } from "./front/renewals.js";
 import { AgentDeviceHost } from "./host/host.js";
 import type { AgentDeviceUpstream } from "./host/upstream.js";
 
@@ -18,13 +19,23 @@ export { type AgentDeviceHealthProbe, NodeAgentDeviceHealthProbe } from "./host/
 export interface AgentDeviceEdgeParts {
   readonly link: HostLink;
   readonly map: FrontMap;
+  readonly renewals: Renewals;
 }
 
 export function createAgentDeviceEdgeParts(
   upstream: AgentDeviceUpstream,
   clock: Clock,
 ): AgentDeviceEdgeParts {
-  return { link: new InProcessHostLink(new AgentDeviceHost(upstream)), map: new FrontMap(clock) };
+  return {
+    link: new InProcessHostLink(new AgentDeviceHost(upstream)),
+    map: new FrontMap(clock),
+    renewals: new Renewals(clock),
+  };
+}
+
+// why: a stop ends the gateway's sockets, so the calls that end then must send no renewal that races leasing teardown.
+export function disposeAgentDeviceEdge(parts: AgentDeviceEdgeParts): void {
+  parts.renewals.dispose();
 }
 
 // why: a stop refuses every dispatch, so waiting allocates' lease requests are cancelled through leasing directly, before the gateway stops; otherwise they stay open across a restart.
@@ -37,7 +48,13 @@ export async function cancelWaitingAllocates(
 
 export function createAgentDeviceFront(
   parts: AgentDeviceEdgeParts,
-  deps: { readonly dispatch: HttpDispatch; readonly clock: Clock; readonly logger: Logger },
+  deps: {
+    readonly dispatch: HttpDispatch;
+    readonly clock: Clock;
+    readonly logger: Logger;
+    readonly leaseTtlCapMs?: number;
+    readonly maxRunMs: number;
+  },
 ): HttpMount {
-  return createFront({ ...deps, link: parts.link, map: parts.map });
+  return createFront({ ...deps, link: parts.link, map: parts.map, renewals: parts.renewals });
 }

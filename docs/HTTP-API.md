@@ -1481,9 +1481,21 @@ URL answers `404`.
   token's principal, and the lease ID is the 32-hex ID the CLI chose. `close`
   ends the agent-device lease and then frees the Simlock lease, so Simlock
   wipes the device for the next agent.
-- **Heartbeats** reach agent-device unchanged. They do not renew the Simlock
-  lease yet, so a Simlock lease ends at its own TTL; pass `ttlMs` on `open`
-  for a longer one.
+- **Heartbeats keep the lease.** The CLI sends one before every command except
+  `devices`. Once agent-device answers it, Simlock renews the lease to now plus
+  its TTL, unless the lease already runs longer (a longer renewal by the agent
+  stands). A heartbeat's `ttlMs` changes that TTL, at least 5 seconds and at
+  most `agentDevice.leaseTtlCapMs` when that is set. While a command runs, the
+  lease is renewed every third of its TTL, and once more when the command ends.
+  An agent that stops sending heartbeats loses the device one TTL later.
+- **A lease Simlock ended is not replaced quietly.** When the lease is gone
+  because Simlock ended it (`simlock release`, `release --all`, expiry, a lost
+  device, a restart of the agent-device daemon or of Simlock), the next
+  heartbeat answers `lease ended by simlock; run disconnect, then open`, as an
+  `UNAUTHORIZED` error with `details.reason` `LEASE_ENDED_BY_HOST`. A lease the
+  agent ended through `close` or `disconnect` answers agent-device's own
+  `LEASE_NOT_FOUND`, so `close` then `open` works. A heartbeat Simlock cannot
+  renew for another reason answers `COMMAND_FAILED` with Simlock's message.
 
 What `open` asks Simlock for:
 
@@ -1492,7 +1504,7 @@ What `open` asks Simlock for:
 | `--platform ios` or `android` | that platform, any device Simlock grants |
 | `--target mobile`, `tv`, `desktop` | the class `phone`, `tv`, `desktop` |
 | `--device "iPhone 17 Pro"` | that model, and no class: the model wins over `--target` |
-| `ttlMs` | that TTL, at least 5 seconds; none sent means `lease.defaultTtlMs` |
+| `ttlMs` | that TTL, at least 5 seconds and at most `agentDevice.leaseTtlCapMs` when set; none sent means that cap, or `lease.defaultTtlMs` without one |
 
 Messages the route prints. The agent-device CLI reads the message in the body
 (a JSON-RPC error on `/rpc`, `{ "ok": false, "error", "code" }` elsewhere), not
@@ -1510,7 +1522,10 @@ the status.
   sent no lease ID.
 - `refused: send lease calls as lease RPCs`: a lease call inside
   `agent_device.command`.
-- `refused: ttlMs must be a positive number of milliseconds`.
+- `refused: ttlMs must be a positive number of milliseconds`: on `open` and on
+  a heartbeat.
+- `lease ended by simlock; run disconnect, then open`: a heartbeat for a lease
+  Simlock ended.
 - `refused: simlock leases only plain devices`: `backend`,
   `retainOnClose: true`, a `provider*` or `aws*` key, or a `leaseProvider`
   other than `proxy`.

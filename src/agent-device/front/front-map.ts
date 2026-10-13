@@ -10,6 +10,16 @@ export interface FrontMapEntry {
   readonly deadline: number;
 }
 
+export type EndedBy = "agent" | "simlock";
+
+export interface HeldView {
+  readonly identity: TokenIdentity;
+  readonly address: string;
+  readonly ttlMs: number;
+  readonly endedAt?: number;
+  readonly endedBy?: EndedBy;
+}
+
 export interface ListedLease {
   readonly id: string;
   readonly ttlDeadline: number;
@@ -18,9 +28,11 @@ export interface ListedLease {
 interface Held {
   readonly identity: TokenIdentity;
   readonly address: string;
-  readonly ttlMs: number;
+  ttlMs: number;
   deadline: number;
   endedAt?: number;
+  endedBy?: EndedBy;
+  releasing: boolean;
 }
 
 export class FrontMap {
@@ -45,17 +57,36 @@ export class FrontMap {
 
   add(leaseId: string, entry: FrontMapEntry): void {
     this.#prune();
-    this.#held.set(leaseId, { ...entry });
+    this.#held.set(leaseId, { ...entry, releasing: false });
   }
 
-  get(leaseId: string): (FrontMapEntry & { readonly endedAt?: number }) | undefined {
+  get(leaseId: string): HeldView | undefined {
     this.#prune();
     return this.#held.get(leaseId);
   }
 
-  markEnded(leaseId: string): void {
+  setTtl(leaseId: string, ttlMs: number): void {
     const held = this.#held.get(leaseId);
-    if (held !== undefined) held.endedAt ??= this.clock.now();
+    if (held !== undefined) held.ttlMs = ttlMs;
+  }
+
+  beginRelease(leaseId: string): void {
+    const held = this.#held.get(leaseId);
+    if (held !== undefined) held.releasing = true;
+  }
+
+  cancelRelease(leaseId: string): void {
+    const held = this.#held.get(leaseId);
+    if (held !== undefined) held.releasing = false;
+  }
+
+  markEnded(leaseId: string, by: EndedBy = "simlock"): void {
+    const held = this.#held.get(leaseId);
+    if (held === undefined || held.endedAt !== undefined) return;
+    if (by === "simlock" && held.releasing) return;
+    held.endedAt = this.clock.now();
+    held.endedBy = by;
+    held.releasing = false;
   }
 
   async refresh(list: (identity: TokenIdentity) => Promise<readonly ListedLease[]>): Promise<void> {
@@ -94,7 +125,7 @@ export class FrontMap {
           const held = this.#held.get(id);
           if (held === undefined) continue;
           const found = listed.find((lease) => lease.id === id);
-          if (found === undefined) held.endedAt ??= this.clock.now();
+          if (found === undefined) this.markEnded(id);
           else held.deadline = found.ttlDeadline;
         }
       }),

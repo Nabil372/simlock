@@ -14,15 +14,20 @@ export async function release(
     return frontReply(failure("agent-device did not answer the release"), call);
   }
   const leaseId = leaseIdOf(leaseCallFields(call.params).leaseId);
-  const entry = leaseId === undefined ? undefined : context.map.get(leaseId);
-  if (
-    leaseId !== undefined &&
-    entry?.identity.requesterId === identity.requesterId &&
-    entry.endedAt === undefined &&
-    reply.reading.kind === "success" &&
-    (await releaseSimlock(context, entry.identity, leaseId))
-  ) {
-    context.map.markEnded(leaseId);
+  if (leaseId === undefined || reply.reading.kind !== "success") return relay(reply);
+  const entry = context.map.get(leaseId);
+  if (entry === undefined || entry.identity.requesterId !== identity.requesterId) {
+    // why: a lease the map does not hold for this token (as after a daemon restart) is freed by simlock's own ownership check, which refuses another token's lease.
+    await releaseSimlock(context, identity, leaseId);
+  } else if (entry.endedAt === undefined) {
+    context.map.beginRelease(leaseId);
+    const released = await releaseSimlock(context, entry.identity, leaseId);
+    if (released.kind === "released") context.map.markEnded(leaseId, "agent");
+    else {
+      context.map.cancelRelease(leaseId);
+      if (released.kind === "unknown") context.map.markEnded(leaseId, "simlock");
+    }
+    context.renewals.cancelIfEnded(context, leaseId);
   }
   return relay(reply);
 }

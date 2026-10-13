@@ -2,12 +2,27 @@ import type { HttpMount } from "../../http/app.js";
 import type { TokenIdentity } from "../../http/token-store.js";
 import { FRONT_MOUNT, FRONT_PREFIX } from "../shared/paths.js";
 import { failure, frontReply, notAvailable, refusal } from "../shared/replies.js";
-import { classifyCall, readRpcBody, type RpcRead } from "../shared/rpc.js";
+import {
+  classifyCall,
+  commandLeaseId,
+  readRpcBody,
+  type CallClass,
+  type RpcRead,
+} from "../shared/rpc.js";
 import { allocate } from "./allocate.js";
 import type { FrontContext } from "./context.js";
+import { heartbeat } from "./heartbeat.js";
 import { release } from "./release.js";
 
 type RpcRequest = RpcRead & { readonly kind: "request" };
+
+interface Routed {
+  readonly identity: TokenIdentity;
+  readonly kind: CallClass;
+  readonly leaseMaxTtlMs: number;
+  readonly read: RpcRequest;
+  readonly request: Request;
+}
 
 const AGENT_TOKEN_ONLY = "refused: agent-device through simlock needs an agent token";
 const CLIENT_GONE = 499;
@@ -51,23 +66,83 @@ async function handleRpc(
   if (kind === "wrapped-lease") {
     return frontReply(refusal("refused: send lease calls as lease RPCs"), read);
   }
+  return routeCall(context, { identity, kind, leaseMaxTtlMs: status.leaseMaxTtlMs, read, request });
+}
+
+async function routeCall(
+  context: FrontContext,
+  { identity, kind, leaseMaxTtlMs, read, request }: Routed,
+): Promise<Response> {
   if (kind === "allocate") {
-    const work = allocate(context, {
-      call: read,
-      identity,
-      leaseMaxTtlMs: status.leaseMaxTtlMs,
-      request,
-    }).catch((error: unknown) => {
-      context.logger.error("agent-device allocate failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return frontReply(failure("agent-device allocate failed"), read);
-    });
+    const work = allocate(context, { call: read, identity, leaseMaxTtlMs, request }).catch(
+      (error: unknown) => {
+        context.logger.error("agent-device allocate failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return frontReply(failure("agent-device allocate failed"), read);
+      },
+    );
     return untilHangUp(request.signal, work);
   }
-  return kind === "release"
-    ? release(context, identity, read as RpcRequest, carry(request, read.text))
-    : passThrough(context, carry(request, read.text), identity, read);
+  const forwarded = carry(request, read.text);
+  if (kind === "heartbeat") {
+    return heartbeat(context, { call: read, identity, leaseMaxTtlMs, request: forwarded });
+  }
+  if (kind === "release") return release(context, identity, read, forwarded);
+  const leaseId = kind === "command" ? commandLeaseId(read.params) : undefined;
+  if (leaseId === undefined) return passThrough(context, forwarded, identity, read);
+  return runCommand(context, request, identity, read, leaseId);
+}
+
+async function runCommand(
+  context: FrontContext,
+  request: Request,
+  identity: TokenIdentity,
+  read: RpcRequest,
+  leaseId: string,
+): Promise<Response> {
+  const end = context.renewals.begin(context, leaseId, identity.requesterId, context.maxRunMs);
+  request.signal.addEventListener("abort", end, { once: true });
+  let response: Response;
+  try {
+    response = await passThrough(context, carry(request, read.text), identity, read);
+  } catch (error) {
+    end();
+    throw error;
+  }
+  return untilBodyEnds(response, end);
+}
+
+// why: a command counts as running until its body has gone out, since the stream is what the CLI waits on.
+function untilBodyEnds(response: Response, end: () => void): Response {
+  if (response.body === null) {
+    end();
+    return response;
+  }
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async cancel(reason) {
+      end();
+      await reader.cancel(reason);
+    },
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          end();
+        } else controller.enqueue(value);
+      } catch (error) {
+        end();
+        controller.error(error);
+      }
+    },
+  });
+  return new Response(body, {
+    headers: response.headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
 }
 
 async function passThrough(
