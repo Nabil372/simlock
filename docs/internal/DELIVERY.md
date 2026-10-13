@@ -340,6 +340,19 @@ tune its brief, or what `always-in-scope.md` lists. A rejection that keeps
 coming back for the same reason is a missing rule or a missing spec line;
 `--calibration` prints the recent ones as the brief every reviewer reads.
 
+## A feature merges as one stack
+
+A feature's PRs form one GitHub stack (`gh stack`): its accepted ADR PRs at
+the bottom, then each task's PR in the order its review passed, each
+targeting the branch below it. A reviewed PR stays open, and the next task
+starts on top of it: the issue-state workflow counts a reviewed task of the
+same feature as done. When every task has joined, `merge-pr.sh` on the top
+PR checks each PR's gates and `gh stack merge` merges them all at once, or
+none. So `main` never holds half a feature, and a task never waits for the
+CI run and merge of the one below it (2 to 6 minutes per task in the #466
+run). A single task, a bug, or a feature delivered as one PR merges on its
+own, as before, unless its feature has an open ADR PR to stack on.
+
 ## `main` and releases
 
 `main` takes changes only through a pull request whose Quality, Fallow and

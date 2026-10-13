@@ -95,10 +95,12 @@ empty.
 **`technical`** (a feature delivered as one PR): fill the Technical spec
 section. First ask whether any decision here constrains more than one future
 change or would be expensive to reverse. Each such decision becomes an ADR:
-draft it in `docs/internal/adr/` at status _Proposed_ on a branch, with the
-diagrams `docs/internal/adr/README.md` asks for, and add its line to
-Decisions. Tell the maintainer the feature cannot leave `feature:spec` until
-that ADR is accepted. Write only what
+draft it in `docs/internal/adr/` at status _Proposed_ on branch
+`feature/<N>-adr`, with the diagrams `docs/internal/adr/README.md` asks for,
+open its PR, and add its line to Decisions. Tell the maintainer the feature
+cannot leave `feature:spec` until that ADR is accepted. An accepted ADR's PR
+stays open: it is the bottom of the feature's stack and merges with the
+feature's last task (delivery rule 15). Write only what
 `docs/internal/agent-rules/always-in-scope.md` does not cover. End with the
 spec check (step 5) on the posted body.
 

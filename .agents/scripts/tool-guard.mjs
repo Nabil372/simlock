@@ -4,6 +4,9 @@
 //   check      a sub-agent runs a check from toolchain.md's "Checks agents never run" (`pnpm
 //              check`, `pnpm fallow`, ...) or a tool behind one, from any path. The commit hook,
 //              the push hook and CI run them. The main session (a person, a routine) may.
+//   hooks      a sub-agent skips the git hooks: `--no-verify`, `LEFTHOOK=0`, `core.hooksPath`, or
+//              `LEFTHOOK_EXCLUDE` naming anything but `fallow` (the red stage's one push, whose
+//              placeholders Fallow calls dead code).
 //   isolation  an `implementer`, `reviewer` or `hardware-verifier` is started with `isolation`.
 //              Every stage of a task works in the task's one worktree, one after another.
 //
@@ -27,6 +30,12 @@ const TOOLS = new Set(["tsc", "oxlint", "oxfmt", "fallow", "stryker"]);
 const NODE_SCRIPTS = new Set(["comment-lint.mjs", "mutate.mjs"]);
 const WRAPPERS = new Set(["time", "nice", "env", "command", "exec"]);
 const STAGES = new Set(["implementer", "reviewer", "hardware-verifier"]);
+const HOOK_BYPASS = [
+  /--no-verify\b/,
+  /\bLEFTHOOK=(?:0|false)\b/,
+  /\bcore\.hooksPath\b/,
+  /\bLEFTHOOK_EXCLUDE=(?!fallow(?:\s|$))/,
+];
 
 const input = JSON.parse(fs.readFileSync(0, "utf8") || "{}");
 const tool = input.tool_name;
@@ -41,7 +50,14 @@ if ((tool === "Agent" || tool === "Task") && args.isolation && STAGES.has(args.s
 }
 
 if (tool === "Bash" && typeof input.agent_id === "string") {
-  const found = forbiddenCheck(args.command ?? "");
+  const shell = code(args.command ?? "");
+  if (HOOK_BYPASS.some((re) => re.test(shell))) {
+    refuse(
+      "Refused: this skips the git hooks. They run the checks agents never run by hand. Only the " +
+        "red stage may skip Fallow, on its one push: `LEFTHOOK_EXCLUDE=fallow git push ...`.",
+    );
+  }
+  const found = forbiddenCheck(shell);
   if (found !== null) {
     refuse(
       `Refused: \`${found}\` is under "Checks agents never run" in toolchain.md. The commit ` +
@@ -58,9 +74,15 @@ function refuse(reason) {
   process.exit(2);
 }
 
-function forbiddenCheck(command) {
+function code(command) {
   // why: a heredoc body is data (a script fed to python or cat), not commands the shell runs.
-  const shell = command.replace(/<<-?\s*(['"]?)(\w+)\1([^\n]*)\n[\s\S]*?\n\s*\2(?=\n|$)/g, "$3");
+  // why: so is a quoted string (a commit message, a PR title, a sed script).
+  return command
+    .replace(/<<-?\s*(['"]?)(\w+)\1([^\n]*)\n[\s\S]*?\n\s*\2(?=\n|$)/g, "$3")
+    .replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''");
+}
+
+function forbiddenCheck(shell) {
   for (const segment of shell.split(/\|\||&&|[;|&\n()`]|\$\(/)) {
     const words = segment.trim().split(/\s+/).filter(Boolean).map(unquote);
     while (words.length > 0 && (/^\w+=/.test(words[0]) || WRAPPERS.has(words[0]))) words.shift();

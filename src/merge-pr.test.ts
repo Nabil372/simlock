@@ -50,6 +50,8 @@ function gate(fleet: Fleet) {
 d=${JSON.stringify(dir)}
 state() { if [ -f "$d/reran" ]; then echo ${after}; else echo ${fleet.bucket}; fi; }
 case "$*" in
+  "repo view --json nameWithOwner"*) echo o/r ;;
+  "api repos/o/r/stacks?pull_request=7"*) ;;
   "pr view 7 --json state"*) echo OPEN ;;
   "pr view 7 --json isDraft"*) echo false ;;
   "pr view 7 --json labels"*) ;;
@@ -160,5 +162,82 @@ describe("merge-pr.sh re-run of red CI", () => {
     expect(result.reruns).toBe(1);
     expect(result.merged).toBe(false);
     expect(result.status).toBe(1);
+  });
+});
+
+function stackGate(ci: Record<number, "pass" | "fail">) {
+  const dir = mkdtempSync(join(tmpdir(), "merge-pr-stack-"));
+  writeFileSync(join(dir, "body"), VALID_BODY);
+  const stack = JSON.stringify([
+    { open: false, pull_requests: [{ number: 3, state: "closed" }] },
+    {
+      open: true,
+      pull_requests: [11, 12, 13].map((number) => ({ number, state: "open" })),
+    },
+  ]);
+  writeFileSync(join(dir, "stack.json"), stack);
+  writeFileSync(
+    join(dir, "gh"),
+    `#!/bin/sh
+d=${JSON.stringify(dir)}
+echo "$*" >>"$d/calls"
+case "$*" in
+  "repo view --json nameWithOwner"*) echo o/r ;;
+  "api repos/o/r/stacks?pull_request=12 -q "*) shift 3; jq -r "$1" "$d/stack.json" ;;
+  "pr view "*" --json state"*) echo OPEN ;;
+  "pr view "*" --json isDraft"*) echo false ;;
+  "pr view "*" --json labels"*) ;;
+  "pr view "*" --json body"*) cat "$d/body" ;;
+  "pr view "*" --json headRefName"*) echo task/x ;;
+  "pr view "*" --json mergeable"*) echo MERGEABLE ;;
+${Object.entries(ci)
+  .map(([pr, bucket]) => `  "pr checks ${pr} --json name,bucket"*) echo "${bucket} Quality" ;;`)
+  .join("\n")}
+  "pr checks "*" --json bucket,link"*) echo "fail https://github.com/o/r/actions/runs/77/job/5" ;;
+  "issue list --label flaky-test"*) ;;
+  "run view 77 --log-failed") echo "error TS2322" ;;
+  "stack merge 12 --yes --squash") touch "$d/merged" ;;
+  *) echo "fake gh: unexpected: $*" >&2; exit 9 ;;
+esac
+`,
+  );
+  chmodSync(join(dir, "gh"), 0o755);
+  let status = 0;
+  let output = "";
+  try {
+    output = execFileSync("sh", [SCRIPT, "12"], {
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, MERGE_PR_POLL_SECONDS: "0" },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const failed = error as { status: number; stdout: string; stderr: string };
+    status = failed.status;
+    output = failed.stdout + failed.stderr;
+  }
+  const calls = readFileSync(join(dir, "calls"), "utf8");
+  return {
+    status,
+    output,
+    gated: [...calls.matchAll(/^pr checks (\d+) --json name,bucket/gm)].map((m) => Number(m[1])),
+    merged: existsSync(join(dir, "merged")),
+  };
+}
+
+describe("merge-pr.sh on a stacked PR", () => {
+  it("gates every PR from the bottom of the stack up to the one asked for, then merges them with gh stack merge", () => {
+    const result = stackGate({ 11: "pass", 12: "pass", 13: "fail" });
+
+    expect(result.gated).toEqual([11, 12]);
+    expect(result.merged).toBe(true);
+    expect(result.output).toContain("merged #11 #12");
+  });
+
+  it("merges nothing when a PR below the one asked for fails a gate", () => {
+    const result = stackGate({ 11: "fail", 12: "pass", 13: "pass" });
+
+    expect(result.status).toBe(1);
+    expect(result.merged).toBe(false);
+    expect(result.output).toContain("CI not green on PR #11");
   });
 });

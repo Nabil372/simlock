@@ -265,7 +265,9 @@ is open, done means closed as completed.
     after the reviews passed (a merge of the base branch, a fix the gate
     needed) gets a fix check too, unless it changes only tests the PR's
     diff does not touch (a flaky test elsewhere): that one is listed under
-    `## Review` as fixed unreviewed. A *src* finding a fix check confirms means
+    `## Review` as fixed unreviewed. A merge of a base branch that needed
+    no conflict resolution brings in only commits reviewed in their own
+    PRs, and gets no fix check either; CI checks it. A *src* finding a fix check confirms means
     the agent stops and hands off with it under Findings (rule 2), leaving
     the PR in draft. *Text* findings never stop delivery and get no further review:
     they are fixed in one run that edits tests, comments and docs only,
@@ -275,9 +277,17 @@ is open, done means closed as completed.
     when a person opens one. A PR from a person gets the same reviews when
     the maintainer asks for them.
 
-15. **An agent merges only through the gate.** `.agents/scripts/merge-pr.sh`
+15. **An agent merges only through the gate, and a feature merges as one
+    stack.** `.agents/scripts/merge-pr.sh`
     is the one place a delivery PR is merged from; agents may not run
-    `gh pr merge` themselves. The script merges only a ready PR with no
+    `gh pr merge` themselves. A feature's PRs (its open ADR PRs, then each
+    task's PR in the order its review passed) form one GitHub stack: each
+    PR targets the branch of the one below, stays open once reviewed, and
+    the stack merges once every task has joined it, so `main` never holds
+    part of a feature. The gate then checks every PR in the stack and
+    merges them together, all or nothing. A task depending on a reviewed
+    task of the same feature starts on top of it: the issue-state workflow
+    counts it as done. The script merges only a ready PR with no
     `needs-hardware` label, a body `pr-body-check.mjs` accepts (a `## Review`
     section with its counts line, no "spec needs" line, the agent footer),
     green CI, and no conflict. Before calling it the agent also checks what

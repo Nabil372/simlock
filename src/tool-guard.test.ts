@@ -53,11 +53,34 @@ describe("tool-guard.mjs", () => {
     "pnpm test:e2e e2e/http-api.test.ts",
     "pnpm test:console --project=chromium",
     'git commit -qm "run pnpm check in CI"',
+    'git commit -m "chore(fallow): remove four stale suppressions"',
+    'gh pr create --title "chore(fallow): x" --body-file b.md',
+    "echo 'a; pnpm check'",
     "sed -i '' 's/oxfmt/oxlint/' docs/a.md",
     "grep -n tsc package.json",
     "python3 - <<'E'\nprint(\"pnpm check\")\nE\ngit status --short",
   ])("lets a sub-agent run a test, or a command that only names a check: %s", (command) => {
     expect(bash(command)).toEqual({ status: 0, stderr: "" });
+  });
+
+  it.each([
+    "git push --no-verify -u origin task/1",
+    "git commit -q --no-verify -m x",
+    "LEFTHOOK=0 git push origin HEAD:task/1",
+    "git -c core.hooksPath=/dev/null push",
+    "LEFTHOOK_EXCLUDE=typecheck-e2e git push",
+  ])("refuses a sub-agent's skip of the git hooks: %s", (command) => {
+    const result = bash(command);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("skips the git hooks");
+  });
+
+  it("lets the red stage skip Fallow alone on its push", () => {
+    expect(bash("LEFTHOOK_EXCLUDE=fallow git push -u origin task/1")).toEqual({
+      status: 0,
+      stderr: "",
+    });
   });
 
   it("lets the main session run a check, as a routine does", () => {

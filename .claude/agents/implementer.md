@@ -39,6 +39,8 @@ cd "$dir"
   fast-forwarded to `origin/<kind>/<N>`. Run every command there, on the
   branch; never detach it or check the branch out anywhere else. Leave it
   clean: commit and push before your report.
+- A `base` argument (a task stacked on its feature's last reviewed PR):
+  start from it, `.agents/scripts/worktree.sh <kind>/<N> origin/<base>`.
 - A bug whose branch does not exist yet: start from the reproduction,
   `.agents/scripts/worktree.sh <kind>/<N> origin/bug/<N>-repro`.
 - A branch with commits: read `git log origin/main..` and the PR body's

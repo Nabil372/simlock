@@ -1,6 +1,6 @@
 ---
 name: deliver
-description: Deliver a ready issue end to end, unattended — a task, a bug, or a whole feature:ready feature (spec its tasks, then walk them in dependency order, two at a time). Claims, delegates implement, review and hardware checks to background agents (two issues at once), reports progress as it goes, reasons only over their report blocks, and merges each PR through the gate. Use when the user says "deliver #N", "pick up the next ready issue", or "ship #N".
+description: Deliver a ready issue end to end, unattended — a task, a bug, or a whole feature:ready feature (spec its tasks, then walk them in dependency order, two at a time). Claims, delegates implement, review and hardware checks to background agents (two issues at once), reports progress as it goes, reasons only over their report blocks, and merges through the gate (a feature's PRs stack and merge together at the end). Use when the user says "deliver #N", "pick up the next ready issue", or "ship #N".
 model: opus
 effort: medium
 ---
@@ -90,7 +90,7 @@ nobody decided) does not stop the run either:
    option and what a user would see, the one taken and why, and what
    reverting it takes. Say the same in the session, in plain text.
 
-The PR merges through the gate as usual. An answer that picks another
+The PR goes on as usual, to the gate or into its stack. An answer that picks another
 option is a fix run while the PR is open, and a new `task:draft` issue under
 the feature after it merged.
 
@@ -110,6 +110,16 @@ git fetch -q origin && git diff --quiet HEAD origin/main -- .claude .agents
 Exit 1: this checkout's agents and skills are behind `main`, and the
 session loaded the old ones. Stop and tell the maintainer to run
 `git pull --ff-only` and start a new session.
+
+```bash
+git status --porcelain -- .claude .agents docs/internal/agent-rules
+```
+
+Any output: someone is editing the rules in this checkout, and every agent
+of the run would read their unfinished edits (the hooks come from this
+checkout too). Stop and tell the maintainer to start the run from a
+checkout nobody edits, such as `git worktree add ../simlock-delivery
+origin/main`.
 
 ```bash
 gh issue view <N> --json number,title,labels,assignees,body
@@ -134,15 +144,19 @@ it under Blocked on.
 ## 3. Deliver one issue
 
 Claim it: `gh issue edit <N> --add-assignee @me`. Its branch is
-`<kind>/<N>`. If it already has a PR, read the PR body's `### Status`
+`<kind>/<N>`. A task of a feature, or an issue whose feature has an open
+ADR PR, is stacked (step 4): its red stage gets `base:` and its PR waits
+in the stack instead of the gate. If it already has a PR, read the PR body's `### Status`
 section and the latest `## Handoff` comment, and go on from the next stage
 they name; never build again or restart review at round 1.
 
 1. **Implement**, one fresh `implementer` per mode: `mode: red`; then
    `mode: green` with the report's `map`; while a `green` report still lists
    `failing` and turned at least one test green since the last, another
-   `green` with its `map`; then `mode: audit`. `spec needs` under `open`
-   in any report: decide, then tell (above).
+   `green` with its `map`; then `mode: audit`. An audit run takes no
+   `fixes`: an agent given both does the fixes and skips the audit, so a
+   CI failure waits for the fix run after the audit (step 2). `spec needs`
+   under `open` in any report: decide, then tell (above).
 2. **Review**: `reviewer` with the PR number. The diff's kind sets which
    reviews run (rule 14): a tests-only or docs-only diff gets fewer, a
    large one two code reviewers.
@@ -230,8 +244,10 @@ they name; never build again or restart review at round 1.
    Notes never become issues on their own: a person opens one when a note
    deserves it.
 
-6. **Ready and merge.** `gh pr ready <M>`, then run the gate in the
-   background and wait for its notification, without asking first:
+6. **Ready, then stack or merge.** `gh pr ready <M>`. A stacked PR joins
+   its feature's stack (step 4) and waits there: no gate. Any other PR:
+   run the gate in the background and wait for its notification, without
+   asking first:
 
    ```bash
    .agents/scripts/merge-pr.sh <M>
@@ -265,19 +281,44 @@ gh api graphql -F owner="$OWNER" -F repo="$REPO" -F number=<N> -f query='
         labels(first:5){nodes{name}} assignees(first:3){nodes{login}}}}}}}'
 ```
 
+**One stack per feature** (rule 15). The feature's PRs stay open and merge
+together at the end, so `main` never holds part of a feature. Bottom to top:
+the feature's open ADR PRs (branches `feature/<N>-adr*`, oldest first), then
+each task's PR in the order its review passed.
+
 Runnable: open, `task:ready`, unassigned. The issue-state workflow makes a
-task ready only once its Depends on are closed, so readiness is the order.
-After a merge the workflow takes a minute: watch its run
+task ready once each Depends on is closed, or is a task of this feature
+whose PR passed review (open, not a draft), so readiness is the order. After
+`gh pr ready` or a merge the workflow takes a minute: watch its run
 (`gh run list --workflow "Issue state" --limit 1`, then `gh run watch <id>`)
 and list again; do not diagnose why a task is not ready yet.
 
+- A task's red stage gets `base: <branch of the stack's top PR>`; with no
+  PR yet, no `base` (it starts from `main`).
+- Its review passed (step 3, item 6): when its PR's base is no longer the
+  stack's top (another task joined meanwhile), one `implementer` fix run
+  merges the top's branch into it, then `gh pr edit <M> --base <top
+branch>`; a merge with conflicts gets a fix check. Then `gh pr ready <M>`
+  and `gh stack link <PR below> <M>` (PR numbers, bottom to top; none
+  below yet: nothing to link). PR body Status: `Gate: waiting for the
+stack`.
 - Deliver up to two runnable tasks at once, each in its own worktree. Start
   a stage for one as soon as the other's agent is running; never wait on one
   task to move the other.
 - Both at the hardware check: the second `hardware-verifier` waits for the
   lane's lock (rule 16).
-- After each merge, list again.
-- A task parks: keep delivering the tasks that do not depend on it.
+- After each `gh pr ready`, list again.
+- A task parks: keep delivering the tasks that do not depend on it. The
+  stack stays open and nothing merges; the maintainer decides.
+
+**Merging the stack.** When every task has joined the stack and nothing is
+in flight, run the gate on the top PR: `merge-pr.sh <top>` gates every PR
+in the stack and merges them all, bottom to top. A conflict with `main`
+(another feature merged meanwhile): one fix run on the bottom PR that merges
+`origin/main`, then one on each PR above that merges its base, bottom to
+top; a merge with conflicts gets a fix check; then the gate again. Red CI:
+the fix run goes to the lowest red PR, and the PRs above it merge its
+branch the same way.
 
 Stop when nothing is runnable and nothing is in flight.
 
