@@ -55,10 +55,11 @@ red_checks() {
 rerunnable_runs() {
   flaky=$(gh issue list --label flaky-test --state open --limit 100 --json title,body \
     -q '.[] | .title, .body' | grep -oE '(e2e|src|ui)/[A-Za-z0-9_./-]+\.(test|spec)\.tsx?' || true)
-  # why: Quality only sums up the CI jobs it needs and fails when one was cancelled, so judging
-  # it would call a cancelled job this PR's to fix; those jobs are checks of their own here.
-  gh pr checks "$pr" --json name,bucket,link -q '.[] | select((.bucket == "fail" or .bucket == "cancel") and .name != "Quality") | "\(.bucket) \(.link)"' |
-    while read -r bucket link; do
+  gh pr checks "$pr" --json bucket,link,name -q '.[] | select(.bucket == "fail" or .bucket == "cancel") | "\(.bucket) \(.link) \(.name)"' |
+    while read -r bucket link name; do
+      # why: Quality only sums up the CI jobs it needs and fails when one was cancelled, so
+      # judging it would call a cancelled job this PR's to fix; those jobs are checks here too.
+      [ "$name" != Quality ] || continue
       run=$(echo "$link" | sed -n 's#.*/actions/runs/\([0-9][0-9]*\).*#\1#p')
       [ -n "$run" ] || { echo none; continue; }
       if [ "$bucket" = fail ]; then
