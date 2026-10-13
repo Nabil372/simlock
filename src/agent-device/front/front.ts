@@ -2,13 +2,27 @@ import type { HttpMount } from "../../http/app.js";
 import type { TokenIdentity } from "../../http/token-store.js";
 import { FRONT_MOUNT, FRONT_PREFIX } from "../shared/paths.js";
 import { failure, frontReply, notAvailable, refusal } from "../shared/replies.js";
-import { classifyCall, commandLeaseId, readRpcBody, type RpcRead } from "../shared/rpc.js";
+import {
+  classifyCall,
+  commandLeaseId,
+  readRpcBody,
+  type CallClass,
+  type RpcRead,
+} from "../shared/rpc.js";
 import { allocate } from "./allocate.js";
 import type { FrontContext } from "./context.js";
 import { heartbeat } from "./heartbeat.js";
 import { release } from "./release.js";
 
 type RpcRequest = RpcRead & { readonly kind: "request" };
+
+interface Routed {
+  readonly identity: TokenIdentity;
+  readonly kind: CallClass;
+  readonly leaseMaxTtlMs: number;
+  readonly read: RpcRequest;
+  readonly request: Request;
+}
 
 const AGENT_TOKEN_ONLY = "refused: agent-device through simlock needs an agent token";
 const CLIENT_GONE = 499;
@@ -52,37 +66,32 @@ async function handleRpc(
   if (kind === "wrapped-lease") {
     return frontReply(refusal("refused: send lease calls as lease RPCs"), read);
   }
+  return routeCall(context, { identity, kind, leaseMaxTtlMs: status.leaseMaxTtlMs, read, request });
+}
+
+async function routeCall(
+  context: FrontContext,
+  { identity, kind, leaseMaxTtlMs, read, request }: Routed,
+): Promise<Response> {
   if (kind === "allocate") {
-    const work = allocate(context, {
-      call: read,
-      identity,
-      leaseMaxTtlMs: status.leaseMaxTtlMs,
-      request,
-    }).catch((error: unknown) => {
-      context.logger.error("agent-device allocate failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return frontReply(failure("agent-device allocate failed"), read);
-    });
+    const work = allocate(context, { call: read, identity, leaseMaxTtlMs, request }).catch(
+      (error: unknown) => {
+        context.logger.error("agent-device allocate failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return frontReply(failure("agent-device allocate failed"), read);
+      },
+    );
     return untilHangUp(request.signal, work);
   }
+  const forwarded = carry(request, read.text);
   if (kind === "heartbeat") {
-    return heartbeat(context, {
-      call: read,
-      identity,
-      leaseMaxTtlMs: status.leaseMaxTtlMs,
-      request: carry(request, read.text),
-    });
+    return heartbeat(context, { call: read, identity, leaseMaxTtlMs, request: forwarded });
   }
-  if (kind === "release") {
-    return release(context, identity, read as RpcRequest, carry(request, read.text));
-  }
+  if (kind === "release") return release(context, identity, read, forwarded);
   const leaseId = kind === "command" ? commandLeaseId(read.params) : undefined;
-  if (leaseId === undefined) return passThrough(context, carry(request, read.text), identity, read);
-  return runCommand(context, request, identity, read, {
-    leaseId,
-    maxRunMs: status.leaseMaxTtlMs,
-  });
+  if (leaseId === undefined) return passThrough(context, forwarded, identity, read);
+  return runCommand(context, request, identity, read, { leaseId, maxRunMs: leaseMaxTtlMs });
 }
 
 async function runCommand(
