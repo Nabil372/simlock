@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -267,5 +267,51 @@ describe("delivery-stats.mjs", () => {
     expect(section(output, "## Open PRs waiting on hardware")).toEqual([
       "- #30 feat(ios): boot a watch",
     ]);
+  });
+
+  it("reads GitHub by numbered pages, so a second page of comments is read and no --paginate is passed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "delivery-stats-gh-"));
+    const handoff = (issue: number): object => ({
+      issue_url: `https://api.github.com/repos/o/r/issues/${issue}`,
+      created_at: new Date().toISOString(),
+      body: `## Handoff\n\n### Blocked on\n\nmaintainer ${issue}`,
+    });
+    const chatter = { issue_url: "https://api.github.com/repos/o/r/issues/1", body: "hello" };
+    const pages = {
+      "repos/o/r/issues/comments": [
+        [handoff(7), ...Array.from({ length: 99 }, () => chatter)],
+        [handoff(8)],
+      ],
+      "repos/o/r/issues": [
+        [
+          { number: 30, title: "waits", pull_request: {} },
+          { number: 31, title: "plain issue" },
+        ],
+      ],
+    } as Record<string, object[][]>;
+    writeFileSync(join(dir, "pages.json"), JSON.stringify(pages));
+    writeFileSync(
+      join(dir, "gh"),
+      `#!${process.execPath}
+const { readFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("--paginate")) { console.error("HTTP 403: numeric-ID path"); process.exit(1); }
+const pages = JSON.parse(readFileSync(${JSON.stringify(join(dir, "pages.json"))}, "utf8"));
+const page = Number((args.find((a) => a.startsWith("page=")) ?? "page=1").slice(5));
+for (const item of (pages[args[3]] ?? [])[page - 1] ?? []) console.log(JSON.stringify(item));
+`,
+    );
+    chmodSync(join(dir, "gh"), 0o755);
+
+    const output = execFileSync(process.execPath, [SCRIPT, "--repo", "o/r", "--weeks", "1"], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+    });
+
+    expect(section(output, "## Handoffs this week")).toEqual([
+      "- #7 blocked on: maintainer 7",
+      "- #8 blocked on: maintainer 8",
+    ]);
+    expect(section(output, "## Open PRs waiting on hardware")).toEqual(["- #30 waits"]);
   });
 });
