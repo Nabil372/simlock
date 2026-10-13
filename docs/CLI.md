@@ -523,7 +523,7 @@ without `--allow-download`.
 The grant always names the model, OS, mode and image tag of the device you
 got. A class is a claim about the device type the platform's tools report:
 on iOS the product family, on Android the profile's tag, and every untagged
-Android profile is a `phone`, so `tablet` holds no Android model.
+Android profile is a `phone`, except Medium Tablet, the one Android `tablet`.
 
 Through a gateway the same requests work: a class, no model at all, and an
 `--os` range are served by any worker that has something fitting, and the
@@ -1656,7 +1656,7 @@ own name for it.
 Simlock reads Android device models from three places and writes to none of
 them:
 
-- **Simlock's own profiles** ship with Simlock (today: Pixel 9). They are
+- **Simlock's own profiles** ship with Simlock (16 models, from Pixel 9 to Large Desktop). They are
   read first, so a device made from one has the same hardware on every
   host, and the model is there even when your `cmdline-tools` is too old to
   have it. A name Simlock's own profiles have wins over the same name in the
