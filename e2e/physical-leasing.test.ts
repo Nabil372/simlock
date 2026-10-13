@@ -436,7 +436,7 @@ describe("a physical lease request that waits", () => {
   });
 
   it("a request whose only match is reclaiming is queued, not refused", async () => {
-    const env = await startWith({ ios: [IPHONE_A] }, { ios: { latencyMs: { reclaim: 4_000 } } });
+    const env = await startWith({ ios: [IPHONE_A] }, { ios: { latencyMs: { reclaim: 1_500 } } });
     const first = await granted(env, physical("agent-a"));
     await release(env, first);
     await waitForDeviceState(env, UDID_A, "reclaiming");
