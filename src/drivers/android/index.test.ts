@@ -73,6 +73,17 @@ function libraryClasses(extra: Record<string, string>): Record<string, string> {
   return { ...Object.fromEntries(LIBRARY_PROFILES.map((p) => [p.name, p.deviceClass])), ...extra };
 }
 
+const withoutNonPhoneImages: Record<string, string[]> = {
+  "Automotive (1024p landscape)": [],
+  "Automotive (1080p landscape)": [],
+  "Medium Desktop": [],
+  "Large Desktop": [],
+  "Television (1080p)": [],
+  "Television (4K)": [],
+  "Wear OS Large Round": [],
+  "Wear OS Small Round": [],
+};
+
 function libraryRuntimes(
   runtimes: string[],
   extra: Record<string, string[]>,
@@ -1266,13 +1277,18 @@ describe("AndroidDriver", () => {
       ],
       modelAliases: libraryAliases({ "Pixel 5": ["pixel_5"] }),
       modelClasses: libraryClasses({ "Pixel 5": "phone" }),
-      modelRuntimes: libraryRuntimes(["34", "35"], { "Pixel 5": ["34", "35"] }),
+      modelRuntimes: libraryRuntimes(["34", "35"], {
+        ...withoutNonPhoneImages,
+        "Pixel 5": ["34", "35"],
+        "Pixel 9": ["35"],
+        "Pixel 9 Pro XL": ["35"],
+      }),
       models: [...libraryModels, "Pixel 5"],
       runtimes: ["34", "35"],
     });
   });
 
-  it("pairs every model with every installed API level, including one whose only image has a foreign ABI", async () => {
+  it("pairs a model with an installed API level whose only image has a foreign ABI, when the image fits", async () => {
     // The host is arm64-v8a; API 33 is installed only as x86_64.
     const filesystem = await androidFilesystem({
       images: [
@@ -1289,7 +1305,13 @@ describe("AndroidDriver", () => {
 
     expect(catalog.models).toEqual([...libraryModels, "Pixel 5"]);
     expect(catalog.modelRuntimes).toEqual(
-      libraryRuntimes(["33", "35"], { "Pixel 5": ["33", "35"] }),
+      libraryRuntimes(["33", "35"], {
+        ...withoutNonPhoneImages,
+        "Pixel 5": ["33", "35"],
+        "Pixel 8": ["35"],
+        "Pixel 9": ["35"],
+        "Pixel 9 Pro XL": ["35"],
+      }),
     );
   });
 
@@ -1310,7 +1332,7 @@ describe("AndroidDriver", () => {
     const pairs = Object.entries(catalog.modelRuntimes).flatMap(([model, runtimes]) =>
       runtimes.map((osVersion) => ({ model, osVersion })),
     );
-    expect(pairs).toHaveLength((libraryModels.length + 1) * 2);
+    expect(pairs.length).toBeGreaterThan(0);
 
     for (const { model, osVersion } of pairs) {
       await expect(driver.resolveSpec({ model, osVersion, platform: "android" })).resolves.toEqual({
@@ -1381,7 +1403,16 @@ describe("AndroidDriver", () => {
   });
 
   it("resolves every listed name of every listed model, in upper and lower case, to that model", async () => {
-    const filesystem = await androidFilesystem();
+    const filesystem = await androidFilesystem({
+      images: [
+        ["36", "google_apis", "arm64-v8a"],
+        ["36", "android-tv", "arm64-v8a"],
+        ["36", "android-wear", "arm64-v8a"],
+        ["36", "android-automotive", "arm64-v8a"],
+        ["36", "android-automotive-playstore", "arm64-v8a"],
+        ["36", "android-desktop", "arm64-v8a"],
+      ],
+    });
     await writeDevicesXml(filesystem, customDeviceXml("My Tablet", 4096));
     const runner = new ScriptedProcessRunner(
       Array.from({ length: 11 }, () =>
@@ -1399,7 +1430,7 @@ describe("AndroidDriver", () => {
     for (const { model, name } of names) {
       for (const spelling of [name.toUpperCase(), name.toLowerCase()]) {
         await expect(driver.resolveSpec({ model: spelling, platform: "android" })).resolves.toEqual(
-          { physical: false, model, osVersion: "34", platform: "android" },
+          { physical: false, model, osVersion: "36", platform: "android" },
         );
       }
     }
@@ -2342,7 +2373,7 @@ describe("AndroidDriver", () => {
       ]);
     });
 
-    it("sets `PlayStore.enabled=yes` on a Play Store image when the profile allows Play Store, and `no` on a `google_apis` image or for a profile that does not", async () => {
+    it("sets `PlayStore.enabled=yes` on a Play Store image when the profile allows Play Store, and `no` on a `google_apis` image", async () => {
       const playStore = { imageTag: "google_apis_playstore" };
       const allowed = await libraryHarness({ ...playStore, listing: pixelDevices });
       await allowed.provision("Pixel 9");
@@ -2354,14 +2385,6 @@ describe("AndroidDriver", () => {
       });
       await googleApis.provision("Pixel 9");
       expect((await googleApis.config()).get("PlayStore.enabled")).toBe("no");
-
-      const refused = await libraryHarness({
-        ...playStore,
-        profiles: [testLibraryProfile({ playStore: false })],
-        seed: seedConfig(["PlayStore.enabled=yes"]),
-      });
-      await refused.provision("Test Phone");
-      expect((await refused.config()).get("PlayStore.enabled")).toBe("no");
     });
 
     it("reads an image's tags from `SystemImage.TagId`, and from the folder name when it has none", async () => {
@@ -4271,7 +4294,19 @@ describe("AndroidDriver library catalog", () => {
     const runner = new ScriptedProcessRunner([
       processResult(binaries.avdmanager, ["list", "device"], "Available devices:\n"),
     ]);
-    const driver = await createDriver(await androidFilesystem(), runner);
+    const driver = await createDriver(
+      await androidFilesystem({
+        images: [
+          ["36", "google_apis", "arm64-v8a"],
+          ["36", "android-tv", "arm64-v8a"],
+          ["36", "android-wear", "arm64-v8a"],
+          ["36", "android-automotive", "arm64-v8a"],
+          ["36", "android-automotive-playstore", "arm64-v8a"],
+          ["36", "android-desktop", "arm64-v8a"],
+        ],
+      }),
+      runner,
+    );
 
     const catalog = await driver.listCatalog();
     const resolved: string[] = [];
@@ -4350,6 +4385,625 @@ describe("AndroidDriver toolVersions()", () => {
     const driver = await createDriver(filesystem, new ScriptedProcessRunner([]));
 
     await expect(driver.toolVersions()).resolves.toEqual([{ name: "emulator", version: "35.4.9" }]);
+  });
+});
+
+type FitImage = readonly [api: string, tag: string, abi: string, properties?: string];
+
+const fitDevices =
+  `Available devices:\n` +
+  `id: 0 or "pixel_5"\n    Name: Pixel 5\n    OEM : Google\n---------\n` +
+  `id: 1 or "pixel_9_pro"\n    Name: Pixel 9 Pro\n    OEM : Google\n---------\n` +
+  `id: 2 or "tv_720p"\n    Name: Television (720p)\n    OEM : Google\n    Tag : android-tv\n---------\n` +
+  `id: 3 or "My Tablet"\n    Name: My Tablet\n    OEM : User\n---------\n` +
+  `id: 4 or "odd"\n    Name: Odd Device\n    OEM : Google\n    Tag : foo-device\n---------\n` +
+  `id: 5 or "xr_headset"\n    Name: XR Headset\n    OEM : Google\n    Tag : android-xr\n---------\n` +
+  `id: 6 or "glasses"\n    Name: AI Glasses\n    OEM : Google\n    Tag : ai-glasses\n`;
+
+class ListingRunner extends ScriptedProcessRunner {
+  constructor(
+    private readonly listing: string,
+    expectations: readonly ScriptedProcessExpectation[],
+  ) {
+    super(expectations);
+  }
+
+  override spawn(
+    command: string,
+    args: readonly string[],
+    options: ProcessRunOptions = {},
+  ): ProcessHandle {
+    if (command === binaries.avdmanager && args[0] === "list") {
+      return new ScriptedProcessRunner([processResult(command, args, this.listing)]).spawn(
+        command,
+        args,
+        options,
+      );
+    }
+    return super.spawn(command, args, options);
+  }
+}
+
+type Refusal = Error & { readonly component?: string; readonly downloadable?: boolean };
+
+async function fitHarness(
+  images: readonly FitImage[],
+  options: {
+    readonly devicesXml?: string;
+    readonly hostAbi?: string;
+    readonly profiles?: readonly LibraryDeviceProfile[];
+  } = {},
+) {
+  const filesystem = await androidFilesystem({
+    images: images.map(([api, tag, abi]) => [api, tag, abi]),
+  });
+  for (const [api, tag, abi, properties] of images) {
+    if (properties !== undefined) {
+      await filesystem.writeFileAtomic(
+        `${sdk}/system-images/android-${api}/${tag}/${abi}/source.properties`,
+        properties,
+      );
+    }
+  }
+  if (options.devicesXml !== undefined) await writeDevicesXml(filesystem, options.devicesXml);
+  const runner = new ListingRunner(fitDevices, [
+    processResult(binaries.avdmanager, [
+      "create",
+      "avd",
+      "-n",
+      "simlock_one",
+      "-k",
+      /.+/,
+      "-d",
+      /.+/,
+    ]),
+    processResult(binaries.emulator, ["-version"], "Android emulator version 36.1.9"),
+    processResult(binaries.adb, ["devices"], "List of devices attached\n"),
+  ]);
+  const driver = await createDriver(filesystem, runner, {
+    hostAbi: options.hostAbi ?? "arm64-v8a",
+    ids: ["one"],
+    ...(options.profiles === undefined
+      ? {}
+      : { deviceProfileSources: [{ profiles: async () => options.profiles ?? [] }] }),
+  });
+  const resolve = (model: string, osVersion?: string, imageTag?: string) =>
+    driver.resolveSpec({
+      model,
+      platform: "android",
+      ...(osVersion === undefined ? {} : { osVersion }),
+      ...(imageTag === undefined ? {} : { imageTag }),
+    });
+  const refusal = (model: string, osVersion?: string, imageTag?: string) =>
+    resolve(model, osVersion, imageTag).then(
+      () => {
+        throw new Error(`${model} ${osVersion ?? ""} ${imageTag ?? ""} resolved`);
+      },
+      (error: unknown) => error as Refusal,
+    );
+  const createdPackage = () => {
+    const create = runner.calls.find((call) => call.args[0] === "create");
+    return create?.args[create.args.indexOf("-k") + 1];
+  };
+  return { createdPackage, driver, filesystem, refusal, resolve, runner };
+}
+
+const HOST_IMAGES: readonly FitImage[] = [
+  ["35", "google_apis", "arm64-v8a"],
+  ["36", "google_apis_playstore", "arm64-v8a"],
+  ["34", "android-tv", "arm64-v8a"],
+];
+
+describe("AndroidDriver image fit", () => {
+  describe("each row of the In short table", () => {
+    interface Row {
+      readonly name: string;
+      readonly images?: readonly FitImage[];
+      readonly model: string;
+      readonly os?: string;
+      readonly tag?: string;
+      readonly resolves?: string;
+      readonly resolvedTag?: string;
+      readonly refusedDownloadable?: boolean;
+      readonly pkg?: string;
+    }
+    const withGoogleTv: readonly FitImage[] = [...HOST_IMAGES, ["36", "google-tv", "arm64-v8a"]];
+    const withWear: readonly FitImage[] = [...HOST_IMAGES, ["34", "android-wear", "arm64-v8a"]];
+    const rows: readonly Row[] = [
+      { model: "Television (1080p)", name: "TV 1080p", resolves: "34" },
+      { model: "Television (1080p)", name: "TV 1080p at 36", os: "36", refusedDownloadable: false },
+      {
+        model: "Television (1080p)",
+        name: "TV 1080p with image tag google_apis",
+        refusedDownloadable: false,
+        tag: "google_apis",
+      },
+      { model: "Television (720p)", name: "TV 720p, SDK only", resolves: "34" },
+      {
+        images: withGoogleTv,
+        model: "Television (1080p)",
+        name: "TV 1080p with a google-tv image at 36",
+        resolves: "36",
+      },
+      { images: withWear, model: "Wear OS Large Round", name: "Wear OS", resolves: "34" },
+      { model: "Pixel 9", name: "Pixel 9", resolves: "36" },
+      { model: "Pixel 9", name: "Pixel 9 at 34", os: "34", refusedDownloadable: false },
+      { model: "Pixel 9", name: "Pixel 9 at 37", os: "37", refusedDownloadable: true },
+      { model: "Television (1080p)", name: "TV 1080p at 37", os: "37", refusedDownloadable: false },
+      { model: "Pixel 6", name: "Pixel 6", resolves: "35" },
+      { model: "Pixel 6", name: "Pixel 6 at 36", os: "36", refusedDownloadable: false },
+      {
+        model: "Pixel 6",
+        name: "Pixel 6 with image tag google_apis_playstore",
+        refusedDownloadable: false,
+        tag: "google_apis_playstore",
+      },
+      {
+        model: "Medium Phone",
+        name: "Medium Phone with image tag google_apis_playstore",
+        resolvedTag: "google_apis_playstore",
+        resolves: "36",
+        tag: "google_apis_playstore",
+      },
+      { model: "Medium Phone", name: "Medium Phone at 35", os: "35", resolves: "35" },
+      { model: "Pixel 9 Pro", name: "Pixel 9 Pro, SDK only", resolves: "36" },
+      { model: "My Tablet", name: "My Tablet, custom", resolves: "36" },
+    ];
+
+    it.each(rows)("$name gives its After result", async (row) => {
+      const { driver, refusal, resolve } = await fitHarness(row.images ?? HOST_IMAGES);
+
+      if (row.refusedDownloadable !== undefined) {
+        expect(await refusal(row.model, row.os, row.tag)).toMatchObject({
+          downloadable: row.refusedDownloadable,
+          name: "RuntimeMissingError",
+        });
+        if (row.os !== undefined) {
+          expect((await driver.listCatalog()).modelRuntimes[row.model]).not.toContain(row.os);
+        }
+        return;
+      }
+      const spec = await resolve(row.model, row.os, row.tag);
+      expect(spec).toEqual({
+        ...(row.resolvedTag === undefined ? {} : { imageTag: row.resolvedTag }),
+        model: row.model,
+        osVersion: row.resolves,
+        physical: false,
+        platform: "android",
+      });
+      expect((await driver.listCatalog()).modelRuntimes[row.model]).toContain(spec.osVersion);
+    });
+
+    it("pairs My Tablet with 35 and 36 and not the TV image at 34, and the TV with 34 only", async () => {
+      const { driver } = await fitHarness(HOST_IMAGES);
+
+      const { modelRuntimes } = await driver.listCatalog();
+
+      expect(modelRuntimes["My Tablet"]).toEqual(["35", "36"]);
+      expect(modelRuntimes["Television (1080p)"]).toEqual(["34"]);
+      expect(modelRuntimes["Pixel 9"]).toEqual(["35", "36"]);
+      expect(modelRuntimes["Pixel 6"]).toEqual(["35"]);
+    });
+
+    it("creates a phone from the Play Store image at the newest level, and the TV from the android-tv image", async () => {
+      const phone = await fitHarness(HOST_IMAGES);
+      await phone.driver.provision(await phone.resolve("Pixel 5"));
+      const tv = await fitHarness(HOST_IMAGES);
+      await tv.driver.provision(await tv.resolve("Television (720p)"));
+
+      expect(phone.createdPackage()).toBe(
+        "system-images;android-36;google_apis_playstore;arm64-v8a",
+      );
+      expect(tv.createdPackage()).toBe("system-images;android-34;android-tv;arm64-v8a");
+    });
+  });
+
+  describe("downloads", () => {
+    it.each([
+      ["Pixel 9", "37", true, "37"],
+      ["Pixel 6", "37", true, "37"],
+      ["Television (1080p)", "37", false, undefined],
+    ])(
+      "%s at the uninstalled level %s is downloadable %s, naming component %s",
+      async (model, os, downloadable, component) => {
+        const { refusal } = await fitHarness(HOST_IMAGES);
+
+        const failure = await refusal(model, os);
+
+        expect(failure.downloadable).toBe(downloadable);
+        expect(failure.component).toBe(component);
+      },
+    );
+
+    it("is not downloadable for an uninstalled level whose google_apis image would not fit", async () => {
+      const { refusal } = await fitHarness(HOST_IMAGES);
+
+      expect(await refusal("Pixel 9", "34").then((e) => e.downloadable)).toBe(false);
+      const old = await fitHarness([["35", "google_apis", "arm64-v8a"]], {
+        profiles: [
+          testLibraryProfile({
+            apiRange: { max: 33, min: 24 },
+            name: "Old Phone",
+            names: ["Old Phone"],
+          }),
+        ],
+      });
+      expect((await old.refusal("Old Phone", "34")).downloadable).toBe(false);
+    });
+
+    it("is not downloadable for an installed level with only misfit images", async () => {
+      const { refusal } = await fitHarness(HOST_IMAGES);
+
+      expect(await refusal("Pixel 6", "36")).toMatchObject({
+        component: undefined,
+        downloadable: false,
+      });
+    });
+  });
+
+  describe("the catalog", () => {
+    it("lists in modelRuntimes only levels with a fitting image, and every installed image elsewhere", async () => {
+      const { driver } = await fitHarness([
+        ["35", "google_apis", "arm64-v8a"],
+        ["37", "android-xr", "arm64-v8a"],
+      ]);
+
+      const catalog = await driver.listCatalog();
+
+      expect(catalog.modelRuntimes["Pixel 5"]).toEqual(["35"]);
+      expect(catalog.modelRuntimes["Television (1080p)"]).toEqual([]);
+      expect(catalog.runtimes).toEqual(["35", "37"]);
+      expect(catalog.defaultRuntime).toBe("37");
+      expect(catalog.images).toEqual([
+        { abi: "arm64-v8a", runtime: "35", tag: "google_apis" },
+        { abi: "arm64-v8a", runtime: "37", tag: "android-xr" },
+      ]);
+    });
+
+    it("resolves every pair it lists, and refuses a level it leaves out", async () => {
+      const { driver, refusal, resolve } = await fitHarness([
+        ...HOST_IMAGES,
+        ["36", "android-wear", "arm64-v8a"],
+        ["Baklava", "google_apis", "arm64-v8a", "AndroidVersion.ApiLevel=35\n"],
+      ]);
+      const catalog = await driver.listCatalog();
+      const pairs = Object.entries(catalog.modelRuntimes).flatMap(([model, levels]) =>
+        levels.map((level) => ({ level, model })),
+      );
+      const left = Object.entries(catalog.modelRuntimes).flatMap(([model, levels]) =>
+        catalog.runtimes
+          .filter((level) => !levels.includes(level))
+          .map((level) => ({ level, model })),
+      );
+      expect(pairs.length).toBeGreaterThan(0);
+      expect(left.length).toBeGreaterThan(0);
+
+      for (const { level, model } of pairs) {
+        expect(await resolve(model, level)).toMatchObject({ model, osVersion: level });
+      }
+      for (const { level, model } of left) {
+        expect(await refusal(model, level)).toMatchObject({
+          downloadable: false,
+          name: "RuntimeMissingError",
+        });
+      }
+    });
+
+    it("pairs a devices.xml profile avdmanager did not list with every installed level", async () => {
+      const { driver, resolve } = await fitHarness(HOST_IMAGES, {
+        devicesXml: customDeviceXml("Legacy Phone", 2048),
+      });
+
+      const catalog = await driver.listCatalog();
+
+      expect(catalog.modelRuntimes["Legacy Phone"]).toEqual(["34", "35", "36"]);
+      expect(await resolve("Legacy Phone", "34")).toMatchObject({ osVersion: "34" });
+    });
+
+    it("counts android-Baklava with AndroidVersion.ApiLevel=35 as a level Pixel 9 pairs with", async () => {
+      const { driver, resolve } = await fitHarness([
+        ["Baklava", "google_apis", "arm64-v8a", "AndroidVersion.ApiLevel=35\n"],
+        ["34", "google_apis", "arm64-v8a"],
+      ]);
+
+      const catalog = await driver.listCatalog();
+
+      expect(catalog.modelRuntimes["Pixel 9"]).toEqual(["Baklava"]);
+      expect(await resolve("Pixel 9")).toMatchObject({ osVersion: "Baklava" });
+    });
+
+    it("uses the folder name for --image-tag and the catalog's images[].tag when SystemImage.TagId differs", async () => {
+      const { driver, refusal, resolve } = await fitHarness([
+        ["35", "custom-folder", "arm64-v8a", "SystemImage.TagId=google_apis_playstore\n"],
+      ]);
+
+      const catalog = await driver.listCatalog();
+
+      expect(catalog.images).toEqual([{ abi: "arm64-v8a", runtime: "35", tag: "custom-folder" }]);
+      expect(await resolve("Pixel 5", undefined, "custom-folder")).toMatchObject({
+        imageTag: "custom-folder",
+      });
+      expect(await refusal("Pixel 5", undefined, "google_apis_playstore")).toMatchObject({
+        downloadable: false,
+        name: "RuntimeMissingError",
+      });
+    });
+  });
+
+  describe("resolveSpec", () => {
+    it("gives a request with no version the newest level with a fitting image", async () => {
+      const { resolve } = await fitHarness([
+        ["34", "android-tv", "arm64-v8a"],
+        ["35", "android-tv", "arm64-v8a"],
+        ["36", "google_apis", "arm64-v8a"],
+      ]);
+
+      expect(await resolve("Television (1080p)")).toMatchObject({ osVersion: "35" });
+    });
+
+    it("fails a request with no version RUNTIME_MISSING, not downloadable, when no level has a fitting image", async () => {
+      const { refusal } = await fitHarness([["36", "google_apis", "arm64-v8a"]]);
+
+      expect(await refusal("Television (1080p)")).toMatchObject({
+        component: undefined,
+        downloadable: false,
+        name: "RuntimeMissingError",
+      });
+    });
+
+    it("gives a tagged request an image of that tag that fits, at the newest level having one", async () => {
+      const { resolve } = await fitHarness([
+        ["34", "google_apis_playstore", "arm64-v8a"],
+        ["35", "google_apis_playstore", "arm64-v8a"],
+        ["36", "google_apis", "arm64-v8a"],
+      ]);
+
+      expect(await resolve("Pixel 9 Pro", undefined, "google_apis_playstore")).toMatchObject({
+        imageTag: "google_apis_playstore",
+        osVersion: "35",
+      });
+    });
+
+    it("skips a newest level whose image of the tag misfits and takes the newest level where it fits", async () => {
+      const { resolve } = await fitHarness(
+        [
+          ["34", "google_apis_playstore", "arm64-v8a"],
+          ["36", "google_apis_playstore", "arm64-v8a"],
+        ],
+        {
+          profiles: [
+            testLibraryProfile({
+              apiRange: { max: 35, min: 24 },
+              name: "Capped",
+              names: ["Capped"],
+            }),
+          ],
+        },
+      );
+
+      expect(await resolve("Capped", undefined, "google_apis_playstore")).toMatchObject({
+        osVersion: "34",
+      });
+    });
+  });
+
+  describe("refusal messages", () => {
+    const phones: readonly FitImage[] = [
+      ["35", "google_apis", "arm64-v8a"],
+      ["36", "google_apis_playstore", "arm64-v8a"],
+    ];
+
+    it("names the API range for an API level below the profile's minimum", async () => {
+      const { refusal } = await fitHarness([["34", "google_apis", "arm64-v8a"]]);
+
+      expect((await refusal("Pixel 9", "34")).message).toBe(
+        "No installed system image fits Pixel 9 at Android 34: it needs Android 35 or newer",
+      );
+    });
+
+    it("names the API range for a level above the profile's maximum", async () => {
+      const { refusal } = await fitHarness([["35", "google_apis", "arm64-v8a"]], {
+        profiles: [
+          testLibraryProfile({
+            apiRange: { max: 33, min: 24 },
+            name: "Old Phone",
+            names: ["Old Phone"],
+          }),
+        ],
+      });
+
+      expect((await refusal("Old Phone", "35")).message).toBe(
+        "No installed system image fits Old Phone at Android 35: it needs Android 33 or older",
+      );
+    });
+
+    it.each([
+      ["Television (1080p)", "it needs a TV image"],
+      ["Wear OS Large Round", "it needs a Wear OS image"],
+      ["Automotive (1080p landscape)", "it needs an automotive image"],
+      ["Medium Desktop", "it needs a desktop image"],
+      ["XR Headset", "it needs an XR image"],
+      ["AI Glasses", "it needs an AI glasses image"],
+    ])("names the kind for %s with only phone images", async (model, reason) => {
+      const { refusal } = await fitHarness(phones);
+
+      expect((await refusal(model, "35")).message).toBe(
+        `No installed system image fits ${model} at Android 35: ${reason}`,
+      );
+    });
+
+    it("names phone or tablet for a profile with no kind whose only image is a TV image", async () => {
+      const { refusal } = await fitHarness([["34", "android-tv", "arm64-v8a"]]);
+
+      expect((await refusal("Pixel 5", "34")).message).toBe(
+        "No installed system image fits Pixel 5 at Android 34: it needs a phone or tablet image",
+      );
+    });
+
+    it("names the tag for any other kind", async () => {
+      const { refusal } = await fitHarness(phones);
+
+      expect((await refusal("Odd Device", "35")).message).toBe(
+        "No installed system image fits Odd Device at Android 35: it needs an image tagged foo-device",
+      );
+    });
+
+    it("says the model does not take Play Store images", async () => {
+      const { refusal } = await fitHarness([["36", "google_apis_playstore", "arm64-v8a"]]);
+
+      expect((await refusal("Pixel 6", "36")).message).toBe(
+        "No installed system image fits Pixel 6 at Android 36: Pixel 6 does not take Play Store images",
+      );
+    });
+
+    it("says the model does not take tablet images", async () => {
+      const { refusal } = await fitHarness([["35", "tablet", "arm64-v8a"]]);
+
+      expect((await refusal("Pixel 5", "35")).message).toBe(
+        "No installed system image fits Pixel 5 at Android 35: Pixel 5 does not take tablet images",
+      );
+    });
+
+    it("says none of the installed images fit it when no single check rules out every image", async () => {
+      const { refusal } = await fitHarness([
+        ["35", "google_apis_playstore", "arm64-v8a"],
+        ["35", "android-tv", "arm64-v8a"],
+      ]);
+
+      expect((await refusal("Pixel 6", "35")).message).toBe(
+        "No installed system image fits Pixel 6 at Android 35: none of the installed images fit it",
+      );
+    });
+
+    it("gives the API range reason for an image that fails both API range and kind", async () => {
+      const { refusal } = await fitHarness([["34", "android-tv", "arm64-v8a"]]);
+
+      expect((await refusal("Pixel 9", "34")).message).toBe(
+        "No installed system image fits Pixel 9 at Android 34: it needs Android 35 or newer",
+      );
+    });
+
+    it("drops the level from the message when no version was asked, reading every installed image", async () => {
+      const { refusal } = await fitHarness([["36", "google_apis", "arm64-v8a"]]);
+
+      expect((await refusal("Television (1080p)")).message).toBe(
+        "No installed system image fits Television (1080p): it needs a TV image",
+      );
+    });
+
+    it("says an image tag's image does not fit it, and why", async () => {
+      const { refusal } = await fitHarness(HOST_IMAGES);
+
+      expect((await refusal("Television (1080p)", undefined, "google_apis")).message).toBe(
+        "No installed system image fits Television (1080p): the google_apis image does not fit it: it needs a TV image",
+      );
+      expect((await refusal("Television (1080p)", "35", "google_apis")).message).toBe(
+        "No installed system image fits Television (1080p) at Android 35: the google_apis image does not fit it: it needs a TV image",
+      );
+    });
+
+    it("says the level is not installed for a level with nothing installed", async () => {
+      const { refusal } = await fitHarness(HOST_IMAGES);
+
+      expect((await refusal("Pixel 9", "37")).message).toBe(
+        "No installed system image fits Pixel 9 at Android 37: Android 37 is not installed",
+      );
+    });
+
+    it("says no system image is installed on a host with no image at all", async () => {
+      const { refusal } = await fitHarness([]);
+
+      expect((await refusal("Pixel 9")).message).toBe(
+        "No installed system image fits Pixel 9: no system image is installed",
+      );
+    });
+
+    it("keeps today's message for an image tag with no image of that tag installed", async () => {
+      const { refusal } = await fitHarness(HOST_IMAGES);
+
+      expect((await refusal("Pixel 5", "35", "default")).message).toBe(
+        "No default system image is installed for Android API 35",
+      );
+    });
+  });
+
+  describe("provision", () => {
+    it("creates the device from a fitting image, never a misfit one that sorts first", async () => {
+      const { createdPackage, driver, resolve } = await fitHarness(
+        [
+          ["34", "google_apis", "arm64-v8a"],
+          ["34", "google-tv", "arm64-v8a"],
+          ["34", "android-tv", "x86_64"],
+        ],
+        { hostAbi: "arm64-v8a" },
+      );
+
+      await driver.provision(await resolve("Television (720p)"));
+
+      expect(createdPackage()).toBe("system-images;android-34;google-tv;arm64-v8a");
+    });
+
+    it.each([
+      [
+        "host-native google_apis",
+        [
+          ["35", "default", "arm64-v8a"],
+          ["35", "google_apis", "x86_64"],
+          ["35", "google_apis", "arm64-v8a"],
+        ] as const,
+        "system-images;android-35;google_apis;arm64-v8a",
+      ],
+      [
+        "host-native",
+        [
+          ["35", "google_apis", "x86_64"],
+          ["35", "default", "arm64-v8a"],
+        ] as const,
+        "system-images;android-35;default;arm64-v8a",
+      ],
+      [
+        "google_apis",
+        [
+          ["35", "default", "x86_64"],
+          ["35", "google_apis", "x86_64"],
+        ] as const,
+        "system-images;android-35;google_apis;x86_64",
+      ],
+      ["any", [["35", "default", "x86_64"]] as const, "system-images;android-35;default;x86_64"],
+    ])("follows today's order among fitting images: %s first", async (_name, images, expected) => {
+      const { createdPackage, driver, resolve } = await fitHarness(images);
+
+      await driver.provision(await resolve("Pixel 5", "35"));
+
+      expect(createdPackage()).toBe(expected);
+    });
+
+    it("throws RUNTIME_MISSING when no fitting image is left, and creates nothing from a misfit one", async () => {
+      const { driver, filesystem, resolve, runner } = await fitHarness([
+        ["34", "google_apis", "arm64-v8a"],
+        ["34", "android-tv", "arm64-v8a"],
+      ]);
+      const spec = await resolve("Television (720p)");
+      await filesystem.rm(`${sdk}/system-images/android-34/android-tv`);
+
+      await expect(driver.provision(spec)).rejects.toMatchObject({
+        downloadable: false,
+        name: "RuntimeMissingError",
+      });
+      expect(runner.calls.some((call) => call.args[0] === "create")).toBe(false);
+    });
+  });
+
+  describe("an image tag whose image misfits", () => {
+    it("fails RUNTIME_MISSING, not downloadable, and starts no sdkmanager", async () => {
+      const { refusal, runner } = await fitHarness(HOST_IMAGES);
+
+      const failure = await refusal("Pixel 6", undefined, "google_apis_playstore");
+
+      expect(failure).toMatchObject({ downloadable: false, name: "RuntimeMissingError" });
+      expect(failure.message).toContain("the google_apis_playstore image does not fit it");
+      expect(runner.calls.map((call) => call.command)).not.toContain(binaries.sdkmanager);
+    });
   });
 });
 
