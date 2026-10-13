@@ -74,6 +74,15 @@
             "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/scripts/budget-guard.mjs"
           }
         ]
+      },
+      {
+        "matcher": "Bash|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.agents/scripts/tool-guard.mjs"
+          }
+        ]
       }
     ],
     "SubagentStop": [

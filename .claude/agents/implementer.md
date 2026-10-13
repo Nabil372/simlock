@@ -34,7 +34,11 @@ dir=$(.agents/scripts/worktree.sh <kind>/<N>)    # resumes origin/<kind>/<N> if 
 cd "$dir"
 ```
 
-- A worktree for the branch already exists (`git worktree list`): use it.
+- Every stage of the issue works in this one worktree, one after another:
+  the script hands back the worktree that already holds the branch,
+  fast-forwarded to `origin/<kind>/<N>`. Run every command there, on the
+  branch; never detach it or check the branch out anywhere else. Leave it
+  clean: commit and push before your report.
 - A bug whose branch does not exist yet: start from the reproduction,
   `.agents/scripts/worktree.sh <kind>/<N> origin/bug/<N>-repro`.
 - A branch with commits: read `git log origin/main..` and the PR body's

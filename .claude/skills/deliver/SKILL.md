@@ -19,7 +19,8 @@ of `key: value` lines and nothing else: `issue`, `branch`, `pr` once there
 is one, `mode` or `round`, and what the stage works on, pasted from the last
 report (`map`, `fixes`, the reviewer's arguments). No prose, and no
 reminders of what the agent's own instructions already say. Never pass a
-model. Never invoke the stage skills from here: a skill waits for an
+model or `isolation`: every stage of a task works in the task's one
+worktree, one after another. Never invoke the stage skills from here: a skill waits for an
 earlier run of itself, so two implements would run one after the other.
 
 Every stage is a new agent. Never send a finished agent its next stage

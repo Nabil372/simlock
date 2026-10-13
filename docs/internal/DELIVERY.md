@@ -375,10 +375,13 @@ a fixed layout:
   `stale-refs.sh`, `comments.mjs`, `comment-lint.mjs`, `ci-failures.mjs`,
   `merge-pr.sh`, `pr-body-check.mjs`, `delivery-stats.mjs`, `usage.mjs`,
   `session-env.sh`, `budget-guard.mjs` (a token and turn cap per sub-agent,
-  a token and time cap per session, and a stall check) and
-  `report-guard.mjs` (a stage agent may not stop before its report block).
+  a token and time cap per session, and a stall check),
+  `report-guard.mjs` (a stage agent may not stop before its report block)
+  and `tool-guard.mjs` (a sub-agent may not run a check toolchain.md
+  forbids, and a stage agent is not started in a worktree of its own).
   `worktree.sh` and `ensure-pnpm.sh` are this project's (they install its
-  dependencies); the others are not. `.agents/briefs/`: the stage agents'
+  dependencies), and so is `tool-guard.mjs`'s list of checks; the others
+  are not. `.agents/briefs/`: the stage agents'
   and reviewers' briefs, and `calibration.md`.
 - `.github/workflows/issue-state.yml` and the labels in `.github/labels.json`.
 
@@ -418,7 +421,8 @@ To move it: copy the agents, skills, briefs, scripts, workflow, labels,
   commit hook and `pnpm lint:comments`), `.agents/scripts/ci-failures.mjs`,
   `.agents/scripts/diff-kind.mjs`, `.agents/scripts/report-guard.mjs`
   (a SubagentStop hook in `.claude/settings.json`),
-  `.agents/scripts/budget-guard.mjs` (a PreToolUse hook),
+  `.agents/scripts/budget-guard.mjs` and `.agents/scripts/tool-guard.mjs`
+  (PreToolUse hooks),
   `.agents/scripts/merge-pr.sh`, `.agents/scripts/pr-body-check.mjs`,
   `.agents/scripts/delivery-stats.mjs`, `.agents/scripts/usage.mjs`,
   `scripts/slow-e2e.sh`, `scripts/mutate.mjs` (`pnpm mutate`)
