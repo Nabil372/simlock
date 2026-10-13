@@ -152,7 +152,7 @@ export class FakeAgentDevice implements AgentDeviceUpstream {
     this.#replyDeviceKey = deviceKey;
   }
 
-  // why: a daemon that finds a lease whichever tenant names it leaves only the front's own owner check to stop a cross-tenant release.
+  // why: a daemon that finds a lease whichever tenant names it lets a cross-tenant release through to agent-device; only the simlock release is guarded by the front's owner check.
   letAnyTenantRelease(): void {
     this.#anyTenantReleases = true;
   }

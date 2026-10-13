@@ -81,7 +81,7 @@ describe("the front map", () => {
     const map = new FrontMap(clock);
     for (let n = 0; n < 101; n += 1) {
       const identity: TokenIdentity = { requesterId: `tok_${n}`, role: "agent" };
-      map.add(`lease-${n}`, { address: "a", deadline: 2_000 + n, identity, ttlMs });
+      map.add(`lease-${n}`, { address: "a", deadline: 2_100 - n, identity, ttlMs });
     }
     clock.advance(10_000);
     const asked: string[] = [];
@@ -92,8 +92,9 @@ describe("the front map", () => {
     });
 
     expect(asked).toHaveLength(100);
-    expect(asked).not.toContain("tok_100");
-    expect(map.get("lease-0")?.endedAt).toBeDefined();
-    expect(map.get("lease-100")?.endedAt).toBeUndefined();
+    expect(asked).toContain("tok_100");
+    expect(asked).not.toContain("tok_0");
+    expect(map.get("lease-100")?.endedAt).toBeDefined();
+    expect(map.get("lease-0")?.endedAt).toBeUndefined();
   });
 });

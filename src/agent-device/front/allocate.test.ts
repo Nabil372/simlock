@@ -143,8 +143,9 @@ describe("the allocate front", () => {
     const done = rig.run();
     await vi.waitFor(() => expect(lists).toBe(1));
 
+    await new Promise((resolve) => setImmediate(resolve));
     rig.clock.advance(4_999);
-    await Promise.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
     expect(rig.requests()).toEqual([]);
     rig.clock.advance(1);
     await done;
