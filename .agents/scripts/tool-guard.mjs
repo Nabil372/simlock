@@ -97,18 +97,22 @@ function isForbidden(words) {
   const name = path.basename(first);
   if (TOOLS.has(name) || NODE_SCRIPTS.has(name)) return true;
   if (name === "node") return rest.some((w) => NODE_SCRIPTS.has(path.basename(w)));
-  if (name === "npx" || name === "bunx") return TOOLS.has(path.basename(firstOperand(rest) ?? ""));
-  if (name !== "pnpm") return false;
+  if (name === "npx" || name === "bunx") return isTool(firstOperand(rest));
+  return name === "pnpm" && isForbiddenPnpm(rest);
+}
 
-  const operands = rest.filter((w) => !w.startsWith("-"));
-  let [sub, ...after] = operands;
-  if (sub === "exec" || sub === "dlx") return TOOLS.has(path.basename(after[0] ?? ""));
-  if (sub === "run") [sub, ...after] = after;
-  if (SCRIPTS.has(sub)) return true;
+function isForbiddenPnpm(args) {
+  const operands = args.filter((w) => !w.startsWith("-"));
+  const [sub, ...after] = operands[0] === "run" ? operands.slice(1) : operands;
+  if (sub === "exec" || sub === "dlx") return isTool(after[0]);
   // why: these scripts are allowed only in their narrow forms: named e2e files, Chromium only.
   if (sub === "test:e2e") return after.length === 0;
-  if (sub === "test:console") return !rest.includes("--project=chromium");
-  return false;
+  if (sub === "test:console") return !args.includes("--project=chromium");
+  return SCRIPTS.has(sub);
+}
+
+function isTool(word) {
+  return TOOLS.has(path.basename(word ?? ""));
 }
 
 function firstOperand(words) {
