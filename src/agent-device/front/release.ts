@@ -23,8 +23,10 @@ export async function release(
     context.map.beginRelease(leaseId);
     const released = await releaseSimlock(context, entry.identity, leaseId);
     if (released.kind === "released") context.map.markEnded(leaseId, "agent");
-    else if (released.kind === "unknown") context.map.markEnded(leaseId, "simlock");
-    else context.map.cancelRelease(leaseId);
+    else {
+      context.map.cancelRelease(leaseId);
+      if (released.kind === "unknown") context.map.markEnded(leaseId, "simlock");
+    }
     context.renewals.cancelIfEnded(context, leaseId);
   }
   return relay(reply);

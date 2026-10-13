@@ -584,6 +584,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
                 clock,
                 dispatch,
                 logger: logger.child("agent-device"),
+                maxRunMs: config.lease.maxTtlMs,
                 ...(config.agentDevice.leaseTtlCapMs === undefined
                   ? {}
                   : { leaseTtlCapMs: config.agentDevice.leaseTtlCapMs }),

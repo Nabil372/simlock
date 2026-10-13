@@ -245,6 +245,8 @@ function send(rig: Rig, path: string, options: SendOptions = {}): Promise<Respon
   return fetch(`${rig.origin}/v1/agent-device${path}`, {
     ...(options.body === undefined ? {} : { body: options.body }),
     headers: {
+      // why: a pooled socket to a daemon the test restarted on the same port is closed by the server, so a request must not reuse one.
+      connection: "close",
       ...(token === null ? {} : { authorization: `Bearer ${token}` }),
       ...(options.body === undefined ? {} : { "content-type": "application/json" }),
       ...options.headers,
@@ -1311,15 +1313,15 @@ describe("the agent-device front, through the whole worker daemon", () => {
   });
 
   it.each([
-    ["300000 with no cap", 300_000, undefined, 300_000],
-    ["300000 with cap 10000", 300_000, 10_000, 10_000],
-    ["300000 with cap 600000", 300_000, 600_000, 300_000],
-    ["none with cap 10000", undefined, 10_000, 10_000],
-    ["none with no cap", undefined, undefined, defaultTtlMs],
-    ["1 with no cap", 1, undefined, 5_000],
+    { cap: undefined, expected: 300_000, row: "300000 with no cap", sent: 300_000 },
+    { cap: 10_000, expected: 10_000, row: "300000 with cap 10000", sent: 300_000 },
+    { cap: 600_000, expected: 300_000, row: "300000 with cap 600000", sent: 300_000 },
+    { cap: 10_000, expected: 10_000, row: "none with cap 10000", sent: undefined },
+    { cap: undefined, expected: defaultTtlMs, row: "none with no cap", sent: undefined },
+    { cap: undefined, expected: 5_000, row: "1 with no cap", sent: 1 },
   ])(
-    "a CLI `ttlMs` of %s gives the simlock lease, its heartbeat renewal and its renewal interval a TTL of %s ms",
-    async (_row, sent, cap, expected) => {
+    "a CLI `ttlMs` of $row gives the simlock lease, its heartbeat renewal and its renewal interval a TTL of $expected ms",
+    async ({ cap, expected, sent }) => {
       const rig = await setUp(cap === undefined ? {} : { leaseTtlCapMs: cap });
       const ttl = expected as number;
       await granted(rig, 1, { ttlMs: sent });
@@ -1557,7 +1559,65 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(await listed(rig)).toEqual([hex(1)]);
     expect(await deadlineOf(rig, 1)).toBe(before);
     expect(rig.fake.leases.has(hex(1))).toBe(true);
+
+    const own = await envelopeOf(await heartbeat(rig, 1, { ttlMs: 60_000 }));
+
+    expect(own.result).toMatchObject({ ok: true });
+    expect(await deadlineOf(rig, 1)).toBe(rig.clock.now() + 60_000);
   });
+
+  it("a heartbeat naming a lease ID the front map lacks, when the agent-device daemon fails to release its lease, answers that error and leaves the simlock lease in place", async () => {
+    const first = await setUp();
+    await granted(first, 1);
+    const rig = await first.restart();
+    rig.fake.failNextRelease({ code: "COMMAND_FAILED", message: "daemon cannot release" });
+
+    const failed = await envelopeOf(await heartbeat(rig, 1));
+
+    expect(failed.error).toMatchObject({
+      data: { code: "COMMAND_FAILED" },
+      message: "daemon cannot release",
+    });
+    expect(await listed(rig)).toEqual([hex(1)]);
+  });
+
+  it("a heartbeat for a lease the agent-device daemon lost, when simlock cannot release its lease, answers `COMMAND_FAILED` with simlock's message and marks nothing, and the next heartbeat releases it and answers `LEASE_ENDED_BY_HOST`", async () => {
+    const rig = await setUp();
+    await granted(rig, 1);
+    rig.fake.loseLease(hex(1), "LEASE_EXPIRED");
+    const tap = tapDispatch(rig);
+    tap.rejectNext("lease.release");
+
+    const failed = await envelopeOf(await heartbeat(rig, 1));
+
+    expect(failed.error).toMatchObject({
+      data: { code: "COMMAND_FAILED" },
+      message: "simlock could not do that",
+    });
+    expect(await listed(rig)).toEqual([hex(1)]);
+
+    expectEndedBySimlock(await envelopeOf(await heartbeat(rig, 1)));
+    expect(await listed(rig)).toEqual([]);
+  });
+
+  it.each([0, -5, "soon", true])(
+    "a heartbeat with a `ttlMs` of %j is refused with `ttlMs must be a positive number of milliseconds`, and neither daemon is reached",
+    async (ttlMs) => {
+      const rig = await setUp();
+      await granted(rig, 1, { ttlMs: 60_000 });
+      const before = await deadlineOf(rig, 1);
+      const received = heartbeatsReceived(rig);
+      await advance(rig, 10_000);
+
+      const refused = await envelopeOf(await heartbeat(rig, 1, { ttlMs }));
+
+      expect(refused.error).toMatchObject(
+        refusal("refused: ttlMs must be a positive number of milliseconds"),
+      );
+      expect(heartbeatsReceived(rig)).toBe(received);
+      expect(await deadlineOf(rig, 1)).toBe(before);
+    },
+  );
 
   it("after a heartbeat answered `LEASE_ENDED_BY_HOST` because simlock ended the lease, the next heartbeat answers it again and the agent-device daemon receives nothing for it", async () => {
     const rig = await setUp();
@@ -1610,6 +1670,19 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(heartbeatsReceived(rig)).toBe(received);
   });
 
+  it("after `simlock release --all` and the agent's release, a heartbeat answers `LEASE_ENDED_BY_HOST` without reaching the agent-device daemon, and a running command's renewals stop", async () => {
+    const rig = await setUp();
+    await granted(rig, 1, { ttlMs: 30_000 });
+    await runningCommand(rig, 1);
+    await rig.daemon.dispatch("lease.release-all", {}, adminSession);
+    await release(rig, 1);
+    const received = rig.fake.requests.length;
+
+    expectEndedBySimlock(await envelopeOf(await heartbeat(rig, 1)));
+
+    expect(rig.fake.requests).toHaveLength(received);
+  });
+
   it("a release for a lease simlock ended answers the agent-device daemon's reply as a success, and the agent-device lease is released", async () => {
     const rig = await setUp();
     await granted(rig, 1);
@@ -1628,6 +1701,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     const rig = await setUp();
     await granted(rig, 1, { ttlMs: 30_000 });
     await runningCommand(rig, 1);
+    const tap = tapDispatch(rig);
     const deadlines: (number | undefined)[] = [];
 
     for (let tick = 0; tick < 9; tick += 1) {
@@ -1638,7 +1712,25 @@ describe("the agent-device front, through the whole worker daemon", () => {
     expect(deadlines.every((deadline) => deadline !== undefined)).toBe(true);
     expect(deadlines.at(-1)).toBeGreaterThan(rig.clock.now());
     expect(new Set(deadlines).size).toBeGreaterThan(5);
+    const checks = tap.operations.filter((name) => name === "lease.list").length;
+    expect(checks).toBeGreaterThanOrEqual(8);
+    expect(checks).toBeLessThanOrEqual(9);
   });
+
+  it("a command that runs on past `lease.maxTtlMs` stops counting as running: its renewals stop, and the lease is no longer kept", async () => {
+    const rig = await setUp();
+    await granted(rig, 1);
+    const tap = tapDispatch(rig);
+    await runningCommand(rig, 1);
+
+    await advance(rig, maxTtlMs + 400_000, 100_000);
+    const calls = frontCalls(tap).length;
+    await advance(rig, 1_000_000, 100_000);
+
+    expect(calls).toBeGreaterThan(0);
+    expect(frontCalls(tap)).toHaveLength(calls);
+    expect(await listed(rig)).toEqual([]);
+  }, 60_000);
 
   it("when the command ends, the lease is renewed once more, and its deadline does not move again over the next TTL", async () => {
     const rig = await setUp();
@@ -1745,6 +1837,9 @@ describe("the agent-device front, through the whole worker daemon", () => {
     const answer = await envelopeOf(await heartbeat(rig, 1));
 
     expectEndedBySimlock(answer);
+    const received = heartbeatsReceived(rig);
+    expectEndedBySimlock(await envelopeOf(await heartbeat(rig, 1)));
+    expect(heartbeatsReceived(rig)).toBe(received);
   });
 
   it("a heartbeat lowering the TTL from 300 s to 5 s while a command runs re-arms the renewals, and the lease does not expire before the command ends", async () => {
@@ -1858,10 +1953,12 @@ describe("the agent-device front, through the whole worker daemon", () => {
     await runningCommand(rig, 1);
     await advance(rig, 12_000, 4_000);
     const before = await deadlineOf(rig, 1);
+    const tap = tapDispatch(rig);
 
     const stopping = rig.daemon.stop("test");
     await advance(rig, 3_000, 1_000).catch(() => undefined);
     await stopping;
+    expect(frontCalls(tap)).toEqual([]);
     const restarted = await rig.restart();
 
     expect(await listed(restarted)).toEqual([hex(1)]);

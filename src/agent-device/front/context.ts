@@ -10,6 +10,8 @@ import type { Renewals } from "./renewals.js";
 
 export interface FrontContext {
   readonly leaseTtlCapMs?: number;
+  // why: the longest a lease may live (`lease.maxTtlMs`); a running call stops counting as running after it.
+  readonly maxRunMs: number;
   readonly renewals: Renewals;
   readonly link: HostLink;
   readonly map: FrontMap;

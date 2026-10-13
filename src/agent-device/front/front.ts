@@ -91,7 +91,7 @@ async function routeCall(
   if (kind === "release") return release(context, identity, read, forwarded);
   const leaseId = kind === "command" ? commandLeaseId(read.params) : undefined;
   if (leaseId === undefined) return passThrough(context, forwarded, identity, read);
-  return runCommand(context, request, identity, read, { leaseId, maxRunMs: leaseMaxTtlMs });
+  return runCommand(context, request, identity, read, leaseId);
 }
 
 async function runCommand(
@@ -99,9 +99,9 @@ async function runCommand(
   request: Request,
   identity: TokenIdentity,
   read: RpcRequest,
-  { leaseId, maxRunMs }: { readonly leaseId: string; readonly maxRunMs: number },
+  leaseId: string,
 ): Promise<Response> {
-  const end = context.renewals.begin(context, leaseId, identity.requesterId, maxRunMs);
+  const end = context.renewals.begin(context, leaseId, identity.requesterId, context.maxRunMs);
   request.signal.addEventListener("abort", end, { once: true });
   let response: Response;
   try {

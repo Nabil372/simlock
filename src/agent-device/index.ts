@@ -53,6 +53,7 @@ export function createAgentDeviceFront(
     readonly clock: Clock;
     readonly logger: Logger;
     readonly leaseTtlCapMs?: number;
+    readonly maxRunMs: number;
   },
 ): HttpMount {
   return createFront({ ...deps, link: parts.link, map: parts.map, renewals: parts.renewals });
