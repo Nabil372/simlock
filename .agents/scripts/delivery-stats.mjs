@@ -67,6 +67,26 @@ function ghJson(args) {
     .map((line) => JSON.parse(line));
 }
 
+// why: `gh api --paginate` follows Link headers to numeric-ID repository URLs, which a cloud
+// session's GitHub proxy refuses, so pages are requested by number against the repo-scoped path.
+function ghPaged(path, fields) {
+  const items = [];
+  for (let page = 1; ; page++) {
+    const batch = ghJson([
+      path,
+      ...fields.flatMap((f) => ["-f", f]),
+      "-f",
+      "per_page=100",
+      "-f",
+      `page=${page}`,
+      "--jq",
+      ".[] | @json",
+    ]);
+    items.push(...batch);
+    if (batch.length < 100) return items;
+  }
+}
+
 function fetchFromGitHub(now, weekCount) {
   const repo = repository();
   const since = new Date(now.getTime() - weekCount * WEEK_MS);
@@ -80,29 +100,16 @@ function fetchFromGitHub(now, weekCount) {
     ]);
     Object.assign(pr, d);
   }
-  const handoffs = ghJson([
-    `repos/${repo}/issues/comments`,
-    "-f",
-    `since=${since.toISOString()}`,
-    "-f",
-    "per_page=100",
-    "--paginate",
-    "--jq",
-    '.[] | select((.body // "") | startswith("## Handoff"))' +
-      ' | {issue: (.issue_url | split("/") | last | tonumber), createdAt: .created_at, body} | @json',
-  ]);
-  const needsHardware = ghJson([
-    `repos/${repo}/issues`,
-    "-f",
-    "state=open",
-    "-f",
-    "labels=needs-hardware",
-    "-f",
-    "per_page=100",
-    "--paginate",
-    "--jq",
-    ".[] | select(.pull_request) | {number, title} | @json",
-  ]);
+  const handoffs = ghPaged(`repos/${repo}/issues/comments`, [`since=${since.toISOString()}`])
+    .filter((c) => (c.body ?? "").startsWith("## Handoff"))
+    .map((c) => ({
+      issue: Number(c.issue_url.split("/").at(-1)),
+      createdAt: c.created_at,
+      body: c.body,
+    }));
+  const needsHardware = ghPaged(`repos/${repo}/issues`, ["state=open", "labels=needs-hardware"])
+    .filter((i) => i.pull_request)
+    .map((i) => ({ number: i.number, title: i.title }));
   return { now: now.toISOString(), prs, handoffs, needsHardware };
 }
 
