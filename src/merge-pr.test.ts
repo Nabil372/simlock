@@ -24,6 +24,7 @@ interface Fleet {
   /** Whether the check passes after a re-run. */
   readonly passesOnRerun: boolean;
   readonly body?: string;
+  readonly qualityAlone?: boolean;
 }
 
 const VALID_BODY =
@@ -54,12 +55,18 @@ case "$*" in
   "pr view 7 --json body"*) cat "$d/body" ;;
   "pr view 7 --json headRefName"*) echo chore/x ;;
   "pr view 7 --json mergeable"*) echo MERGEABLE ;;
-  "pr checks 7 --json name,bucket"*) echo "$(state) E2E (2/3)"; echo "$(quality) Quality" ;;
+${
+  fleet.qualityAlone === true
+    ? `  "pr checks 7 --json name,bucket"*) echo "pass E2E (2/3)"; echo "$(state) Quality" ;;
+  "pr checks 7 --json bucket,link"*)
+    b=$(state); [ "$b" = pass ] || echo "$b https://github.com/o/r/actions/runs/77/job/6 Quality" ;;`
+    : `  "pr checks 7 --json name,bucket"*) echo "$(state) E2E (2/3)"; echo "$(quality) Quality" ;;
   "pr checks 7 --json bucket,link"*)
     b=$(state); [ "$b" = pass ] || {
       echo "$b https://github.com/o/r/actions/runs/77/job/5 E2E (2/3)"
       echo "fail https://github.com/o/r/actions/runs/77/job/6 Quality"
-    } ;;
+    } ;;`
+}
   "issue list --label flaky-test"*) cat "$d/flaky" ;;
   "run view 77 --log-failed") cat "$d/log" ;;
   "run rerun 77 --failed") echo rerun >>"$d/reran" ;;
@@ -130,6 +137,18 @@ describe("merge-pr.sh re-run of red CI", () => {
 
   it("re-runs a job GitHub cancelled, though the Quality check that needs it failed, and merges when the re-run passes", () => {
     const result = gate({ bucket: "cancel", log: "", flakyIssues: "", passesOnRerun: true });
+    expect(result.reruns).toBe(1);
+    expect(result.merged).toBe(true);
+  });
+
+  it("re-runs a Quality check GitHub cancelled while every job it needs passed, and merges when the re-run passes", () => {
+    const result = gate({
+      bucket: "cancel",
+      log: "",
+      flakyIssues: "",
+      passesOnRerun: true,
+      qualityAlone: true,
+    });
     expect(result.reruns).toBe(1);
     expect(result.merged).toBe(true);
   });
