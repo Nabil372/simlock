@@ -55,8 +55,14 @@ red_checks() {
 rerunnable_runs() {
   flaky=$(gh issue list --label flaky-test --state open --limit 100 --json title,body \
     -q '.[] | .title, .body' | grep -oE '(e2e|src|ui)/[A-Za-z0-9_./-]+\.(test|spec)\.tsx?' || true)
-  gh pr checks "$pr" --json bucket,link -q '.[] | select(.bucket == "fail" or .bucket == "cancel") | "\(.bucket) \(.link)"' |
-    while read -r bucket link; do
+  red=$(gh pr checks "$pr" --json bucket,link,name -q '.[] | select(.bucket == "fail" or .bucket == "cancel") | "\(.bucket) \(.link) \(.name)"')
+  others=$(echo "$red" | awk '$3 != "Quality"')
+  echo "$red" | grep . |
+    while read -r bucket link name; do
+      # why: Quality only sums up the CI jobs it needs and fails when one was cancelled, so
+      # next to a red job, judging it would call that job's cancel this PR's to fix. Red
+      # alone, Quality was cancelled itself and is re-run like any job.
+      [ "$name" != Quality ] || [ -z "$others" ] || continue
       run=$(echo "$link" | sed -n 's#.*/actions/runs/\([0-9][0-9]*\).*#\1#p')
       [ -n "$run" ] || { echo none; continue; }
       if [ "$bucket" = fail ]; then

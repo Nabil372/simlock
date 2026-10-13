@@ -24,17 +24,15 @@ interface Fleet {
   /** Whether the check passes after a re-run. */
   readonly passesOnRerun: boolean;
   readonly body?: string;
+  readonly qualityAlone?: boolean;
 }
 
 const VALID_BODY =
   "## Review\n\nSpec review: skipped. Code review: skipped. Claims review: skipped.\n" +
   "Rounds: 0. Tokens: n/a.\n\n*Written by an agent.*\n";
 
-/**
- * Runs the gate on PR 7 against a fake `gh` whose one CI check, Quality (Actions run 77), is
- * red until `gh run rerun` is called. Returns the gate's exit code and output, how many times it
- * re-ran the job, and whether it merged.
- */
+// why: CI's red job comes with a red Quality check that needs it, as on GitHub, so a gate that
+// judged Quality instead of the job would show here.
 function gate(fleet: Fleet) {
   const dir = mkdtempSync(join(tmpdir(), "merge-pr-"));
   const write = (name: string, text: string) => writeFileSync(join(dir, name), text);
@@ -49,6 +47,7 @@ function gate(fleet: Fleet) {
     `#!/bin/sh
 d=${JSON.stringify(dir)}
 state() { if [ -f "$d/reran" ]; then echo ${after}; else echo ${fleet.bucket}; fi; }
+quality() { if [ "$(state)" = pass ]; then echo pass; else echo fail; fi; }
 case "$*" in
   "pr view 7 --json state"*) echo OPEN ;;
   "pr view 7 --json isDraft"*) echo false ;;
@@ -56,9 +55,18 @@ case "$*" in
   "pr view 7 --json body"*) cat "$d/body" ;;
   "pr view 7 --json headRefName"*) echo chore/x ;;
   "pr view 7 --json mergeable"*) echo MERGEABLE ;;
-  "pr checks 7 --json name,bucket"*) echo "$(state) Quality" ;;
+${
+  fleet.qualityAlone === true
+    ? `  "pr checks 7 --json name,bucket"*) echo "pass E2E (2/3)"; echo "$(state) Quality" ;;
   "pr checks 7 --json bucket,link"*)
-    b=$(state); [ "$b" = pass ] || echo "$b https://github.com/o/r/actions/runs/77/job/5" ;;
+    b=$(state); [ "$b" = pass ] || echo "$b https://github.com/o/r/actions/runs/77/job/6 Quality" ;;`
+    : `  "pr checks 7 --json name,bucket"*) echo "$(state) E2E (2/3)"; echo "$(quality) Quality" ;;
+  "pr checks 7 --json bucket,link"*)
+    b=$(state); [ "$b" = pass ] || {
+      echo "$b https://github.com/o/r/actions/runs/77/job/5 E2E (2/3)"
+      echo "fail https://github.com/o/r/actions/runs/77/job/6 Quality"
+    } ;;`
+}
   "issue list --label flaky-test"*) cat "$d/flaky" ;;
   "run view 77 --log-failed") cat "$d/log" ;;
   "run rerun 77 --failed") echo rerun >>"$d/reran" ;;
@@ -92,8 +100,8 @@ esac
 }
 
 const FLAKY_LOG =
-  "Quality\tQuality checks\t2026-10-06T10:00:00Z  FAIL  e2e/gateway-fast-fail.test.ts > a gateway fails fast\n" +
-  "Quality\tQuality checks\t2026-10-06T10:00:00Z  ✓ e2e/lease-lifecycle.test.ts (12 tests)\n";
+  "E2E (2/3)\tE2E tests\t2026-10-06T10:00:00Z  FAIL  e2e/gateway-fast-fail.test.ts > a gateway fails fast\n" +
+  "E2E (2/3)\tE2E tests\t2026-10-06T10:00:00Z  ✓ e2e/lease-lifecycle.test.ts (12 tests)\n";
 const FLAKY_ISSUE =
   "Fails under load on main.\nTest: `e2e/gateway-fast-fail.test.ts` > a gateway fails fast\n";
 
@@ -127,8 +135,20 @@ describe("merge-pr.sh re-run of red CI", () => {
     expect(result.status).toBe(0);
   });
 
-  it("re-runs a job GitHub cancelled, and merges when the re-run passes", () => {
+  it("re-runs a job GitHub cancelled, though the Quality check that needs it failed, and merges when the re-run passes", () => {
     const result = gate({ bucket: "cancel", log: "", flakyIssues: "", passesOnRerun: true });
+    expect(result.reruns).toBe(1);
+    expect(result.merged).toBe(true);
+  });
+
+  it("re-runs a Quality check GitHub cancelled while every job it needs passed, and merges when the re-run passes", () => {
+    const result = gate({
+      bucket: "cancel",
+      log: "",
+      flakyIssues: "",
+      passesOnRerun: true,
+      qualityAlone: true,
+    });
     expect(result.reruns).toBe(1);
     expect(result.merged).toBe(true);
   });
@@ -144,7 +164,7 @@ describe("merge-pr.sh re-run of red CI", () => {
 
   it("does not re-run a failed job whose log names no failed test, and does not merge", () => {
     const log =
-      "Quality\tQuality checks\t2026-10-06T10:00:00Z  error TS2322: Type 'string' is not assignable\n";
+      "E2E (2/3)\tE2E tests\t2026-10-06T10:00:00Z  error TS2322: Type 'string' is not assignable\n";
     const result = gate({ bucket: "fail", log, flakyIssues: FLAKY_ISSUE, passesOnRerun: true });
     expect(result.reruns).toBe(0);
     expect(result.merged).toBe(false);

@@ -29,7 +29,10 @@ e2e suite, the console lane in every browser (`pnpm test:console`), `tsc`,
   lint, the comment lint (architecture rule 17) and typecheck. Errors show
   in its output.
 - **Push hook:** Fallow, then the e2e typecheck.
-- **CI:** `pnpm check` and Fallow on every push. The console lane runs on
+- **CI:** what `pnpm check` runs, and Fallow, on every push. The `pnpm
+  check` steps run as parallel jobs (static checks, unit tests, the e2e
+  lane in three shards); the Quality check passes only when all of them
+  do. The console lane runs on
   every push to `main`, and on a pull request when it changes a source, UI,
   console spec or build file: in every browser when it changes `ui/` or the
   console specs, else in Chromium only.
