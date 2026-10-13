@@ -398,7 +398,8 @@ a fixed layout:
   a token and time cap per session, and a stall check),
   `report-guard.mjs` (a stage agent may not stop before its report block),
   `tool-guard.mjs` (a sub-agent may not run a check toolchain.md
-  forbids, and a stage agent is not started in a worktree of its own) and
+  forbids or skip the git hooks, and a stage agent is not started in a
+  worktree of its own) and
   `clock.mjs` (the orchestrator's tool results end with the local time,
   and how long the computer slept).
   `worktree.sh` and `ensure-pnpm.sh` are this project's (they install its

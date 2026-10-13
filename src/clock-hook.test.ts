@@ -78,6 +78,20 @@ describe("clock.mjs", () => {
     expect(context(call(dir, { session_id: "s1", tool_name: "Bash" }))).not.toContain("slept");
   });
 
+  it("reports no sleep when the awake clock reads less than last time, as after a reboot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "clock-"));
+    writeFileSync(
+      join(dir, "claude-clock-s1.json"),
+      JSON.stringify({
+        wall: Date.now() - 20 * MINUTE,
+        awake: awakeNowMs() + 60 * MINUTE,
+        asleepMs: 0,
+      }),
+    );
+
+    expect(context(call(dir, { session_id: "s1", tool_name: "Bash" }))).not.toContain("slept");
+  });
+
   it("adds nothing inside a sub-agent", () => {
     const dir = mkdtempSync(join(tmpdir(), "clock-"));
 

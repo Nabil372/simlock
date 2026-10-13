@@ -23,6 +23,7 @@ interface Fleet {
   readonly flakyIssues: string;
   /** Whether the check passes after a re-run. */
   readonly passesOnRerun: boolean;
+  readonly refusedAsStacked?: boolean;
   readonly body?: string;
   readonly qualityAlone?: boolean;
 }
@@ -72,7 +73,12 @@ ${
   "issue list --label flaky-test"*) cat "$d/flaky" ;;
   "run view 77 --log-failed") cat "$d/log" ;;
   "run rerun 77 --failed") echo rerun >>"$d/reran" ;;
-  "pr merge 7 --squash") touch "$d/merged" ;;
+${
+  fleet.refusedAsStacked === true
+    ? `  "pr merge 7 --squash") echo "Pull request #7 is part of a stack" >&2; exit 1 ;;
+  "stack merge 7 --yes --squash") touch "$d/merged" ;;`
+    : `  "pr merge 7 --squash") touch "$d/merged" ;;`
+}
   *) echo "fake gh: unexpected: $*" >&2; exit 9 ;;
 esac
 `,
@@ -106,6 +112,21 @@ const FLAKY_LOG =
   "E2E (2/3)\tE2E tests\t2026-10-06T10:00:00Z  ✓ e2e/lease-lifecycle.test.ts (12 tests)\n";
 const FLAKY_ISSUE =
   "Fails under load on main.\nTest: `e2e/gateway-fast-fail.test.ts` > a gateway fails fast\n";
+
+describe("merge-pr.sh on a stack's last open PR", () => {
+  it("merges it with gh stack merge when GitHub refuses a plain merge of a stacked PR", () => {
+    const result = gate({
+      bucket: "cancel",
+      log: "",
+      flakyIssues: "",
+      passesOnRerun: true,
+      refusedAsStacked: true,
+    });
+
+    expect(result.merged).toBe(true);
+    expect(result.status).toBe(0);
+  });
+});
 
 describe("merge-pr.sh body gate", () => {
   it("does not merge a PR whose body fails pr-body-check.mjs, before it looks at CI", () => {

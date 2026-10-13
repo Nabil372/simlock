@@ -29,7 +29,7 @@ const SCRIPTS = new Set([
 const TOOLS = new Set(["tsc", "oxlint", "oxfmt", "fallow", "stryker"]);
 const NODE_SCRIPTS = new Set(["comment-lint.mjs", "mutate.mjs"]);
 const WRAPPERS = new Set(["time", "nice", "env", "command", "exec"]);
-const PNPM_VALUE_FLAGS = new Set(["-C", "--dir", "-F", "--filter", "--workspace", "--reporter"]);
+const PNPM_VALUE_FLAGS = new Set(["-C", "--dir", "-F", "--filter", "--reporter"]);
 const STAGES = new Set(["implementer", "reviewer", "hardware-verifier"]);
 const HOOK_BYPASS = [
   /--no-verify\b/,

@@ -42,6 +42,7 @@ describe("tool-guard.mjs", () => {
     "pnpm tsc --noEmit",
     "pnpm oxlint src",
     "pnpm --dir . check",
+    "pnpm --workspace check",
     "pnpm -C . run lint",
     "(FORCE_COLOR=0 pnpm lint | tail -3)",
   ])("refuses a sub-agent's check: %s", (command) => {
