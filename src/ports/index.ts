@@ -49,7 +49,6 @@ export {
   NodeFileLogSink,
   NoopLogger,
 } from "./logger.js";
-// fallow-ignore-next-line unused-type -- public sink contract for consumers that implement their own.
 export type { LogSink } from "./logger.js";
 // fallow-ignore-next-line unused-type -- public shape of a parsed log line, for consumers of MemoryLogSink.records.
 export type { LogRecord } from "./logger.js";
