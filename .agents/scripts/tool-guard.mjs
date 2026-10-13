@@ -34,7 +34,7 @@ const args = input.tool_input ?? {};
 
 if ((tool === "Agent" || tool === "Task") && args.isolation && STAGES.has(args.subagent_type)) {
   refuse(
-    `Refused: a ${args.subagent_type} takes no \`isolation\`. Every stage of a task works in ` +
+    `Refused: pass no \`isolation\` to the ${args.subagent_type}. Every stage of a task works in ` +
       "the task's one worktree (`.agents/scripts/worktree.sh <branch>`), one stage after " +
       "another. Start the agent again without `isolation`.",
   );

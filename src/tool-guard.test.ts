@@ -73,7 +73,7 @@ describe("tool-guard.mjs", () => {
       });
 
       expect(result.status).toBe(2);
-      expect(result.stderr).toContain("takes no `isolation`");
+      expect(result.stderr).toContain("pass no `isolation`");
     },
   );
 
