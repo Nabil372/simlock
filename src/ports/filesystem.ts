@@ -85,6 +85,7 @@ export interface Filesystem {
   readdir(path: string): Promise<string[]>;
   exists(path: string): Promise<boolean>;
   diskFree(path: string): Promise<number>;
+  diskSpace(path: string): Promise<{ readonly freeBytes: number; readonly totalBytes: number }>;
   /**
    * The bytes the files under a directory hold, its subdirectories included. Symlinks are not
    * followed, so nothing outside the directory is counted. Rejects when the directory, or
@@ -219,8 +220,15 @@ export class NodeFilesystem implements Filesystem {
   }
 
   async diskFree(path: string): Promise<number> {
+    return (await this.diskSpace(path)).freeBytes;
+  }
+
+  async diskSpace(path: string): Promise<{ freeBytes: number; totalBytes: number }> {
     const details = await statfs(path);
-    return details.bavail * details.bsize;
+    return {
+      freeBytes: details.bavail * details.bsize,
+      totalBytes: details.blocks * details.bsize,
+    };
   }
 
   async directorySize(path: string): Promise<number> {
@@ -485,6 +493,12 @@ export class MemoryFilesystem implements Filesystem {
 
   async diskFree(_path: string): Promise<number> {
     return this.freeDiskBytes;
+  }
+
+  async diskSpace(
+    _path: string,
+  ): Promise<{ readonly freeBytes: number; readonly totalBytes: number }> {
+    return { freeBytes: this.freeDiskBytes, totalBytes: this.freeDiskBytes };
   }
 
   async directorySize(path: string): Promise<number> {

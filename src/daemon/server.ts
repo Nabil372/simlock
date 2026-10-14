@@ -44,6 +44,7 @@ import {
   type OPERATIONS,
   type ProtocolRange,
   type Role,
+  type StatusLoad,
 } from "../contract/index.js";
 import type { LinkChannel, LinkConnection } from "../link/index.js";
 import type { ConnectionHost } from "./connection-host.js";
@@ -148,6 +149,7 @@ export interface DaemonServerEngineOptions {
   readonly eventHistory: Pick<EventHistory, "replay">;
   readonly leases: LeaseCommands;
   readonly hostFacts: () => HostFacts;
+  readonly load?: () => StatusLoad | undefined;
   readonly instanceId: string;
   readonly queue: QueueControl;
   readonly presence?: DispatcherOptions["presence"];
@@ -176,6 +178,7 @@ export interface DaemonServerCommonOptions {
   readonly driverRejections?: readonly DriverRejection[];
   readonly eventBus: EventBus;
   readonly host: ConnectionHost;
+  readonly hostLoad?: { start(): void; dispose(): void };
   readonly logger?: Logger;
   /** Overrides the daemon's advertised protocol range (ADR 0003 §6); defaults to
    * `PROTOCOL_VERSION_RANGE`. A bare number is normalized to `{n, n}`, same as a client's. */
@@ -301,6 +304,7 @@ function buildDispatcher(
     eventHistory: options.eventHistory,
     health: hooks.health,
     hostFacts: options.hostFacts,
+    ...(options.load === undefined ? {} : { load: options.load }),
     instanceId: options.instanceId,
     leases: options.leases,
     ...(options.logger === undefined ? {} : { logger: options.logger }),
@@ -467,7 +471,14 @@ export class DaemonServer {
     // landing is not itself gated on convergence -- `hello` already verifies the in-memory
     // hash regardless -- but there is no reason to let two startup-time writes race each other
     // for no benefit.
-    await this.options.adminSecret?.persist();
+    this.options.hostLoad?.start();
+    try {
+      await this.options.adminSecret?.persist();
+    } catch (error: unknown) {
+      // why: startDaemon does not call stop() on a rejected start, and a pending timer would keep the process alive.
+      this.options.hostLoad?.dispose();
+      throw error;
+    }
     const readyPromise = this.#converge();
     this.#readyPromise = readyPromise;
     readyPromise.then(this.#beforeReady.resolve, this.#beforeReady.reject);
@@ -629,6 +640,7 @@ export class DaemonServer {
     this.options.eventBus.emit("daemon.stopping", { reason }, "daemon");
     for (const unsubscribe of this.#unsubscribeLeaseLost.splice(0)) unsubscribe();
     this.#ownerRoutedFacts.dispose();
+    this.options.hostLoad?.dispose();
     this.#workerDispatcher?.dispose();
     this.#engine?.reaper.dispose();
     this.#engine?.healthMonitor?.dispose();
