@@ -1301,9 +1301,10 @@ describe("the agent-device front, through a gateway", { timeout: 60_000 }, () =>
     const held = member.fake.leases.get(hex(1));
     expect(held).toBeDefined();
     member.fake.leases.set(hex(2), { ...(held as NonNullable<typeof held>), leaseId: hex(2) });
+    // why: a lease whose requester is not its own id is never adopted, so the front's memory lacks it however soon the worker's catalog arrives.
     await rig.gateway.dispatch(
       "lease.request",
-      { leaseId: hex(2), platform: "ios", requesterId: hex(2), requires: ["agent-device"] },
+      { leaseId: hex(2), platform: "ios", requesterId: "someone-else", requires: ["agent-device"] },
       sessionFor(principals.one),
     );
     interceptRelay(rig, async ({ request }) => {
@@ -1998,8 +1999,15 @@ describe(
 
 async function restarted(rig: Rig, member: Member, leases: number): Promise<void> {
   await rig.restart();
-  // why: the worker's redial delay doubles with each restart in a row (1 s, 2 s, 4 s ... up to its jitter), so one test that restarts four times waits up to 8 s.
-  await advance(rig, 8_000, 500);
+  // why: the worker's redial delay doubles with each restart in a row and carries jitter, so the clock moves on until the worker is back instead of by a sum that a fourth restart can outrun.
+  await vi.waitFor(
+    async () => {
+      const view = await viewOf(rig, member.label);
+      if (view?.connection !== "connected") await advance(rig, 1_000, 500);
+      expect(view?.connection).toBe("connected");
+    },
+    { interval: 20, timeout: 30_000 },
+  );
   await untilRead(rig, member);
   await expect.poll(async () => (await fleetLeases(rig)).length).toBe(leases);
 }

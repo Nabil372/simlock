@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { LinkChannelError } from "../link/index.js";
+import type { LinkChannel, LinkChannelErrorReason, LinkConnection } from "../link/index.js";
 import { connectSimlockClient } from "../simlock-client/client.js";
 import { completeHello, ScriptedConnection } from "../simlock-client/test-support.js";
 import type { SentFrame } from "../simlock-client/test-support.js";
@@ -14,8 +16,101 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function setup() {
-  const connection = new ScriptedConnection();
+class FakeChannel implements LinkChannel {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<Uint8Array>;
+  readonly written: Uint8Array[] = [];
+  readonly credit = 0;
+  writableClosed = false;
+  aborted = false;
+  abortReason: string | undefined;
+  #readController!: ReadableStreamDefaultController<Uint8Array>;
+  #writeController!: WritableStreamDefaultController;
+
+  constructor(readonly id: string) {
+    this.readable = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        this.#readController = controller;
+      },
+    });
+    this.writable = new WritableStream<Uint8Array>({
+      close: () => {
+        this.writableClosed = true;
+      },
+      start: (controller) => {
+        this.#writeController = controller;
+      },
+      write: (chunk) => {
+        this.written.push(chunk);
+      },
+    });
+  }
+
+  whenCredit(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  abort(reason?: string): void {
+    this.aborted = true;
+    this.abortReason = reason;
+    try {
+      this.#readController.error(new LinkChannelError("aborted"));
+    } catch {
+      // why: the readable had already ended or failed.
+    }
+  }
+
+  feed(bytes: Uint8Array): void {
+    this.#readController.enqueue(bytes);
+  }
+
+  end(): void {
+    this.#readController.close();
+  }
+
+  fail(reason: LinkChannelErrorReason): void {
+    try {
+      this.#readController.error(new LinkChannelError(reason));
+    } catch {
+      // why: already ended.
+    }
+    try {
+      this.#writeController.error(new LinkChannelError(reason));
+    } catch {
+      // why: already closed.
+    }
+  }
+
+  failWritable(reason: LinkChannelErrorReason): void {
+    this.#writeController.error(new LinkChannelError(reason));
+  }
+}
+
+class FakeLink extends ScriptedConnection implements LinkConnection {
+  readonly channels: FakeChannel[] = [];
+  holdOpen = false;
+
+  openChannel(options: { readonly signal: AbortSignal }): Promise<LinkChannel> {
+    if (this.holdOpen) {
+      return new Promise((_resolve, reject) => {
+        const fail = () => reject(options.signal.reason as Error);
+        if (options.signal.aborted) fail();
+        else options.signal.addEventListener("abort", fail, { once: true });
+      });
+    }
+    const channel = new FakeChannel(`chan-${String(this.channels.length + 1)}`);
+    this.channels.push(channel);
+    return Promise.resolve(channel);
+  }
+
+  acceptChannel(id: string): LinkChannel {
+    throw new Error(`the gateway accepts no channel: ${id}`);
+  }
+}
+
+async function setup(options: { readonly deadlineMs?: number; readonly holdOpen?: boolean } = {}) {
+  const connection = new FakeLink();
+  connection.holdOpen = options.holdOpen ?? false;
   const connecting = connectSimlockClient({ connection, credential: "secret" }, true);
   await vi.waitFor(() => expect(connection.lastSentOf("hello")).toBeDefined());
   completeHello(connection, { role: "admin" });
@@ -26,14 +121,24 @@ async function setup() {
         ? { client: () => client, reachable: true, refresh: async () => undefined, workerId }
         : undefined,
   };
-  return { connection, relay: new GatewayRelay({ directory }) };
+  return {
+    connection,
+    relay: new GatewayRelay({
+      directory,
+      ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
+    }),
+  };
 }
 
-function call(body?: ReadableStream<Uint8Array>) {
+function call(
+  body?: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): { request: Request; target: string; tenant: string } {
   return {
     request: new Request("http://gateway.test:4321/agent-device/rpc", {
       method: body === undefined ? "GET" : "PUT",
       ...(body === undefined ? {} : { body, duplex: "half" }),
+      ...(signal === undefined ? {} : { signal }),
     } as RequestInit),
     target: "echo",
     tenant: "gw:g1:alice",
@@ -60,6 +165,406 @@ function relayIdOf(frame: SentFrame): unknown {
   return (frame.payload as { relayId?: unknown }).relayId;
 }
 
+async function readFailure(response: Response) {
+  return outcome(response.body?.getReader().read() ?? Promise.reject(new Error("no body")));
+}
+
+async function openedChannel(connection: FakeLink): Promise<FakeChannel> {
+  await vi.waitFor(() => expect(connection.channels).toHaveLength(1));
+  return connection.channels[0] as FakeChannel;
+}
+
+describe("GatewayRelay on a byte channel", () => {
+  it("opens a channel, names it in relay.request, closes its writable at once for a GET, and sends no relay.body", async () => {
+    const { connection, relay } = await setup();
+
+    const pending = relay.relay(WORKER_ID, call());
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+    await vi.waitFor(() => expect(channel.writableClosed).toBe(true));
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    connection.reply(request.id, {});
+    channel.end();
+    await pending;
+
+    expect((request.payload as { channel?: unknown }).channel).toBe(channel.id);
+    expect(connection.sent.filter((frame) => frame.type === "relay.body")).toEqual([]);
+  });
+
+  it("writes the caller's request body into the channel's writable, byte for byte, and then closes it", async () => {
+    const { connection, relay } = await setup();
+    let piece = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        piece += 1;
+        controller.enqueue(new Uint8Array(64 * KIB).fill(piece));
+        if (piece === 4) controller.close();
+      },
+    });
+
+    const pending = relay.relay(WORKER_ID, call(body));
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+    await vi.waitFor(() => expect(channel.writableClosed).toBe(true));
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    connection.reply(request.id, {});
+    channel.end();
+    await pending;
+
+    const written = Buffer.concat(channel.written);
+    expect(written.length).toBe(4 * 64 * KIB);
+    expect([written[0], written[64 * KIB], written[3 * 64 * KIB]]).toEqual([1, 2, 4]);
+  });
+
+  it("settles the call on a {} answer but ends the caller's body only at the channel's end", async () => {
+    const { connection, relay } = await setup();
+    const pending = relay.relay(WORKER_ID, call());
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    const response = await pending;
+    const reader = response.body?.getReader();
+
+    connection.reply(request.id, {});
+    channel.feed(new TextEncoder().encode("late bytes"));
+    const first = await reader?.read();
+    const beforeEnd = await Promise.race([
+      reader?.read().then(() => "settled"),
+      sleep(150).then(() => "still open"),
+    ]);
+    channel.end();
+    const last = await reader?.read();
+
+    expect(new TextDecoder().decode(first?.value)).toBe("late bytes");
+    expect(beforeEnd).toBe("still open");
+    expect(last?.done).toBe(true);
+  });
+
+  it("cancels the caller's request body and clears its deadline timer when the channel ends", async () => {
+    const deadlineMs = 123_456;
+    const handles: unknown[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+      handler: () => void,
+      delay?: number,
+    ) => {
+      const handle = realSetTimeout(handler, delay);
+      if (delay === deadlineMs) handles.push(handle);
+      return handle;
+    }) as unknown as typeof setTimeout);
+    const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        cancelled = true;
+      },
+      pull: () => new Promise<void>(() => undefined),
+    });
+    try {
+      const { connection, relay } = await setup({ deadlineMs });
+      const pending = relay.relay(WORKER_ID, call(body));
+      const request = await sentFrame(connection, "relay.request");
+      const channel = await openedChannel(connection);
+      connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+      const response = await pending;
+      const reader = response.body?.getReader();
+
+      channel.end();
+      const last = await reader?.read();
+
+      expect(last?.done).toBe(true);
+      await vi.waitFor(() => expect(cancelled).toBe(true));
+      expect(handles).toHaveLength(1);
+      expect(clearSpy).toHaveBeenCalledWith(handles[0]);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      clearSpy.mockRestore();
+    }
+  });
+
+  it("errors the caller's body saying the worker ended the response early when the channel is aborted by the peer after the {} answer", async () => {
+    const { connection, relay } = await setup();
+    const pending = relay.relay(WORKER_ID, call());
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    const response = await pending;
+    connection.reply(request.id, {});
+    await sleep(20);
+
+    channel.fail("aborted");
+    const read = await readFailure(response);
+
+    expect(read).toEqual({
+      code: "INTERNAL",
+      message: `worker ${WORKER_ID} ended the relayed response early`,
+      state: "rejected",
+    });
+  });
+
+  it("errors the caller's body with the deadline message when the worker answers {} and never ends the channel", async () => {
+    const { connection, relay } = await setup({ deadlineMs: 100 });
+    const pending = relay.relay(WORKER_ID, call());
+    const request = await sentFrame(connection, "relay.request");
+    await openedChannel(connection);
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    const response = await pending;
+    connection.reply(request.id, {});
+
+    const read = await readFailure(response);
+
+    expect(read).toMatchObject({
+      message: `worker ${WORKER_ID} did not finish the relayed request within 100 ms`,
+      state: "rejected",
+    });
+  });
+
+  it.each([
+    {
+      name: "a worker failure before the head",
+      run: (connection: FakeLink, id: number | string) =>
+        connection.fail(id, "INTERNAL", "worker side exploded"),
+    },
+    { name: "no answer by the deadline", run: () => undefined },
+  ])("aborts its channel when the exchange ends on $name", async ({ run }) => {
+    const { connection, relay } = await setup({ deadlineMs: 150 });
+    const pending = outcome(relay.relay(WORKER_ID, call()));
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+
+    run(connection, request.id);
+    await pending;
+
+    expect(channel.aborted).toBe(true);
+  });
+
+  it("aborts its channel, and sends relay.cancel, when the caller cancels the body stream", async () => {
+    const { connection, relay } = await setup();
+    const pending = relay.relay(WORKER_ID, call());
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    const response = await pending;
+
+    await response.body?.cancel(new Error("caller left"));
+
+    const cancel = await sentFrame(connection, "relay.cancel");
+    expect(relayIdOf(cancel)).toBe(relayIdOf(request));
+    expect(channel.aborted).toBe(true);
+  });
+
+  it("aborts its channel when the caller's signal aborts before the head", async () => {
+    const { connection, relay } = await setup();
+    const controller = new AbortController();
+    const pending = outcome(relay.relay(WORKER_ID, call(undefined, controller.signal)));
+    await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+
+    controller.abort(new Error("caller left before the head"));
+    const failure = await pending;
+
+    expect(failure).toMatchObject({ message: "caller left before the head", state: "rejected" });
+    expect(channel.aborted).toBe(true);
+  });
+
+  it("stops reading the caller's body once the channel's writable errors stopped", async () => {
+    const { connection, relay } = await setup();
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        pulls += 1;
+        await sleep(5);
+        controller.enqueue(new Uint8Array(16 * KIB));
+        if (pulls >= 200) controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const pending = relay.relay(WORKER_ID, call(body));
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+    await vi.waitFor(() => expect(channel.written.length).toBeGreaterThan(0));
+
+    channel.failWritable("stopped");
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 401 });
+    connection.reply(request.id, {});
+    await pending;
+    await sleep(100);
+    const pullsAfter = pulls;
+    await sleep(100);
+
+    expect(cancelled).toBe(true);
+    expect(pulls).toBe(pullsAfter);
+    expect(pulls).toBeLessThan(200);
+  });
+
+  it("counts the wait for a channel against the deadline, sends no relay.request while it waits, and fails WORKER_UNREACHABLE with the deadline message", async () => {
+    const { connection, relay } = await setup({ deadlineMs: 100, holdOpen: true });
+
+    const failure = await outcome(relay.relay(WORKER_ID, call()));
+
+    expect(failure).toEqual({
+      code: "WORKER_UNREACHABLE",
+      message: `worker ${WORKER_ID} did not finish the relayed request within 100 ms`,
+      state: "rejected",
+    });
+    expect(connection.sent.filter((frame) => frame.type === "relay.request")).toEqual([]);
+  });
+
+  it("fails at once with the abort reason, and sends no relay.request, when the caller aborts while it waits for a channel", async () => {
+    const { connection, relay } = await setup({ holdOpen: true });
+    const controller = new AbortController();
+    const pending = outcome(relay.relay(WORKER_ID, call(undefined, controller.signal)));
+    await sleep(50);
+
+    controller.abort(new Error("caller left while waiting"));
+    const failure = await pending;
+
+    expect(failure).toMatchObject({ message: "caller left while waiting", state: "rejected" });
+    expect(connection.sent.filter((frame) => frame.type === "relay.request")).toEqual([]);
+  });
+});
+
+describe("GatewayRelay mapping a channel failure", () => {
+  const before: readonly {
+    readonly reason: LinkChannelErrorReason;
+    readonly code: string;
+    readonly message: string;
+  }[] = [
+    {
+      code: "INTERNAL",
+      message: `worker ${WORKER_ID} sent an invalid relay response`,
+      reason: "invalid",
+    },
+    {
+      code: "INTERNAL",
+      message: `worker ${WORKER_ID} did not read the relayed request body for 60 s`,
+      reason: "stalled",
+    },
+    {
+      code: "WORKER_UNREACHABLE",
+      message: `worker ${WORKER_ID} did not take the relayed request within 30 s`,
+      reason: "not-accepted",
+    },
+  ];
+
+  it.each(before)(
+    "fails $reason before the head with $code and the message the table names",
+    async ({ code, message, reason }) => {
+      const { connection, relay } = await setup();
+      const pending = outcome(relay.relay(WORKER_ID, call()));
+      await sentFrame(connection, "relay.request");
+      const channel = await openedChannel(connection);
+
+      channel.fail(reason);
+
+      expect(await pending).toEqual({ code, message, state: "rejected" });
+    },
+  );
+
+  it("fails closed before the head with WORKER_UNREACHABLE", async () => {
+    const { connection, relay } = await setup();
+    const pending = outcome(relay.relay(WORKER_ID, call()));
+    await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+
+    channel.fail("closed");
+
+    expect(await pending).toMatchObject({ code: "WORKER_UNREACHABLE", state: "rejected" });
+  });
+
+  it("lets the relay.request answer decide when the peer aborts before the head", async () => {
+    const { connection, relay } = await setup();
+    const pending = outcome(relay.relay(WORKER_ID, call()));
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+
+    channel.fail("aborted");
+    connection.fail(request.id, "INTERNAL", "worker side exploded");
+
+    expect(await pending).toEqual({
+      code: "INTERNAL",
+      message: "worker side exploded",
+      state: "rejected",
+    });
+  });
+
+  it("fails with the deadline error when the peer aborts before the head and no answer comes", async () => {
+    const { connection, relay } = await setup({ deadlineMs: 150 });
+    const pending = outcome(relay.relay(WORKER_ID, call()));
+    await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+
+    channel.fail("aborted");
+
+    expect(await pending).toEqual({
+      code: "WORKER_UNREACHABLE",
+      message: `worker ${WORKER_ID} did not finish the relayed request within 150 ms`,
+      state: "rejected",
+    });
+  });
+
+  const after: readonly {
+    readonly name: string;
+    readonly run: (connection: FakeLink, channel: FakeChannel, id: number | string) => void;
+    readonly expected: Record<string, unknown>;
+  }[] = [
+    {
+      expected: {
+        message: `worker ${WORKER_ID} sent an invalid relay response`,
+        state: "rejected",
+      },
+      name: "invalid",
+      run: (_connection, channel) => channel.fail("invalid"),
+    },
+    {
+      expected: { code: "WORKER_UNREACHABLE", state: "rejected" },
+      name: "closed",
+      run: (_connection, channel) => channel.fail("closed"),
+    },
+    {
+      expected: { message: expect.stringMatching(/fell behind for 60 s/), state: "rejected" },
+      name: "stalled",
+      run: (_connection, channel) => channel.fail("stalled"),
+    },
+    {
+      expected: { message: "worker side exploded", state: "rejected" },
+      name: "aborted by the peer, with a failed relay.request answer",
+      run: (connection, channel, id) => {
+        channel.fail("aborted");
+        connection.fail(id, "INTERNAL", "worker side exploded");
+      },
+    },
+    {
+      expected: {
+        message: `worker ${WORKER_ID} ended the relayed response early`,
+        state: "rejected",
+      },
+      name: "aborted by the peer, with a relay.request that settles without an error",
+      run: (connection, channel, id) => {
+        channel.fail("aborted");
+        connection.reply(id, {});
+      },
+    },
+  ];
+
+  it.each(after)("errors the caller's body for $name after the head", async ({ expected, run }) => {
+    const { connection, relay } = await setup();
+    const pending = relay.relay(WORKER_ID, call());
+    const request = await sentFrame(connection, "relay.request");
+    const channel = await openedChannel(connection);
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    const response = await pending;
+
+    run(connection, channel, request.id);
+    const read = await readFailure(response);
+
+    expect(read).toMatchObject(expected);
+  });
+});
+
 describe("GatewayRelay against a worker that breaks the protocol", () => {
   it("fails the relay with INTERNAL naming the worker, and sends relay.cancel, on a relay-head with status 101", async () => {
     const { connection, relay } = await setup();
@@ -77,18 +582,18 @@ describe("GatewayRelay against a worker that breaks the protocol", () => {
     expect(relayIdOf(cancel)).toBe(relayIdOf(request));
   });
 
-  it("fails the relay with INTERNAL naming the worker, and sends relay.cancel, on a relay-head whose header value `Headers` refuses", async () => {
+  it("errors the caller's body with INTERNAL naming the worker, and sends relay.cancel, on a second relay-head", async () => {
     const { connection, relay } = await setup();
-    const pending = outcome(relay.relay(WORKER_ID, call()));
+    const pending = relay.relay(WORKER_ID, call());
     const request = await sentFrame(connection, "relay.request");
+    await openedChannel(connection);
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    const response = await pending;
 
-    connection.push("relay-head", {
-      headers: [["x-note", "\u20ac"]],
-      requestId: request.id,
-      status: 200,
-    });
+    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+    const read = await readFailure(response);
 
-    expect(await pending).toEqual({
+    expect(read).toEqual({
       code: "INTERNAL",
       message: `worker ${WORKER_ID} sent an invalid relay response`,
       state: "rejected",
@@ -97,19 +602,18 @@ describe("GatewayRelay against a worker that breaks the protocol", () => {
     expect(relayIdOf(cancel)).toBe(relayIdOf(request));
   });
 
-  it("fails the relay with INTERNAL naming the worker, and sends relay.cancel, on a relay-chunk that is not base64", async () => {
+  it("fails the relay with INTERNAL naming the worker, and sends relay.cancel, on a relay-head whose header value `Headers` refuses", async () => {
     const { connection, relay } = await setup();
-    const pending = relay.relay(WORKER_ID, call());
+    const pending = outcome(relay.relay(WORKER_ID, call()));
     const request = await sentFrame(connection, "relay.request");
-    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
-    const response = await pending;
 
-    connection.push("relay-chunk", { chunk: "not base64 !!", requestId: request.id });
+    connection.push("relay-head", {
+      headers: [["x-note", "€"]],
+      requestId: request.id,
+      status: 200,
+    });
 
-    const read = await outcome(
-      response.body?.getReader().read() ?? Promise.reject(new Error("no body")),
-    );
-    expect(read).toEqual({
+    expect(await pending).toEqual({
       code: "INTERNAL",
       message: `worker ${WORKER_ID} sent an invalid relay response`,
       state: "rejected",
@@ -147,9 +651,7 @@ describe("GatewayRelay against a worker that breaks the protocol", () => {
 
     connection.fail(request.id, "INTERNAL", "worker side exploded");
 
-    const read = await outcome(
-      response.body?.getReader().read() ?? Promise.reject(new Error("no body")),
-    );
+    const read = await readFailure(response);
     expect(read).toMatchObject({ message: "worker side exploded", state: "rejected" });
   });
 
@@ -162,42 +664,4 @@ describe("GatewayRelay against a worker that breaks the protocol", () => {
 
     expect(await pending).toMatchObject({ code: "WORKER_UNREACHABLE", state: "rejected" });
   });
-
-  it("sends the request body as relay.body calls with at most 4 sent and not yet answered", async () => {
-    const { connection, relay } = await setup();
-    let piece = 0;
-    const body = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        piece += 1;
-        controller.enqueue(new Uint8Array(256 * KIB).fill(piece));
-        if (piece === 10) controller.close();
-      },
-    });
-    const pending = relay.relay(WORKER_ID, call(body));
-    const request = await sentFrame(connection, "relay.request");
-    const bodyFrames = () => connection.sent.filter((frame) => frame.type === "relay.body");
-
-    await vi.waitFor(() => expect(bodyFrames().length).toBeGreaterThanOrEqual(4));
-    await sleep(100);
-    const firstWindow = bodyFrames().length;
-    let answered = 0;
-    let maxUnanswered = 0;
-    const isEnd = (frame: SentFrame) => (frame.payload as { end?: boolean }).end === true;
-    while (!(bodyFrames().some(isEnd) && answered === bodyFrames().length) && answered < 40) {
-      maxUnanswered = Math.max(maxUnanswered, bodyFrames().length - answered);
-      const next = bodyFrames()[answered];
-      if (next !== undefined) {
-        connection.reply(next.id, {});
-        answered += 1;
-      }
-      await sleep(30);
-    }
-    connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
-    connection.reply(request.id, {});
-    await pending;
-
-    expect(firstWindow).toBe(4);
-    expect(maxUnanswered).toBeLessThanOrEqual(4);
-    expect(bodyFrames().length).toBe(11);
-  }, 30_000);
 });
