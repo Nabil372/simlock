@@ -1,16 +1,19 @@
-import { createHash } from "node:crypto";
+import { createCipheriv, createHash, type Hash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
+import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { expect, vi } from "vitest";
+
 import { FakeDriver } from "../core/testing.js";
-import { MemoryFilesystem, SystemClock, type Logger } from "../ports/index.js";
+import type { GatewayRelay } from "../gateway/index.js";
+import { MemoryFilesystem, NoopLogger, SystemClock, type Logger } from "../ports/index.js";
 import type { LinkChannel, LinkConnection } from "../link/index.js";
-import { linkPair, type LinkPair } from "../link/testing.js";
+import { linkPair, TappedTransport, type LinkPair } from "../link/testing.js";
 import type { DispatchSession } from "./dispatch.js";
 import { startDaemon, type StartDaemonOptions } from "./main.js";
-import type { RelayTargets } from "./relay.js";
+import type { RelayTarget, RelayTargets } from "./relay.js";
 import type { DaemonServer } from "./server.js";
 import { SimlockWire, type CallHooks, type RelayHead } from "../simlock-client/wire.js";
 
@@ -23,7 +26,7 @@ export const adminSession: DispatchSession = {
   role: "admin",
 };
 
-export async function freeLoopbackPort(): Promise<number> {
+async function freeLoopbackPort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -81,12 +84,18 @@ export async function settleWithin<T>(promise: Promise<T>, withinMs = 5_000): Pr
   return Promise.race([outcome, sleep(withinMs).then((): Settled<T> => ({ state: "pending" }))]);
 }
 
+/** why: AES in counter mode gives bytes that are random-access by offset and generated at GB/s, so a 2 GiB pattern costs seconds, not a byte loop's minutes. */
 export function patternBytes(size: number, seed = 1, offset = 0): Uint8Array {
-  const bytes = new Uint8Array(size);
-  for (let index = 0; index < size; index += 1) {
-    bytes[index] = ((offset + index) * 31 + seed * 17 + ((offset + index) >> 8)) & 0xff;
-  }
-  return bytes;
+  const key = Buffer.alloc(16);
+  key.writeUInt32BE(seed >>> 0, 12);
+  const block = BigInt(Math.floor(offset / 16));
+  const counter = Buffer.alloc(16);
+  counter.writeBigUInt64BE(block >> 64n, 0);
+  counter.writeBigUInt64BE(block & 0xffff_ffff_ffff_ffffn, 8);
+  const cipher = createCipheriv("aes-128-ctr", key, counter);
+  const skip = offset % 16;
+  const out = cipher.update(Buffer.alloc(skip + size));
+  return new Uint8Array(out.buffer, out.byteOffset + skip, size);
 }
 
 export function digestOf(parts: readonly Uint8Array[]): string {
@@ -291,4 +300,194 @@ export function aborted(signal: AbortSignal): Promise<void> {
     if (signal.aborted) resolve();
     else signal.addEventListener("abort", () => resolve(), { once: true });
   });
+}
+
+export interface FleetExec {
+  args: string[];
+  command: string;
+  env: object;
+}
+
+export interface FleetContext {
+  readonly daemons: DaemonServer[];
+  readonly directories: string[];
+  readonly target: RelayTarget;
+}
+
+export interface FleetOptions {
+  readonly execCommand?: FleetExec;
+  // why: a test puts a proxy between the worker and the gateway, so the worker dials the proxy.
+  readonly gatewayUrl?: (gatewayPort: number) => string | Promise<string>;
+}
+
+export async function startFleet(context: FleetContext, options: FleetOptions = {}) {
+  const { daemons, directories, target } = context;
+  const execCommand = options.execCommand;
+  const gatewayDirectory = await mkdtemp(join(tmpdir(), "simlock-e2e-relay-gateway-"));
+  directories.push(gatewayDirectory);
+  const port = await freeLoopbackPort();
+  const workerDials = (await options.gatewayUrl?.(port)) ?? `ws://127.0.0.1:${String(port)}`;
+  let relay: GatewayRelay | undefined;
+  const taps: TappedTransport[] = [];
+  const gateway = await startDaemon({
+    configOverrides: { http: { enabled: true, host: "127.0.0.1", port }, mode: "gateway" },
+    dataDirectory: gatewayDirectory,
+    filesystem: new MemoryFilesystem(),
+    gatewayRelay: (given) => {
+      relay = given;
+    },
+    gatewayUplinks: (uplinks) => {
+      const listen = uplinks.listen.bind(uplinks);
+      uplinks.listen = (handlers) =>
+        listen({
+          ...handlers,
+          accept: (uplink) => {
+            const tap = new TappedTransport(uplink.connection);
+            taps.push(tap);
+            handlers.accept({ ...uplink, connection: tap });
+          },
+        });
+    },
+    logger: new NoopLogger(),
+    statePath: join(gatewayDirectory, "state.json"),
+    version: "1.0.0-e2e",
+  });
+  daemons.push(gateway);
+  const { secret } = await gateway.dispatch(
+    "token.create",
+    { label: "worker-a", role: "worker" },
+    adminSession,
+  );
+  const driverOptions =
+    execCommand === undefined ? {} : { passthrough: () => execCommand, passthroughTools: ["adb"] };
+  const worker = await startWorker(
+    directories,
+    daemons,
+    { "agent-device": target, echo: target },
+    {
+      configOverrides: {
+        gateway: { label: "worker-a", token: secret, url: workerDials },
+      },
+      drivers: [
+        new FakeDriver({
+          availableOsVersions: ["18.0"],
+          clock: new SystemClock(),
+          knownModels: ["Pixel-A"],
+          platform: "android",
+          ...driverOptions,
+        } as ConstructorParameters<typeof FakeDriver>[0]),
+      ],
+    },
+  );
+  let workerId = "";
+  await vi.waitFor(
+    async () => {
+      const { workers } = await gateway.dispatch("worker.list", {}, adminSession);
+      const ready = workers.find(
+        (view) => view.connection === "connected" && view.capacity && view.catalog?.length,
+      );
+      expect(ready).toBeDefined();
+      workerId = ready?.id ?? "";
+    },
+    { timeout: 10_000 },
+  );
+  expect(relay).toBeDefined();
+  return { gateway, port, relay: relay as unknown as GatewayRelay, taps, worker, workerId };
+}
+
+export interface CountingProxy {
+  readonly port: number;
+  readonly carried: () => { readonly up: number; readonly down: number };
+  readonly reset: () => void;
+  readonly stop: () => Promise<void>;
+}
+
+export function startCountingProxy(targetPort: number): Promise<CountingProxy> {
+  const counts = { down: 0, up: 0 };
+  const sockets = new Set<Socket>();
+  const server = createServer((client) => {
+    const upstream = connect({ host: "127.0.0.1", port: targetPort });
+    sockets.add(client);
+    sockets.add(upstream);
+    const close = () => {
+      client.destroy();
+      upstream.destroy();
+    };
+    client.on("error", close);
+    upstream.on("error", close);
+    client.on("close", close);
+    upstream.on("close", close);
+    client.on("data", (chunk: Buffer) => {
+      counts.up += chunk.length;
+    });
+    upstream.on("data", (chunk: Buffer) => {
+      counts.down += chunk.length;
+    });
+    // why: pipe pauses the reader while the writer is full, so the proxy never buffers a stream.
+    client.pipe(upstream);
+    upstream.pipe(client);
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as AddressInfo;
+      resolve({
+        carried: () => ({ down: counts.down, up: counts.up }),
+        port: address.port,
+        reset: () => {
+          counts.down = 0;
+          counts.up = 0;
+        },
+        stop: () =>
+          new Promise<void>((done) => {
+            for (const socket of sockets) socket.destroy();
+            server.close(() => done());
+          }),
+      });
+    });
+  });
+}
+
+const CHECKPOINT = 64 * MIB;
+const checkpoints = new Map<string, Hash[]>();
+
+function checkpointsFor(total: number, seed: number): Hash[] {
+  const key = `${String(total)}:${String(seed)}`;
+  const known = checkpoints.get(key);
+  if (known !== undefined) return known;
+  const states: Hash[] = [];
+  const hash = createHash("sha256");
+  for (let offset = 0; offset < total; offset += CHECKPOINT) {
+    states.push(hash.copy());
+    hash.update(patternBytes(Math.min(CHECKPOINT, total - offset), seed, offset));
+  }
+  checkpoints.set(key, states);
+  return states;
+}
+
+/** why: the digest of the pattern with the chunk `[first, first + firstSize)` and the chunk `[second, second + secondSize)` exchanged, where `first + firstSize <= second`. */
+export function patternDigestSwapped(
+  total: number,
+  seed: number,
+  swap: {
+    readonly first: number;
+    readonly second: number;
+    readonly firstSize: number;
+    readonly secondSize: number;
+  },
+): string {
+  const states = checkpointsFor(total, seed);
+  const start = Math.floor(swap.first / CHECKPOINT) * CHECKPOINT;
+  const hash = (states[start / CHECKPOINT] as Hash).copy();
+  const feed = (from: number, to: number) => {
+    for (let offset = from; offset < to; offset += MIB) {
+      hash.update(patternBytes(Math.min(MIB, to - offset), seed, offset));
+    }
+  };
+  feed(start, swap.first);
+  hash.update(patternBytes(swap.secondSize, seed, swap.second));
+  feed(swap.first + swap.firstSize, swap.second);
+  hash.update(patternBytes(swap.firstSize, seed, swap.first));
+  feed(swap.second + swap.secondSize, total);
+  return hash.digest("hex");
 }
