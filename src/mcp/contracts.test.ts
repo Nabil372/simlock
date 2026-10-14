@@ -64,10 +64,10 @@ describe("MCP contracts", () => {
     ).toEqual({ model: "iPhone 17 Pro", platform: "ios", ttlMs: 1_000 });
   });
 
-  it("is the same schema the contract validates lease.request input against, minus requesterId and fleetRequestId", () => {
+  it("is the same schema the contract validates lease.request input against, minus requesterId, fleetRequestId and requires", () => {
     expect(Object.keys(leaseSimulatorInputSchema.shape).sort()).toEqual(
       Object.keys(leaseRequestFields.shape)
-        .filter((key) => key !== "requesterId" && key !== "fleetRequestId")
+        .filter((key) => key !== "requesterId" && key !== "fleetRequestId" && key !== "requires")
         .sort(),
     );
   });
@@ -114,5 +114,19 @@ describe("MCP contracts", () => {
     });
 
     expect(leaseStatusOutputSchema.parse({ held: false })).toEqual({ held: false });
+  });
+});
+
+describe("MCP contracts: requires", () => {
+  it("rejects requires -- the MCP lease tool has no capability parameter, and the contract's field list has it", () => {
+    expect(Object.keys(leaseRequestFields.shape)).toContain("requires");
+    expect(Object.keys(leaseSimulatorInputSchema.shape)).not.toContain("requires");
+    expect(
+      leaseSimulatorInputSchema.safeParse({
+        model: "iPhone 17 Pro",
+        platform: "ios",
+        requires: ["agent-device"],
+      }).success,
+    ).toBe(false);
   });
 });
