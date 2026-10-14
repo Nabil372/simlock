@@ -1,6 +1,6 @@
 import type { HttpMount } from "../../http/app.js";
 import type { TokenIdentity } from "../../http/token-store.js";
-import { FRONT_MOUNT, FRONT_PREFIX } from "../shared/paths.js";
+import { FRONT_MOUNT, FRONT_PREFIX, LEASE_HEADER } from "../shared/paths.js";
 import { failure, frontReply, notAvailable, refusal } from "../shared/replies.js";
 import { isKnownRoute } from "../shared/routes.js";
 import { commandName, asRecord } from "../shared/selectors.js";
@@ -15,8 +15,8 @@ import {
   type RpcRead,
 } from "../shared/rpc.js";
 import { allocate } from "./allocate.js";
-import type { FrontContext } from "./context.js";
-import { filterDevices } from "./devices-filter.js";
+import { relay, type FrontContext } from "./context.js";
+import { devicesThroughGateway, filterDevices } from "./devices-filter.js";
 import { heartbeat } from "./heartbeat.js";
 import { release } from "./release.js";
 import { checkRequest } from "./request-rules.js";
@@ -181,10 +181,18 @@ async function forwardCommand(
   read: RpcRequest,
   leaseId: string | undefined,
 ): Promise<Response> {
-  const response = await passThrough(context, request, identity, read, leaseId);
   const isDevices =
     methodName(read.method) === "command" &&
     commandName(asRecord(read.params)?.["command"]) === "devices";
+  if (isDevices && context.link.readsLeaseHeader) {
+    return devicesThroughGateway(context, {
+      forward: (forwarded, held) => passThrough(context, forwarded, identity, read, held),
+      identity,
+      read,
+      request,
+    });
+  }
+  const response = await passThrough(context, request, identity, read, leaseId);
   return isDevices ? filterDevices(context, identity, response, read) : response;
 }
 
@@ -232,6 +240,80 @@ async function passThrough(
   }
 }
 
+const TICKET_HEADERS = ["authorization", "x-agent-device-token"] as const;
+
+// why: the relay drops the caller's credentials, so the worker's ticket has none; the CLI sends the ticket's headers with its PUT, which reaches the gateway.
+async function withCallerCredentials(request: Request, response: Response): Promise<Response> {
+  const text = await response.text();
+  try {
+    const body: unknown = JSON.parse(text);
+    const upload = asRecord(asRecord(body)?.["upload"]);
+    if (upload === undefined) return relay({ response, text });
+    const headers = { ...asRecord(upload["headers"]) };
+    for (const name of TICKET_HEADERS) {
+      const value = request.headers.get(name);
+      if (value !== null) headers[name] = value;
+    }
+    upload["headers"] = headers;
+    return relay({ response, text: JSON.stringify(body) });
+  } catch {
+    return relay({ response, text });
+  }
+}
+
+type HeaderLease = { readonly leaseId: string | undefined } | { readonly refused: Response };
+
+function readLeaseHeader(request: Request): HeaderLease {
+  const header = request.headers.get(LEASE_HEADER);
+  if (header === null || header === "") return { leaseId: undefined };
+  const leaseId = leaseIdOf(header);
+  if (leaseId !== undefined) return { leaseId };
+  return {
+    refused: frontReply(
+      refusal("refused: the x-agent-device-lease-id header is not a lease id"),
+      undefined,
+    ),
+  };
+}
+
+async function routeByHeader(
+  context: FrontContext,
+  request: Request,
+  identity: TokenIdentity,
+): Promise<Response> {
+  const read = readLeaseHeader(request);
+  if ("refused" in read) return read.refused;
+  const { leaseId } = read;
+  if (leaseId === undefined) return passThrough(context, request, identity, undefined);
+  const status = await context.link.status(leaseId, identity);
+  if (status.state === "unavailable") return frontReply(notAvailable(status.reason), undefined);
+  const response = await passThrough(context, request, identity, undefined, leaseId);
+  const path = new URL(request.url).pathname.slice(FRONT_PREFIX.length);
+  const preflight = request.method === "POST" && path === "/upload/preflight";
+  return preflight && response.ok ? withCallerCredentials(request, response) : response;
+}
+
+async function handlePlain(
+  context: FrontContext,
+  request: Request,
+  identity: TokenIdentity,
+): Promise<Response> {
+  const status = await context.link.status();
+  const path = new URL(request.url).pathname.slice(FRONT_PREFIX.length);
+  const probe = request.method === "GET" && path === "/health";
+  if (status.state === "unavailable") {
+    const reply = notAvailable(status.reason);
+    return frontReply(probe ? { ...reply, status: HEALTH_STATUS } : reply, undefined);
+  }
+  if (!isKnownRoute(request.method, path)) {
+    return frontReply(refusal(`refused: unknown route ${request.method} ${path}`, 404), undefined);
+  }
+  if (probe || !context.link.readsLeaseHeader) {
+    return passThrough(context, request, identity, undefined, undefined, probe);
+  }
+  return routeByHeader(context, request, identity);
+}
+
 export function createFront(context: FrontContext): HttpMount {
   return {
     handle: async (request, identity) => {
@@ -241,20 +323,7 @@ export function createFront(context: FrontContext): HttpMount {
         return frontReply(refusal(AGENT_TOKEN_ONLY, 403), isRpc ? { id: null } : undefined);
       }
       if (isRpc) return handleRpc(context, request, identity);
-      const status = await context.link.status();
-      const path = new URL(request.url).pathname.slice(FRONT_PREFIX.length);
-      const probe = request.method === "GET" && path === "/health";
-      if (status.state === "unavailable") {
-        const reply = notAvailable(status.reason);
-        return frontReply(probe ? { ...reply, status: HEALTH_STATUS } : reply, undefined);
-      }
-      if (!isKnownRoute(request.method, path)) {
-        return frontReply(
-          refusal(`refused: unknown route ${request.method} ${path}`, 404),
-          undefined,
-        );
-      }
-      return passThrough(context, request, identity, undefined, undefined, probe);
+      return handlePlain(context, request, identity);
     },
     prefix: FRONT_MOUNT,
   };
