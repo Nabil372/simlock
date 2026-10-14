@@ -2,6 +2,7 @@ import { findCatalogModel } from "../../core/index.js";
 import { buildHttpSession } from "../../http/dispatcher-session.js";
 import type { TokenIdentity } from "../../http/token-store.js";
 import { failure, refusal, type FrontReply } from "../shared/replies.js";
+import { validDeviceKey } from "../shared/release-scope.js";
 import { isKnownRpcMethod } from "../shared/routes.js";
 import { commandLeaseId, methodName, type RpcRead } from "../shared/rpc.js";
 import {
@@ -186,8 +187,19 @@ async function ruleDevice(check: Check, place: Fields): Promise<boolean> {
   return true;
 }
 
+// why: an adopted entry has no key, so the first call that names a valid one sets it and later calls must match it.
+function wrongAdoptedKey(check: Check, leaseId: string, key: unknown): boolean {
+  const current = check.context.map.get(leaseId)?.deviceKey;
+  if (current !== undefined) return key !== current;
+  if (!validDeviceKey(key)) return true;
+  check.context.map.setDeviceKey(leaseId, key);
+  return false;
+}
+
 function wrongDeviceKey(check: Check, source: Fields): boolean {
   if (check.leaseId === undefined || !present(source["deviceKey"])) return false;
+  if (check.leased?.adopted === true)
+    return wrongAdoptedKey(check, check.leaseId, source["deviceKey"]);
   return check.leased?.deviceKey === undefined || source["deviceKey"] !== check.leased.deviceKey;
 }
 

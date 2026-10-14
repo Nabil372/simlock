@@ -100,6 +100,7 @@ import {
   FileDrainStore,
   FleetLeaseCoordinator,
   FleetLeaseIndex,
+  type WorkerRegistry,
   GatewayDispatcher,
   GatewayOwnerRoutedFacts,
   GatewayRelay,
@@ -131,6 +132,8 @@ export interface StartDaemonOptions {
   readonly defaultRequesterId?: string;
   readonly drivers?: readonly Driver[];
   readonly gatewayRelay?: (relay: GatewayRelay) => void;
+  /** why: test-only, hands over the gateway's uplink listener, to close one worker's socket. */
+  readonly gatewayUplinks?: (uplinks: WebSocketUplinkListenerFactory) => void;
   readonly relayTargets?: RelayTargets;
   readonly prerequisiteChecks?: readonly PrerequisiteCheck[];
   readonly filesystem?: Filesystem;
@@ -215,6 +218,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
       eventHistory,
       filesystem,
       ...(options.gatewayRelay === undefined ? {} : { gatewayRelay: options.gatewayRelay }),
+      ...(options.gatewayUplinks === undefined ? {} : { gatewayUplinks: options.gatewayUplinks }),
       hostSystem,
       idGenerator,
       ipc,
@@ -677,6 +681,7 @@ interface GatewayDaemonOptions {
   readonly eventHistory: EventHistory;
   readonly filesystem: Filesystem;
   readonly gatewayRelay?: (relay: GatewayRelay) => void;
+  readonly gatewayUplinks?: (uplinks: WebSocketUplinkListenerFactory) => void;
   /** The gateway's own machine. It runs no drivers, so its host facts carry no tools. */
   readonly hostSystem: HostSystem;
   readonly idGenerator: IdGenerator;
@@ -738,6 +743,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
   const routing = createRoutingPolicy(config.gateway.routing);
 
   const uplinks = new WebSocketUplinkListenerFactory();
+  options.gatewayUplinks?.(uplinks);
   const gatewayService = new GatewayService({
     // ADR 0005 §4/§25: only a `worker`-role token opens an uplink. A token of another role is
     // real and simply has no authority here (403); anything else is unauthenticated (401).
@@ -804,6 +810,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
           instanceId,
           leaseIndex,
           relay: gatewayRelay,
+          startedAt: clock.now(),
           views: gatewayService.workers,
         }),
         clock,
@@ -973,7 +980,8 @@ interface FleetPortParts {
   readonly instanceId: string;
   readonly leaseIndex: FleetLeaseIndex;
   readonly relay: GatewayRelay;
-  readonly views: FleetViews;
+  readonly startedAt: number;
+  readonly views: FleetViews & Pick<WorkerRegistry, "grantedDevices">;
 }
 
 const AGENT_DEVICE = "agent-device";
@@ -981,7 +989,13 @@ const AGENT_DEVICE = "agent-device";
 type WorkerView = NonNullable<ReturnType<FleetViews["view"]>>;
 
 // why: the agent-device edge imports nothing from the gateway, so this is the one place the gateway's parts become its port.
-function agentDeviceFleetPort({ instanceId, leaseIndex, relay, views }: FleetPortParts): FleetPort {
+function agentDeviceFleetPort({
+  instanceId,
+  leaseIndex,
+  relay,
+  startedAt,
+  views,
+}: FleetPortParts): FleetPort {
   const serving = (view: WorkerView, withDrained: boolean): FleetWorker | undefined => {
     const maxTtlMs = view.lease?.maxTtlMs;
     const available = view.capabilities?.some(
@@ -1012,6 +1026,21 @@ function agentDeviceFleetPort({ instanceId, leaseIndex, relay, views }: FleetPor
       return view === undefined ? undefined : serving(view, true);
     },
     instanceId,
+    leasesOf: (ownerId) =>
+      leaseIndex
+        .all()
+        .filter((entry) => entry.ownerId === ownerId)
+        .map((entry) => leaseFacts(views, entry)),
+    reach: (workerId) => {
+      const view = views.view(workerId);
+      return view === undefined
+        ? undefined
+        : {
+            connected: view.connection === "connected",
+            refreshed: view.catalogReadAt !== undefined,
+          };
+    },
+    startedAt,
     leaseOf: (leaseId) => {
       const entry = leaseIndex.resolve(leaseId);
       return entry === undefined ? undefined : { ownerId: entry.ownerId, workerId: entry.workerId };
@@ -1032,6 +1061,61 @@ function agentDeviceFleetPort({ instanceId, leaseIndex, relay, views }: FleetPor
         tenant,
         ...(leaseId === undefined ? {} : { leaseId }),
       }),
+  };
+}
+
+type FleetLeaseFacts = ReturnType<FleetPort["leasesOf"]>[number];
+
+// why: the worker's view lists the lease, its granted device and the model's class in its catalog; a lease missing any of them is not offered for adoption.
+function listedLease(
+  views: FleetPortParts["views"],
+  view: WorkerView | undefined,
+  entry: ReturnType<FleetLeaseIndex["all"]>[number],
+): FleetLeaseFacts["listed"] {
+  const record = view?.leases?.find((lease) => lease.id === entry.workerLeaseId);
+  if (view === undefined || record === undefined) return undefined;
+  const device = views
+    .grantedDevices()
+    .find((granted) => granted.workerId === entry.workerId && granted.id === record.deviceId);
+  if (device === undefined) return undefined;
+  return describeDevice(view, record, device);
+}
+
+function describeDevice(
+  view: WorkerView,
+  record: { readonly ttlMs: number; readonly ttlDeadline: number },
+  device: ReturnType<FleetPortParts["views"]["grantedDevices"]>[number],
+): FleetLeaseFacts["listed"] {
+  const { platform, model } = device.spec;
+  if (device.address === undefined || (platform !== "ios" && platform !== "android")) {
+    return undefined;
+  }
+  const deviceClass = view.catalog?.find((catalog) => catalog.platform === platform)?.modelClasses[
+    model
+  ];
+  return {
+    address: device.address,
+    model,
+    platform,
+    ttlDeadline: record.ttlDeadline,
+    ttlMs: record.ttlMs,
+    ...(deviceClass === undefined ? {} : { deviceClass }),
+  };
+}
+
+function leaseFacts(
+  views: FleetPortParts["views"],
+  entry: ReturnType<FleetLeaseIndex["all"]>[number],
+): FleetLeaseFacts {
+  const view = views.view(entry.workerId);
+  const listed = listedLease(views, view, entry);
+  return {
+    connected: view?.connection === "connected",
+    leaseId: entry.gatewayLeaseId,
+    refreshed: view?.catalogReadAt !== undefined,
+    requesterId: entry.requesterId,
+    workerId: entry.workerId,
+    ...(listed === undefined ? {} : { listed }),
   };
 }
 

@@ -1,7 +1,14 @@
 import type { HttpMount } from "../../http/app.js";
 import type { TokenIdentity } from "../../http/token-store.js";
 import { FRONT_MOUNT, FRONT_PREFIX, LEASE_HEADER } from "../shared/paths.js";
-import { failure, frontReply, notAvailable, refusal } from "../shared/replies.js";
+import {
+  failure,
+  frontReply,
+  isUnreachableAnswer,
+  notAvailable,
+  refusal,
+  workerUnreachable,
+} from "../shared/replies.js";
 import { isKnownRoute } from "../shared/routes.js";
 import { commandName, asRecord } from "../shared/selectors.js";
 import {
@@ -16,8 +23,9 @@ import {
 } from "../shared/rpc.js";
 import { allocate } from "./allocate.js";
 import { relay, type FrontContext } from "./context.js";
-import { devicesThroughGateway, filterDevices } from "./devices-filter.js";
+import { anyUnreachable, devicesThroughGateway, filterDevices } from "./devices-filter.js";
 import { heartbeat } from "./heartbeat.js";
+import type { LinkStatus } from "./host-link.js";
 import { release } from "./release.js";
 import { checkRequest } from "./request-rules.js";
 
@@ -70,6 +78,26 @@ function untilHangUp(signal: AbortSignal, work: Promise<Response | undefined>): 
 
 const FAILED_BODY_LOG_CHARS = 500;
 
+// why: `devices` names no lease, so a gateway with no capable worker still answers "try again" when one of the token's own leases is only unreachable.
+async function notRunning(
+  context: FrontContext,
+  identity: TokenIdentity,
+  read: RpcRequest,
+  status: Exclude<LinkStatus, { state: "running" }>,
+): Promise<Response> {
+  if (
+    status.state === "unavailable" &&
+    !(
+      isDevicesCall(read) &&
+      context.link.readsLeaseHeader &&
+      (await anyUnreachable(context, identity, context.map.liveOf(identity.requesterId)))
+    )
+  ) {
+    return frontReply(notAvailable(status.reason), read);
+  }
+  return frontReply(workerUnreachable(), read);
+}
+
 async function handleRpc(
   context: FrontContext,
   request: Request,
@@ -84,7 +112,7 @@ async function handleRpc(
   }
   const kind = classifyCall(read.method, read.params);
   const status = await context.link.status(leaseOf(kind, read), identity);
-  if (status.state === "unavailable") return frontReply(notAvailable(status.reason), read);
+  if (status.state !== "running") return notRunning(context, identity, read, status);
   if (kind === "wrapped-lease") {
     return frontReply(refusal("refused: send lease calls as lease RPCs"), read);
   }
@@ -138,7 +166,7 @@ async function runCommand(
     end();
     throw error;
   }
-  return untilBodyEnds(response, end);
+  return isUnreachableAnswer(response) ? response : untilBodyEnds(response, end);
 }
 
 // why: a command counts as running until its body has gone out, since the stream is what the CLI waits on.
@@ -173,6 +201,13 @@ function untilBodyEnds(response: Response, end: () => void): Response {
   });
 }
 
+function isDevicesCall(read: RpcRequest): boolean {
+  return (
+    methodName(read.method) === "command" &&
+    commandName(asRecord(read.params)?.["command"]) === "devices"
+  );
+}
+
 // why: agent-device answers `devices` with everything its daemon sees, so the answer is cut down before the CLI gets it.
 async function forwardCommand(
   context: FrontContext,
@@ -181,9 +216,7 @@ async function forwardCommand(
   read: RpcRequest,
   leaseId: string | undefined,
 ): Promise<Response> {
-  const isDevices =
-    methodName(read.method) === "command" &&
-    commandName(asRecord(read.params)?.["command"]) === "devices";
+  const isDevices = isDevicesCall(read);
   if (isDevices && context.link.readsLeaseHeader) {
     return devicesThroughGateway(context, {
       forward: (forwarded, held) => passThrough(context, forwarded, identity, read, held),
@@ -287,10 +320,18 @@ async function routeByHeader(
   if (leaseId === undefined) return passThrough(context, request, identity, undefined);
   const status = await context.link.status(leaseId, identity);
   if (status.state === "unavailable") return frontReply(notAvailable(status.reason), undefined);
+  if (status.state === "unreachable") return frontReply(workerUnreachable(), undefined);
   const response = await passThrough(context, request, identity, undefined, leaseId);
   const path = new URL(request.url).pathname.slice(FRONT_PREFIX.length);
   const preflight = request.method === "POST" && path === "/upload/preflight";
   return preflight && response.ok ? withCallerCredentials(request, response) : response;
+}
+
+// why: a request naming a lease is judged by that lease's worker, which may be the one that is gone.
+function namesLease(context: FrontContext, request: Request, probe: boolean): boolean {
+  return (
+    context.link.readsLeaseHeader && !probe && (request.headers.get(LEASE_HEADER) ?? "") !== ""
+  );
 }
 
 async function handlePlain(
@@ -301,7 +342,7 @@ async function handlePlain(
   const status = await context.link.status();
   const path = new URL(request.url).pathname.slice(FRONT_PREFIX.length);
   const probe = request.method === "GET" && path === "/health";
-  if (status.state === "unavailable") {
+  if (status.state === "unavailable" && !namesLease(context, request, probe)) {
     const reply = notAvailable(status.reason);
     return frontReply(probe ? { ...reply, status: HEALTH_STATUS } : reply, undefined);
   }
@@ -314,6 +355,23 @@ async function handlePlain(
   return routeByHeader(context, request, identity);
 }
 
+// why: after a gateway restart the map is empty, so the token's leases are rebuilt from what the gateway knows before any rule reads the map.
+function adoptLeases(context: FrontContext, identity: TokenIdentity): void {
+  for (const lease of context.link.adoptable?.(identity) ?? []) {
+    if (context.map.get(lease.leaseId) !== undefined) continue;
+    context.map.add(lease.leaseId, {
+      address: lease.address,
+      adopted: true,
+      deadline: lease.ttlDeadline,
+      identity,
+      model: lease.model,
+      platform: lease.platform,
+      target: lease.target,
+      ttlMs: lease.ttlMs,
+    });
+  }
+}
+
 export function createFront(context: FrontContext): HttpMount {
   return {
     handle: async (request, identity) => {
@@ -322,6 +380,7 @@ export function createFront(context: FrontContext): HttpMount {
       if (identity.role !== "agent") {
         return frontReply(refusal(AGENT_TOKEN_ONLY, 403), isRpc ? { id: null } : undefined);
       }
+      adoptLeases(context, identity);
       if (isRpc) return handleRpc(context, request, identity);
       return handlePlain(context, request, identity);
     },
