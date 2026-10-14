@@ -67,6 +67,7 @@ import {
   type DispatchSession,
   type ErasedHandler,
 } from "./dispatch.js";
+import type { RelayConnection } from "./relay.js";
 
 export { DispatchError, type ContractDispatcher, type DispatchSession } from "./dispatch.js";
 
@@ -275,6 +276,9 @@ export class Dispatcher {
       "lease.list": this.#leaseList,
       "driver.passthrough": this.#driverPassthrough,
       "device.exec": this.#deviceExec,
+      "relay.request": this.#relayRequest,
+      "relay.body": this.#relayBody,
+      "relay.cancel": this.#relayCancel,
       "doctor.run": this.#doctorRun,
       "lease.release-all": this.#leaseReleaseAll,
       "list.get": this.#listGet,
@@ -572,6 +576,32 @@ export class Dispatcher {
       throw new DispatchError("INTERNAL", "Tool passthrough is unavailable");
     }
     return this.options.passthrough.passthrough(input.tool, undefined, input.args);
+  };
+
+  #relays(session: DispatchSession): RelayConnection {
+    if (session.isGatewayUplink !== true) {
+      throw new DispatchError("FORBIDDEN", "Only the gateway's own uplink session may relay");
+    }
+    if (session.relays === undefined) {
+      throw new DispatchError("INTERNAL", "The uplink session carries no relays");
+    }
+    return session.relays;
+  }
+
+  #relayRequest: Handler<"relay.request"> = (input, session) =>
+    this.#relays(session).request(input, {
+      chunk: (chunk) => session.onRelayChunk?.(chunk) ?? Promise.resolve(),
+      head: (status, headers) => session.onRelayHead?.(status, headers) ?? Promise.resolve(),
+    });
+
+  #relayBody: Handler<"relay.body"> = async (input, session) => {
+    await this.#relays(session).body(input);
+    return {};
+  };
+
+  #relayCancel: Handler<"relay.cancel"> = (input, session) => {
+    this.#relays(session).cancel(input.relayId);
+    return {};
   };
 
   /**
