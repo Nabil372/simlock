@@ -997,6 +997,38 @@ export const statusInstallsSchema = boundedInstalls(
  */
 export const INSTALL_LIST_LIMIT = MAX_LISTED_INSTALLS;
 
+// fallow-ignore-next-line unused-export -- exported on its own so the tasks that name a capability reuse it (#513).
+export const capabilityNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
+
+// why: \p{Cc} is exactly U+0000-U+001F and U+007F-U+009F, the spec's control characters.
+const CONTROL_CHARACTERS = /[\p{Cc}\u2028\u2029]/gu;
+const CAPABILITY_REASON_MAX = 500;
+
+export const capabilitySchema = z
+  .object({
+    name: capabilityNameSchema,
+    state: z.enum(["available", "unavailable", "off"]),
+    reason: z
+      .string()
+      .min(1)
+      .max(CAPABILITY_REASON_MAX)
+      .refine((text) => !/[\p{Cc}\u2028\u2029]/u.test(text))
+      .optional(),
+  })
+  .refine((entry) => (entry.state === "unavailable") === (entry.reason !== undefined));
+
+export const capabilityListSchema = z
+  .array(capabilitySchema)
+  .max(16)
+  .refine((list) => new Set(list.map((entry) => entry.name)).size === list.length);
+
+export function capabilityReason(text: string): string {
+  let cut = text.replace(CONTROL_CHARACTERS, " ").trim().slice(0, CAPABILITY_REASON_MAX);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return cut === "" ? "unknown" : cut;
+}
+
 /**
  * What the gateway currently knows about one worker (ADR 0005's vocabulary table, §7, §31).
  * Rebuilt over the uplink, never persisted: a gateway restart re-derives every field from the
@@ -1008,8 +1040,9 @@ export const INSTALL_LIST_LIMIT = MAX_LISTED_INSTALLS;
  * absent rather than zeroed on purpose -- "no capacity reported" and "no capacity free" are
  * different facts, and a console that dims one must not read the other as a full machine.
  * The same holds for a worker whose health is `starting`: it answers `status.get` with `daemon`
- * and `host` only, so its view has `health` and `host` and none of `capacity`, `catalog`,
- * `devices`, `installs`, `leases`, `queueDepth` or `waiting` -- never empty ones, which would
+ * and `host` only, so its view has `health` and `host` and none of `capabilities`,
+ * `capacity`, `catalog`, `catalogReadAt`, `devices`, `installs`, `leases`, `physicalQueueDepth`,
+ * `queueDepth`, `waiting` or `warmPool` -- never empty ones, which would
  * read as "nothing is leased" about a registry nobody has checked yet.
  *
  * A worker answers `worker.list` with one of these about itself (ADR 0012 §1): `connected`,
@@ -1017,6 +1050,7 @@ export const INSTALL_LIST_LIMIT = MAX_LISTED_INSTALLS;
  * own reads by `workerViewFields` (`worker-view.ts`), the same builder a gateway uses.
  */
 export const workerViewSchema = z.object({
+  capabilities: capabilityListSchema.optional(),
   /** The worker's own instance identity (`instance.json`), ADR 0005 §3a: stable across
    * restarts, unique by construction, opaque to clients. Never a host name or an address. */
   id: z.string(),

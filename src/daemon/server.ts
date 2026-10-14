@@ -132,6 +132,7 @@ interface Connection {
  * and omitting `queue` from a worker's options stays a compile error.
  */
 export interface DaemonServerEngineOptions {
+  readonly capabilitySources?: DispatcherOptions["capabilitySources"];
   readonly capacity: CapacityReader;
   readonly warmPool: WarmPoolReader;
   readonly deviceModes: DeviceModeReader;
@@ -277,6 +278,9 @@ function buildDispatcher(
 ): Dispatcher {
   return new Dispatcher({
     awaitReady: hooks.awaitReady,
+    ...(options.capabilitySources === undefined
+      ? {}
+      : { capabilitySources: options.capabilitySources }),
     capacity: options.capacity,
     warmPool: options.warmPool,
     catalog: options.catalog,
