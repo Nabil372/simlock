@@ -42,6 +42,7 @@ export interface WorkerReads {
   readonly devices?: Output<"list.get">;
   readonly catalog?: Output<"catalog.get">;
   readonly config?: Output<"config.get">;
+  readonly receivedAt: number;
 }
 
 export type WorkerViewReport = Pick<WorkerView, "health" | "host"> &
@@ -56,6 +57,7 @@ export type WorkerViewReport = Pick<WorkerView, "health" | "host"> &
       | "installs"
       | "lease"
       | "leases"
+      | "load"
       | "physicalQueueDepth"
       | "queueDepth"
       | "waiting"
@@ -67,13 +69,23 @@ export type WorkerViewReport = Pick<WorkerView, "health" | "host"> &
 const viewDevicesSchema = z.array(statusDeviceSchema);
 
 export function workerViewFields(reads: WorkerReads): WorkerViewReport {
-  const { catalog, config, devices, status } = reads;
-  // A starting worker has checked nothing: its view is its health and its host, and every other
-  // field is absent -- never empty, which would read as "nothing is leased".
-  if (status.daemon.health === "starting") return { health: "starting", host: status.host };
+  const { catalog, config, devices, receivedAt, status } = reads;
+  // why: a worker's ageMs is a claim; it is already capped at a day, and readAt never goes below 0.
+  const load =
+    status.load === undefined
+      ? {}
+      : (() => {
+          const { ageMs, ...parts } = status.load;
+          return { load: { readAt: Math.max(0, receivedAt - ageMs), ...parts } };
+        })();
+  // why: a starting worker has checked nothing: its view is its health, its host and its load, and every
+  // other field is absent -- never empty, which would read as "nothing is leased".
+  if (status.daemon.health === "starting")
+    return { health: "starting", host: status.host, ...load };
   return {
     health: status.daemon.health,
     host: status.host,
+    ...load,
     installs: status.installs ?? [],
     waiting: status.waiting ?? [],
     ...(status.capabilities === undefined ? {} : { capabilities: status.capabilities }),

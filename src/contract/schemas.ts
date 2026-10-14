@@ -529,6 +529,14 @@ export const hostLoadSchema = z.object({
   disk: loadDiskSchema.optional(),
 });
 
+// why: a view stores when the load was read (`readAt`, the viewer's clock), not its age, so the age stays right as the view sits.
+const workerLoadSchema = z.object({
+  readAt: z.number().int().min(0),
+  cpu: loadCpuSchema.optional(),
+  memory: loadMemorySchema.optional(),
+  disk: loadDiskSchema.optional(),
+});
+
 /** ADR 0029 §4: what `status.get` carries about the machine's load, as old as its last read. */
 export type StatusLoad = z.infer<typeof hostLoadSchema>;
 
@@ -1096,6 +1104,7 @@ export function capabilityReason(text: string): string {
  */
 export const workerViewSchema = z.object({
   capabilities: capabilityListSchema.optional(),
+  load: workerLoadSchema.optional(),
   /** The worker's own instance identity (`instance.json`), ADR 0005 §3a: stable across
    * restarts, unique by construction, opaque to clients. Never a host name or an address. */
   id: z.string(),

@@ -38,6 +38,7 @@ export type WorkerViewSnapshot = Pick<
   | "installs"
   | "lease"
   | "leases"
+  | "load"
   | "queueDepth"
   | "version"
   | "waiting"
@@ -226,9 +227,12 @@ export class WorkerRegistry {
    * saw, which is more useful to a console than an empty one.
    */
   connected(workerId: string, label: string | undefined, version: string | undefined): WorkerView {
-    // The catalog the last session read stays, so a reconnecting worker is still known from it
-    // (ADR 0009 §4); only when it was read is cleared, since nothing has been read this session.
-    const { catalogReadAt: _stale, ...existing } = this.#workers.get(workerId) ?? {};
+    // why: the catalog the last session read stays, so a reconnecting worker is still known from it;
+    // only when it was read is cleared, since nothing has been read this session.
+    // why: a new session never shows the old session's reading.
+    const { catalogReadAt: _stale, ...existing } = withoutLoad<Partial<WorkerView>>(
+      this.#workers.get(workerId) ?? {},
+    );
     const view: WorkerView = {
       ...existing,
       connection: "connected",
@@ -276,7 +280,7 @@ export class WorkerRegistry {
   ): WorkerView {
     const existing = this.#workers.get(workerId);
     const view: WorkerView = {
-      ...existing,
+      ...(existing === undefined ? existing : withoutLoad(existing)),
       connection: "incompatible",
       drained: this.#drained.has(workerId),
       id: workerId,
@@ -340,8 +344,9 @@ export class WorkerRegistry {
 
   /**
    * why: replaces what the worker reports, and is partial on purpose: a refresh triggered by a lease event
-   * re-reads status and devices but not the catalog (§7), and an absent key leaves the previous
-   * value standing rather than blanking it -- except for a `starting` refresh, which says the
+   * re-reads status and devices but not the catalog, so an absent key leaves the previous
+   * value standing rather than blanking it, except `load` (a refresh without one removes it, since a
+   * stale load would mislead routing) and a `starting` refresh, which says the
    * worker has checked nothing: it drops capacity, catalog, catalogReadAt, devices, installs,
    * leases, queueDepth and waiting from the view (absent means "not known"), keeping the last
    * catalog, leases and physical devices aside for routing and retention. A refresh for a worker whose view is gone
@@ -352,13 +357,16 @@ export class WorkerRegistry {
     if (existing === undefined) return;
     const { grantedDevices, ...snapshot } = refresh;
     const now = this.options.clock.now();
-    const next: WorkerView = {
-      ...(snapshot.health === "starting" ? withoutReadFields(existing) : existing),
+    const { load: _old, ...held } =
+      snapshot.health === "starting" ? withoutReadFields(existing) : existing;
+    const built: WorkerView = {
+      ...held,
       ...snapshot,
       lastSeenAt: now,
       // ADR 0009 §4: a refresh that carries a catalog is a read of it.
       ...(snapshot.catalog === undefined ? {} : { catalogReadAt: now }),
     };
+    const next = built.connection === "connected" ? built : withoutLoad(built);
     this.#workers.set(workerId, next);
     if (snapshot.catalog !== undefined) this.#lastCatalog.set(workerId, snapshot.catalog);
     if (snapshot.leases !== undefined) this.#lastLeases.set(workerId, snapshot.leases);
@@ -422,7 +430,11 @@ export class WorkerRegistry {
     // ADR 0010 §7: an install on a worker nobody can reach is not known to be in progress, so
     // the view stops listing it rather than showing it running for ever. The same goes for the
     // requests waiting in that worker's own queue.
-    const { installs: _unknown, waiting: _unknownWaiting, ...withoutInstalls } = existing;
+    const {
+      installs: _unknown,
+      waiting: _unknownWaiting,
+      ...withoutInstalls
+    } = withoutLoad(existing);
     this.#workers.set(workerId, {
       ...withoutInstalls,
       connection: "disconnected",
@@ -593,4 +605,9 @@ export class WorkerRegistry {
     }
     return view;
   }
+}
+
+function withoutLoad<View extends { load?: unknown }>(view: View): Omit<View, "load"> {
+  const { load: _load, ...rest } = view;
+  return rest;
 }
