@@ -23,7 +23,8 @@ export function readReleaseScope(lease: unknown): ReleaseScope | undefined {
   const fields = lease as Record<string, unknown>;
   const tenantId = fields["tenantId"];
   const runId = fields["runId"];
-  if (!validScopeValue(tenantId) || !validScopeValue(runId)) return undefined;
+  if (typeof tenantId !== "string" || !SCOPE_VALUE.test(tenantId)) return undefined;
+  if (!validScopeValue(runId)) return undefined;
   const optional: { -readonly [K in (typeof OPTIONAL_KEYS)[number]]?: string } = {};
   for (const key of OPTIONAL_KEYS) {
     const value = fields[key];

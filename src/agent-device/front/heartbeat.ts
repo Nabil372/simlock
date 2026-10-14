@@ -10,9 +10,11 @@ import {
 import {
   REPLY_SCOPE_KEYS,
   exchange,
+  heldForAnother,
   releaseAgentDevice,
   releaseSimlock,
   relay,
+  unreachableReply,
   scopeOf,
   type Exchange,
   type FrontContext,
@@ -23,11 +25,12 @@ import { chosenTtl } from "./ttl.js";
 
 type Call = RpcRead & { readonly kind: "request" };
 
-function forwardedHeartbeat(request: Request, call: Call, ceiling: number): Request {
+function forwardedHeartbeat(request: Request, call: Call, ceiling: number | undefined): Request {
   const headers = new Headers(request.headers);
   headers.delete("content-length");
+  const params = ceiling === undefined ? call.params : { ...call.params, ttlMs: ceiling };
   return new Request(request.url, {
-    body: JSON.stringify({ ...call.body, params: { ...call.params, ttlMs: ceiling } }),
+    body: JSON.stringify({ ...call.body, params }),
     headers,
     method: "POST",
     signal: request.signal,
@@ -64,7 +67,7 @@ async function leaseStillThere(
     scopeOf(call.params, REPLY_SCOPE_KEYS),
   );
   if (ended.response === undefined) {
-    return frontReply(failure("agent-device did not answer the release"), call);
+    return unreachableReply(ended, call, "agent-device did not answer the release");
   }
   if (ended.reading.kind !== "success") return relay(ended);
   return releaseOurs(context, identity, leaseId, call, false);
@@ -113,7 +116,7 @@ export async function heartbeat(
     readonly request: Request;
     readonly identity: TokenIdentity;
     readonly call: Call;
-    readonly leaseMaxTtlMs: number;
+    readonly leaseMaxTtlMs: number | undefined;
   },
 ): Promise<Response> {
   const { request, identity, call, leaseMaxTtlMs } = arguments_;
@@ -125,8 +128,16 @@ export async function heartbeat(
   if (leaseId !== undefined && entry?.endedBy === "simlock") {
     return frontReply(leaseEndedByHost(), call);
   }
-  const reply = await exchange(context, forwardedHeartbeat(request, call, leaseMaxTtlMs), identity);
-  if (leaseId === undefined || reply.response === undefined) return relay(reply);
+  const reply = await exchange(
+    context,
+    forwardedHeartbeat(request, call, leaseMaxTtlMs),
+    identity,
+    undefined,
+    leaseId,
+  );
+  if (reply.response === undefined)
+    return unreachableReply(reply, call, "agent-device did not answer the heartbeat");
+  if (leaseId === undefined) return relay(reply);
   const reading: ReplyReading = reply.reading;
   if (reading.kind === "success") {
     if (entry === undefined) return leaseStillThere(context, arguments_, leaseId);
@@ -135,5 +146,8 @@ export async function heartbeat(
   }
   if (leaseGoneReason(reading) === undefined) return relay(reply);
   if (entry?.endedBy === "agent") return relay(reply);
+  if (entry === undefined && (await heldForAnother(context, identity, leaseId))) {
+    return relay(reply);
+  }
   return releaseOurs(context, identity, leaseId, call, entry !== undefined);
 }
