@@ -123,6 +123,22 @@ modules with.
 | Wire rules | `src/agent-device/shared/` | The path prefixes, the route and RPC method lists, the selector reader, the `/rpc` body reader, the call classifier, the lease-call field reader, the release scope reader, the reply reader (an allocate reply is a success only when its release scope passes) and the front's replies. | Decide what a call means. |
 | `FakeAgentDevice` | `src/agent-device/testing.ts` | The in-memory agent-device daemon the proxy sits in front of in tests. | Appear in production code. |
 
+## Screen streaming
+
+`src/stream/` carries a leased device's screen to whoever is looking. Like the agent-device edge, it is entered only through `src/stream/index.ts`, the core, leasing and the drivers import nothing from it, and it adds no operation to the contract: a stream is one HTTP response, and a gateway carries it over the link's byte channels.
+
+| Component | Where | Owns | Does not |
+|---|---|---|---|
+| Capture | `src/stream/capture.ts` | Running the capture program for one device and handing its stdout out as a stream: the frame envelope's meta frame as the head's answer, backpressure from the viewer to the encoder, the stop (closing stdin, then a signal), and telling whoever registered the capture that it ended, however it ended. | Know what a lease is; re-frame a byte. |
+| Frame envelope | `src/stream/framing.ts` | Reading the capture program's envelope far enough to answer a head with: the tag list, the meta frame's shape, and refusing an envelope that is not one. | Decode a frame; rewrite one. |
+| Worker link | `src/stream/worker-link.ts` | On a worker: the lease check that admits a stream (proved against the worker's own registry, never against what a relay claims), the device's fitness (a simulator only), the capture program's availability, and registering a running capture under its lease. | Decide who the caller is (the mount and the relay say); hold a viewer's connection. |
+| Gateway link | `src/stream/gateway-link.ts` | On a gateway: the fleet ownership check, the worker to ask, the fleet lease id turned back into the worker's own name for it, the namespaced requester forwarded as the relay's tenant, and a worker's refusal kept as its own status and code. | Read a video byte; trust a caller's claim of whom it speaks for. |
+| Mounts | `src/stream/mounts.ts` | The HTTP mount's prefix and path reading, the token-to-caller reading, and the relay target a gateway's request arrives at. | Own the response's shape (the service does); import `src/http`. |
+| Service | `src/stream/service.ts` | One request, either door: the method rule, the refusal body (`{error: {code, message}}`, as every other route answers), the head's headers, and the log line for an opened and for a refused stream. | Decide whether a lease is streamable (a link does); name a status a link did not choose. |
+| Refusals | `src/stream/refusal.ts` | The reasons a stream is refused, each with the status and code it answers with, and reading a relayed refusal back. | Word a refusal for a user (the console does). |
+| Capture registry | `src/stream/captures.ts` | Which captures a worker is running and for which lease, and ending them when the lease ends by any route (the `LeaseEndParticipant` leasing calls). | Start a capture; decide what a lease is. |
+| Capture program | `tools/screen-capture/` | A simulator's screen as frames: CoreSimulator's framebuffer for a device in a device set named by `SIMLOCK_IOS_DEVICE_SET`, the encoder, the envelope, and treating stdin as its liveness handle. | Know about leases, HTTP or Simlock's registry. |
+
 ## Drivers
 
 | Component | Where | Owns | Does not |

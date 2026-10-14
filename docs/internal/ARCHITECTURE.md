@@ -897,6 +897,14 @@ receives. The gateway's `GatewayRelay` hands one `Request` to the worker's
 `relayTargets` under the module's capability name, and answers the target's
 `Response` with its body streamed. The core names no target.
 
+A relayed exchange carries no body in the operation itself: the head is a
+message and both bodies are byte channels, so whatever a target streams is
+carried without anything on the link reading it. That is what lets a target
+serve bytes as well as JSON — a screen stream is relayed exactly as an
+agent-device call is, one frame of video per channel write, and a gateway
+forwards a stream without parsing one byte of it. The two targets a worker
+registers today are `agent-device` and `stream`.
+
 Two admin operations and one byte channel carry it over the uplink, and a
 worker answers the operations only on the gateway's own uplink session
 (`FORBIDDEN` elsewhere; a gateway refuses them from everyone):
