@@ -1071,6 +1071,7 @@ describe("operation input/output round trips", () => {
 
   it("config.get: round-trips a representative config", () => {
     const config = {
+      capabilities: {},
       mode: "worker",
       gateway: {
         disconnectedRetentionMs: 86_400_000,
@@ -1140,6 +1141,7 @@ describe("operation input/output round trips", () => {
     const warmPool = { targets, maxConcurrentBoots: 3 };
     const output = OPERATIONS["config.get"].output;
     const base = {
+      capabilities: {},
       mode: "worker",
       gateway: {
         disconnectedRetentionMs: 1,
