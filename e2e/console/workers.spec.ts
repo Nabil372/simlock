@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, Route } from "@playwright/test";
 
 import { waitFor } from "../helpers/wait.js";
 import {
@@ -31,6 +31,18 @@ interface WorkerView {
     readonly android: { readonly running: number; readonly limit: number };
   };
   readonly leases: readonly { readonly deviceId: string; readonly grantedAt: number }[];
+  readonly load?: {
+    readonly readAt: number;
+    readonly cpu?: { readonly busyPercent: number; readonly cores: number };
+    readonly memory?: { readonly availableBytes: number; readonly totalBytes: number };
+    readonly disk?: { readonly freeBytes: number; readonly totalBytes: number };
+  };
+}
+
+// why: the test rewrites one field of this route's own answer, so it names the one path it touches
+// rather than the whole view; everything else passes through as the daemon sent it.
+interface WorkerPayload {
+  load?: { memory?: { pressure?: string } } | undefined;
 }
 
 interface Status {
@@ -118,6 +130,50 @@ function card(page: Page, name: string): Locator {
 /** The value beside a label in a list of facts. */
 function fact(scope: Locator, label: string): Locator {
   return scope.locator("dt", { hasText: label }).locator("xpath=following-sibling::dd[1]");
+}
+
+interface PaintedGauge {
+  readonly track: number;
+  readonly fill: number;
+  readonly sliding: boolean;
+}
+
+// why: taken from the worker's own reading rather than from the page, so the console cannot agree
+// with itself; there is no expected level until the reading holds a figure for each of the three.
+function gaugePercents(load: NonNullable<WorkerView["load"]>): readonly number[] | undefined {
+  const { cpu, disk, memory } = load;
+  if (cpu === undefined || disk === undefined || memory === undefined) return undefined;
+  const whole = (percent: number) => Math.round(Math.min(100, Math.max(0, percent)));
+  return [
+    whole(cpu.busyPercent),
+    whole((1 - memory.availableBytes / memory.totalBytes) * 100),
+    whole((1 - disk.freeBytes / disk.totalBytes) * 100),
+  ];
+}
+
+function paintedGauges(panel: Locator): Promise<readonly PaintedGauge[]> {
+  return panel.locator(".load-bar").evaluateAll((bars) =>
+    bars.map((bar) => {
+      const fill = bar.firstElementChild as HTMLElement;
+      // why: the fill's own 120 ms ease means a width read mid-slide sits between two levels, so
+      // this asks the browser whether a transition is still running and reports it with the width.
+      return {
+        track: bar.getBoundingClientRect().width,
+        fill: fill.getBoundingClientRect().width,
+        sliding: fill.getAnimations().some((animation) => animation.playState === "running"),
+      };
+    }),
+  );
+}
+
+function fillsMatch(painted: readonly PaintedGauge[], percents: readonly number[]): boolean {
+  return (
+    painted.length === percents.length &&
+    painted.every((bar, index) => {
+      const percent = percents[index] ?? -1;
+      return Math.abs(bar.fill - (bar.track * percent) / 100) <= 1;
+    })
+  );
 }
 
 /** A device's row in a worker's device table. */
@@ -442,6 +498,207 @@ test.describe("the workers views", () => {
     const first = await read.textContent();
     await expect(read).not.toHaveText(first ?? "", { timeout: 10_000 });
     await expect(fact(panel, "Memory")).toContainText("available");
+  });
+
+  test("a worker's detail draws a bar under each figure, filled to that figure's own percent", async ({
+    daemon,
+    page,
+  }) => {
+    const [host] = await workerList(daemon);
+    await openConsole(page, daemon);
+    const shown = card(page, host?.id ?? "");
+    await expect(fact(shown, "Load")).toHaveText(/^CPU .*memory .*disk /);
+    await shown.getByRole("link", { name: host?.id ?? "" }).click();
+
+    const panel = page.getByRole("region", { name: "Load", exact: true });
+    // why: both the worker's reading (every 15 s) and the fill's own 120 ms slide can move between
+    // two measurements, so this measures around both and retries until the fill has settled at the
+    // level the reading implies — otherwise the bar and the figure compared are not the same pair.
+    await waitFor(
+      async () => {
+        const before = (await workerList(daemon))[0]?.load;
+        const wanted = before === undefined ? undefined : gaugePercents(before);
+        if (wanted === undefined) return false;
+        const painted = await paintedGauges(panel);
+        const now = (await workerList(daemon))[0]?.load;
+        // why: what has to hold still is the level, not the reading — a fresh sample that rounds to
+        // the same percents is the same pair of figures and bars. The reading's own stamp moves
+        // between two reads even when nothing in it does, so comparing it here only ever costs
+        // retries.
+        const since = now === undefined ? undefined : gaugePercents(now);
+        if (since === undefined || JSON.stringify(wanted) !== JSON.stringify(since)) return false;
+        if (painted.some((bar) => bar.sliding)) return false;
+        return fillsMatch(painted, wanted);
+      },
+      { interval: 500, timeout: 40_000, label: () => "the fill to match the figure" },
+    );
+  });
+
+  test("a load gauge sits in a line of its own under its figure, capped rather than full width", async ({
+    daemon,
+    page,
+  }) => {
+    const [host] = await workerList(daemon);
+    await openConsole(page, daemon);
+    const shown = card(page, host?.id ?? "");
+    await expect(fact(shown, "Load")).toHaveText(/^CPU .*memory .*disk /);
+    await shown.getByRole("link", { name: host?.id ?? "" }).click();
+
+    const panel = page.getByRole("region", { name: "Load", exact: true });
+    const row = fact(panel, "Memory");
+    await expect(row.locator(".load-bar")).toBeVisible();
+    // why: the viewport is 1280 wide, so the value column is far wider than the cap; a bar that
+    // filled its column instead of capping, or sat beside the text instead of under it, fails here.
+    const geometry = await row.evaluate((cell) => {
+      const figure = cell.querySelector(".load-figure > span") as HTMLElement;
+      const bar = cell.querySelector(".load-bar") as HTMLElement;
+      const text = figure.getBoundingClientRect();
+      const track = bar.getBoundingClientRect();
+      return {
+        column: cell.getBoundingClientRect().width,
+        left: track.left - text.left,
+        root: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+        top: track.top,
+        track: track.width,
+        textBottom: text.bottom,
+      };
+    });
+
+    expect(geometry.track).toBeCloseTo(20 * geometry.root, 0);
+    expect(geometry.track).toBeLessThan(geometry.column - 100);
+    expect(geometry.top).toBeGreaterThanOrEqual(geometry.textBottom);
+    expect(geometry.left).toBeCloseTo(0, 0);
+  });
+
+  test("each memory pressure paints its gauge in that pressure's colour, and never the accent, in both themes", async ({
+    daemon,
+    page,
+  }) => {
+    const [host] = await workerList(daemon);
+    await openConsole(page, daemon);
+    const shown = card(page, host?.id ?? "");
+    await expect(fact(shown, "Load")).toHaveText(/^CPU .*memory .*disk /);
+    // why: only macOS reports a memory pressure, so a Linux lane can never see a warn or critical
+    // gauge from a live reading. This answers the page's own read of the worker list with one field
+    // of the reading changed and every other field left as the daemon sent it, so what is painted
+    // is the real component's doing. The list is read again per request, so the reading stays as
+    // fresh as the daemon's own.
+    let pressure: string | undefined;
+    await page.route(
+      (url) => url.pathname === "/v1/workers",
+      async (route: Route) => {
+        const response = await route.fetch();
+        const listed = (await response.json()) as { workers: WorkerPayload[] };
+        for (const worker of listed.workers) {
+          const memory = worker.load?.memory;
+          if (memory === undefined) continue;
+          if (pressure === undefined) delete memory.pressure;
+          else memory.pressure = pressure;
+        }
+        await route.fulfill({ json: listed, response });
+      },
+    );
+    await shown.getByRole("link", { name: host?.id ?? "" }).click();
+
+    const panel = page.getByRole("region", { name: "Load", exact: true });
+    await expect(panel.locator(".load-bar").first()).toBeVisible();
+    const memory = fact(panel, "Memory");
+    const paintedFills = () =>
+      panel.locator(".load-bar").evaluateAll((bars) =>
+        bars.map((bar) => ({
+          tone: /load-bar-(\w+)/.exec(bar.className)?.[1] ?? "",
+          colour: getComputedStyle(bar.firstElementChild as HTMLElement).backgroundColor,
+        })),
+      );
+    // why: the page polls every second, so each level shows within about that. The memory gauge is
+    // identified by its own row, so a tone read here cannot be a leftover of the last level.
+    const memoryFill = () =>
+      memory.evaluate((cell) => {
+        const bar = cell.querySelector(".load-bar") as HTMLElement;
+        return {
+          tone: /load-bar-(\w+)/.exec(bar.className)?.[1] ?? "",
+          colour: getComputedStyle(bar.firstElementChild as HTMLElement).backgroundColor,
+        };
+      });
+
+    // why: the four levels are the four tone rules, so each one is seen in each theme by the real
+    // component; a rule deleted, swapped or given the accent fails a named assertion here.
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      const { accent, tones } = await readStatuses(page);
+
+      for (const [level, tone] of [
+        ["normal", "ok"],
+        ["warn", "warn"],
+        ["critical", "error"],
+        [undefined, "idle"],
+      ] as const) {
+        pressure = level;
+        const want = tones[TONES.indexOf(tone)];
+        await expect
+          .poll(() => memoryFill(), {
+            timeout: 5_000,
+            message: `the ${level ?? "absent"} pressure to paint the ${tone} gauge in ${colorScheme}`,
+          })
+          .toEqual({ tone, colour: want });
+        expect(want, `the ${tone} gauge in ${colorScheme}`).not.toBe(accent);
+
+        // why: every gauge on the panel, not only the one driven above: each must show the colour of
+        // the tone class it carries, so none is painted by a stray inline colour or by the accent.
+        const fills = await paintedFills();
+        expect(fills.length).toBeGreaterThan(1);
+        for (const fill of fills) {
+          const context = `${fill.tone} gauge in ${colorScheme}`;
+          expect(fill.tone, context).not.toBe("");
+          expect(fill.colour, context).toBe(
+            tones[TONES.indexOf(fill.tone as (typeof TONES)[number])],
+          );
+          expect(fill.colour, context).not.toBe(accent);
+        }
+      }
+    }
+  });
+
+  test("a load gauge's fill transitions its width over the document's duration token, and over none under reduced motion", async ({
+    browserName,
+    daemon,
+    page,
+  }) => {
+    const [host] = await workerList(daemon);
+    await openConsole(page, daemon);
+    const shown = card(page, host?.id ?? "");
+    await expect(fact(shown, "Load")).toHaveText(/^CPU .*memory .*disk /);
+    await shown.getByRole("link", { name: host?.id ?? "" }).click();
+
+    const panel = page.getByRole("region", { name: "Load", exact: true });
+    const fill = panel.locator(".load-bar-fill").first();
+    await expect(fill).toBeVisible();
+    // why: the stylesheet moves the fill's width over the document's own duration token, which is
+    // what `prefers-reduced-motion: reduce` already sets to zero. Both sides are read back as
+    // computed values and compared as milliseconds: a browser writes the token's `120ms` as `.12s`.
+    const asMs = (value: string) =>
+      value.trim().endsWith("ms") ? Number.parseFloat(value) : Number.parseFloat(value) * 1_000;
+    await expect
+      .poll(async () => {
+        const style = await fill.evaluate((element) => {
+          const computed = getComputedStyle(element);
+          return {
+            duration: computed.transitionDuration,
+            property: computed.transitionProperty,
+            token: getComputedStyle(document.documentElement).getPropertyValue("--duration").trim(),
+          };
+        });
+        return style.property === "width" && asMs(style.duration) === asMs(style.token);
+      })
+      .toBe(true);
+
+    if (browserName === "chromium") {
+      // why: emulated in Chromium alone — it is the one engine whose reduced-motion emulation was
+      // verified on the machine that wrote this test, and a guard must not hide a real failure in
+      // the other two.
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await expect(fill).toHaveCSS("transition-duration", "0s");
+    }
   });
 
   test("a disconnected worker's Load row says No reading while disconnected within a second", async ({

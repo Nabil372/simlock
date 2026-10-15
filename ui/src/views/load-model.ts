@@ -30,6 +30,34 @@ export function formatCores(cores: number): string {
   return `${figure} ${cores === 1 ? "core" : "cores"}`;
 }
 
+export interface LoadGauges {
+  readonly cpu?: number | undefined;
+  readonly disk?: number | undefined;
+  readonly memory?: number | undefined;
+}
+
+export function loadGauges(load: WorkerLoad): LoadGauges {
+  const { cpu, disk, memory } = load;
+  return {
+    ...(cpu !== undefined && { cpu: clampPercent(cpu.busyPercent) }),
+    ...(memory !== undefined && {
+      memory: usedPercent(memory.availableBytes, memory.totalBytes),
+    }),
+    ...(disk !== undefined && { disk: usedPercent(disk.freeBytes, disk.totalBytes) }),
+  };
+}
+
+function clampPercent(percent: number): number {
+  // why: the same round as the figures above the gauge, not Math.round — the two differ just under
+  // a half, where the text would say 1% and the bar would draw 0.
+  return roundHalfUp(Math.min(100, Math.max(0, percent)), 0);
+}
+
+function usedPercent(available: number, total: number): number | undefined {
+  if (!(total > 0)) return undefined;
+  return clampPercent((1 - available / total) * 100);
+}
+
 export function loadSummary(load: WorkerLoad): string {
   const { cpu, disk, memory } = load;
   const cpuPart =

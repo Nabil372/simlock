@@ -1,10 +1,11 @@
+import type { CSSProperties, ReactNode } from "react";
 import { Id, PageHeader, Panel } from "../layout";
 import { formatDuration } from "../live/time";
 import { Link } from "../router";
-import { deviceStateStatus, installStatus, pressureStatus, Status } from "../status";
+import { deviceStateStatus, installStatus, pressureStatus, Status, type Tone } from "../status";
 import { type Column, DataTable } from "../table";
 import { WorkerLeases } from "./leases";
-import { formatBusyPercent, formatBytes, formatCores } from "./load-model";
+import { formatBusyPercent, formatBytes, formatCores, loadGauges } from "./load-model";
 import { WorkerFacts } from "./worker-facts";
 import {
   platformName,
@@ -330,34 +331,36 @@ function LoadFacts({ now, worker }: { readonly worker: WorkerView; readonly now:
   if (load === undefined) return <p className="muted">Not reported.</p>;
   const { cpu, disk, memory } = load;
   const age = formatDuration(Math.ceil((now - load.readAt) / 1000) * 1000);
+  const gauges = loadGauges(load);
+  // why: a gauge only shades the figure beside it. The console takes thresholds from the daemon
+  // and invents none, so CPU and disk have no level to be wrong at and stay in the neutral tone;
+  // memory has one the worker sends — its pressure — and takes that tone.
+  const memoryTone = memory?.pressure === undefined ? "idle" : pressureStatus(memory.pressure).tone;
   return (
     <dl className="facts">
-      <div>
-        <dt>CPU</dt>
-        <dd>
-          {cpu === undefined ? (
-            "Unavailable"
-          ) : (
-            <>
-              {formatBusyPercent(cpu.busyPercent)} busy, {formatCores(cpu.cores)}
-              <Limit limited={cpu.limited} />
-            </>
-          )}
-        </dd>
-      </div>
-      <div>
-        <dt>Memory</dt>
-        <dd>
-          {memory === undefined ? (
-            "Unavailable"
-          ) : (
-            <>
-              {formatBytes(memory.availableBytes)} of {formatBytes(memory.totalBytes)} available
-              <Limit limited={memory.limited} />
-            </>
-          )}
-        </dd>
-      </div>
+      <FigureRow
+        label="CPU"
+        part={cpu}
+        gauge={gauges.cpu}
+        figure={(part) => (
+          <>
+            {formatBusyPercent(part.busyPercent)} busy, {formatCores(part.cores)}
+            <Limit limited={part.limited} />
+          </>
+        )}
+      />
+      <FigureRow
+        label="Memory"
+        part={memory}
+        gauge={gauges.memory}
+        tone={memoryTone}
+        figure={(part) => (
+          <>
+            {formatBytes(part.availableBytes)} of {formatBytes(part.totalBytes)} available
+            <Limit limited={part.limited} />
+          </>
+        )}
+      />
       {memory === undefined ? null : (
         <div>
           <dt>Swap</dt>
@@ -372,18 +375,62 @@ function LoadFacts({ now, worker }: { readonly worker: WorkerView; readonly now:
           </dd>
         </div>
       )}
-      <div>
-        <dt>Disk</dt>
-        <dd>
-          {disk === undefined
-            ? "Unavailable"
-            : `${formatBytes(disk.freeBytes)} of ${formatBytes(disk.totalBytes)} free`}
-        </dd>
-      </div>
+      <FigureRow
+        label="Disk"
+        part={disk}
+        gauge={gauges.disk}
+        figure={(part) => `${formatBytes(part.freeBytes)} of ${formatBytes(part.totalBytes)} free`}
+      />
       <div>
         <dt>Read</dt>
         <dd>{age} ago</dd>
       </div>
     </dl>
+  );
+}
+
+function FigureRow<Part extends object>(props: {
+  readonly figure: (part: Part) => ReactNode;
+  readonly gauge?: number | undefined;
+  readonly label: string;
+  readonly part: Part | undefined;
+  readonly tone?: Tone;
+}) {
+  const { figure, gauge, label, part, tone = "idle" } = props;
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        {part === undefined ? (
+          "Unavailable"
+        ) : (
+          <span className="load-figure">
+            <span>{figure(part)}</span>
+            {gauge === undefined ? null : <LoadGauge percent={gauge} tone={tone} />}
+          </span>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+// why: a gauge is never the only place its number is -- the figure above it is the text, so it
+// carries no accessible name of its own (`aria-hidden`) and takes no focus. Its colour comes from
+// the stylesheet by class, so both themes apply. Only its level arrives inline: `style-src 'self'`
+// refuses a style attribute written into markup, which would leave the bar empty, and the level
+// still arrives because React writes it through the CSSOM, where the policy does not reach. ADR
+// 0011 is what allows this prop at all (it creates no <style> element); it says nothing about the
+// attribute, so do not read this policy's behaviour into it. A gauge is drawn by this component,
+// never by server-rendered markup.
+function LoadGauge(props: { readonly percent: number; readonly tone: Tone }) {
+  const { percent, tone } = props;
+  return (
+    <span
+      className={`load-bar load-bar-${tone}`}
+      aria-hidden="true"
+      style={{ "--load-bar": `${percent}%` } as CSSProperties}
+    >
+      <span className="load-bar-fill" />
+    </span>
   );
 }
