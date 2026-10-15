@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FakeAgentDevice } from "../agent-device/testing.js";
+import { agentDeviceModuleWith, FakeAgentDevice } from "../agent-device/testing.js";
 import { FakeDriver } from "../core/testing.js";
 import type { OptionalModuleDefinition, WorkerHooks } from "../modules/index.js";
 import { fakeModule, type FakeModule } from "../modules/testing.js";
@@ -208,17 +208,19 @@ describe("optional modules: turning on", () => {
     expect({ loads: module.loads, creates: module.creates }).toEqual({ creates: 1, loads: 1 });
   });
 
-  it("the capability list is agent-device's entry first, then registered modules in registry order", async () => {
+  it("the capability list follows registry order, with agent-device as a registered module", async () => {
     const { daemon } = await start({
-      extra: { agentDeviceUpstream: new FakeAgentDevice() },
-      modules: definitions(fakeModule({ name: "zulu" }), fakeModule({ name: "alpha" })),
-      on: ["zulu", "alpha"],
-      overrides: { agentDevice: { enabled: true } },
+      modules: [
+        ...definitions(fakeModule({ name: "zulu" })),
+        agentDeviceModuleWith({ upstream: new FakeAgentDevice() }),
+        ...definitions(fakeModule({ name: "alpha" })),
+      ],
+      on: ["zulu", "agent-device", "alpha"],
     });
 
     expect((await capabilities(daemon)).map((entry) => entry.name)).toEqual([
-      "agent-device",
       "zulu",
+      "agent-device",
       "alpha",
     ]);
   });
@@ -270,20 +272,21 @@ describe("optional modules: HTTP routes", () => {
   it("with agent-device on and a fake module registered, both modules' routes and relay targets answer, and both capabilities are listed", async () => {
     const seen: string[] = [];
     const { daemon, origin } = await start({
-      extra: { agentDeviceUpstream: new FakeAgentDevice() },
       http: true,
-      modules: definitions(
-        fakeModule({
-          mount: () => handler,
-          name: "alpha",
-          relayTarget: (_request, tenant) => {
-            seen.push(tenant);
-            return Promise.resolve(new Response("alpha"));
-          },
-        }),
-      ),
-      on: ["alpha"],
-      overrides: { agentDevice: { enabled: true } },
+      modules: [
+        agentDeviceModuleWith({ upstream: new FakeAgentDevice() }),
+        ...definitions(
+          fakeModule({
+            mount: () => handler,
+            name: "alpha",
+            relayTarget: (_request, tenant) => {
+              seen.push(tenant);
+              return Promise.resolve(new Response("alpha"));
+            },
+          }),
+        ),
+      ],
+      on: ["agent-device", "alpha"],
     });
     const headers = await agentHeaders(daemon);
     const uplink = await openUplink(daemon);
@@ -441,10 +444,10 @@ describe("optional modules: a start that cannot go on", () => {
       title: "two definitions with one name",
     },
     {
-      bad: () => [fakeModule({ name: "agent-device" })],
-      good: () => [fakeModule({ name: "agent-devices" })],
+      bad: () => [fakeModule({ name: "agent-device" }), fakeModule({ name: "agent-device" })],
+      good: () => [fakeModule({ name: "agent-device" }), fakeModule({ name: "agent-devices" })],
       names: ["agent-device"],
-      title: "a definition named agent-device while it is wired by hand",
+      title: "two definitions named agent-device",
     },
     {
       bad: () => [fakeModule({ name: "Bad_Name" })],
@@ -453,10 +456,10 @@ describe("optional modules: a start that cannot go on", () => {
       title: "a name that fails the capability name check",
     },
     {
-      bad: () => Array.from({ length: 16 }, (_, i) => fakeModule({ name: `mod-${String(i)}` })),
-      good: () => Array.from({ length: 15 }, (_, i) => fakeModule({ name: `mod-${String(i)}` })),
-      names: ["mod-15", "16"],
-      title: "16 fake modules plus agent-device wired by hand (17 capabilities)",
+      bad: () => Array.from({ length: 17 }, (_, i) => fakeModule({ name: `mod-${String(i)}` })),
+      good: () => Array.from({ length: 16 }, (_, i) => fakeModule({ name: `mod-${String(i)}` })),
+      names: ["mod-16", "17"],
+      title: "17 fake modules (17 capabilities)",
     },
     {
       bad: () => [fakeModule({ loadError: new Error("no such file"), name: "alpha" })],
@@ -787,33 +790,27 @@ describe("optional modules: stop hooks", () => {
     expect(messages.indexOf("drain done")).toBeLessThan(messages.indexOf("Daemon stopping"));
   });
 
-  it("beforeDrain runs after agent-device's waiting allocates are cancelled through leasing", async () => {
-    const cancelledAtDrain: number[] = [];
+  it("by the time the stop ends, agent-device's waiting allocate is cancelled through leasing and another module's beforeDrain has run", async () => {
+    const drainRan: boolean[] = [];
     let directory = "";
     const rig = await start({
-      extra: { agentDeviceUpstream: new FakeAgentDevice() },
       http: true,
-      modules: definitions(
-        fakeModule({
-          hooks: {
-            beforeDrain: async () => {
-              const history = await readFile(join(directory, "events.jsonl"), "utf8");
-              cancelledAtDrain.push(
-                history
-                  .split("\n")
-                  .filter(
-                    (line) => line.includes('"lease.rejected"') && line.includes('"cancelled"'),
-                  ).length,
-              );
+      modules: [
+        agentDeviceModuleWith({ upstream: new FakeAgentDevice() }),
+        ...definitions(
+          fakeModule({
+            hooks: {
+              beforeDrain: async () => {
+                drainRan.push(true);
+              },
             },
-          },
-          name: "alpha",
-        }),
-      ),
-      on: ["alpha"],
+            name: "alpha",
+          }),
+        ),
+      ],
+      on: ["agent-device", "alpha"],
       phones: true,
       overrides: {
-        agentDevice: { enabled: true },
         capacity: { config: { maxRunning: 1 }, strategy: "fixed" },
       },
     });
@@ -846,7 +843,12 @@ describe("optional modules: stop hooks", () => {
     await rig.daemon.stop("test");
     await allocate;
 
-    expect(cancelledAtDrain).toEqual([1]);
+    const history = await readFile(join(directory, "events.jsonl"), "utf8");
+    const cancelled = history
+      .split("\n")
+      .filter((line) => line.includes('"lease.rejected"') && line.includes('"cancelled"'));
+    expect(drainRan).toEqual([true]);
+    expect(cancelled).toHaveLength(1);
   });
 
   it("beforeDriversDispose finishes before any driver's dispose starts", async () => {

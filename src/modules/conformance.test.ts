@@ -67,7 +67,6 @@ describe("every optional module's contract", () => {
       definitions: [definition],
       logger: new NoopLogger(),
       role: "worker",
-      wiredElsewhere: [],
     });
 
     expect(loadWorker).not.toHaveBeenCalled();
@@ -123,4 +122,10 @@ describe("every optional module's contract", () => {
       expect(settled.sort()).toEqual(Object.keys(hooks).sort());
     },
   );
+});
+
+describe("the registry", () => {
+  it("registers agent-device, so the conformance suite above runs over it", () => {
+    expect(subjects.map(([name]) => name)).toContain("agent-device");
+  });
 });
