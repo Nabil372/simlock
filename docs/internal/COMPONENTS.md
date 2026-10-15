@@ -125,7 +125,7 @@ modules with.
 
 ## Screen streaming
 
-`src/stream/` carries a leased device's screen to whoever is looking. Like the agent-device edge, it is entered only through `src/stream/index.ts`, the core, leasing and the drivers import nothing from it, and it adds no operation to the contract: a stream is one HTTP response, and a gateway carries it over the link's byte channels.
+`src/stream/` carries a leased device's screen to whoever is looking. Like the agent-device edge, it is entered only through `src/stream/index.ts`, the core, leasing and the drivers import nothing from it, and it adds no operation to the contract: a stream is one HTTP response, and a gateway carries it over the link's byte channels. The Android side of it is not written; its pinned dependency is already vendored (`vendor/scrcpy/`, see [VENDORED-CODE.md](VENDORED-CODE.md)) and no code reads it yet.
 
 | Component | Where | Owns | Does not |
 |---|---|---|---|
@@ -137,7 +137,7 @@ modules with.
 | Service | `src/stream/service.ts` | One request, either door: the method rule, the refusal body (`{error: {code, message}}`, as every other route answers), the head's headers, and the log line for an opened and for a refused stream. | Decide whether a lease is streamable (a link does); name a status a link did not choose. |
 | Refusals | `src/stream/refusal.ts` | The reasons a stream is refused, each with the status and code it answers with, and reading a relayed refusal back. | Word a refusal for a user (the console does). |
 | Capture registry | `src/stream/captures.ts` | Which captures a worker is running and for which lease, and ending them when the lease ends by any route (the `LeaseEndParticipant` leasing calls). | Start a capture; decide what a lease is. |
-| Capture program | `tools/screen-capture/` | A simulator's screen as frames: CoreSimulator's framebuffer for a device in a device set named by `SIMLOCK_IOS_DEVICE_SET`, the encoder, the envelope, and treating stdin as its liveness handle. | Know about leases, HTTP or Simlock's registry. |
+| Capture program | `vendor/screen-capture/` | A simulator's screen as frames: CoreSimulator's framebuffer for a device in a device set named by `SIMLOCK_IOS_DEVICE_SET`, the encoder, the envelope, and treating stdin as its liveness handle. Its private-API capture path is vendored from serve-sim (Apache-2.0) with two deviations; its encoders are ours. [VENDORED-CODE.md](VENDORED-CODE.md) and that directory's `NOTICE.md` say which parts. | Know about leases, HTTP or Simlock's registry. |
 
 ## Drivers
 

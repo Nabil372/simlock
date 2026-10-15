@@ -44,6 +44,11 @@ changes in this repo:
   agents run and the checks they leave to hooks and CI; the slow lane
   (real devices); project-only checks. Agents and skills take every command
   from here.
+- [vendor-and-third-party-code.md](docs/internal/agent-rules/vendor-and-third-party-code.md)
+  — third-party code lives under `vendor/`, one directory per upstream, each
+  with its license text and a `NOTICE.md`; source vendoring records the commit,
+  the deviations and how to diff against upstream; binaries are vendored
+  byte-identical with a checksum; nothing is fetched at runtime.
 - [always-in-scope.md](docs/internal/agent-rules/always-in-scope.md) — what
   every change includes without its spec asking (docs and strings it makes
   false, both `EVENTS.md` files, a test for every new path, Fallow entries),
@@ -87,6 +92,8 @@ Maintainer/agent docs live under [docs/internal/](docs/internal/):
 - [EVENTS.md](docs/internal/EVENTS.md) — the same catalog with rationale and ADR references
 - [IDEAS.md](docs/internal/IDEAS.md) — post-v1 ideas; don't implement these unless asked
 - [KNOWN-PITFALLS.md](docs/internal/KNOWN-PITFALLS.md) — accepted gaps and their planned fixes
+- [VENDORED-CODE.md](docs/internal/VENDORED-CODE.md) — every third-party artifact in the
+  repo: upstream, version, license, where it lives, who consumes it, how to re-verify
 - [LOOP.md](docs/internal/LOOP.md) — the old stage-implementation loop, kept as
   history; DELIVERY.md replaces it
 - [adr/](docs/internal/adr/) — architecture decision records and their status
