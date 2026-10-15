@@ -1197,7 +1197,7 @@ describe("the agent-device front, through the whole worker daemon", () => {
     await expect.poll(async () => (await leases(rig)).length).toBe(0);
   });
 
-  it("release, and release after `close` (which the daemon answers `released: false`), go to the agent-device daemon first, then release the simlock lease, and the device is reclaimed and free", async () => {
+  it("release goes to the agent-device daemon first, then frees the simlock lease and the device; a release after `close`, which already freed the simlock lease, reaches the daemon with no lease held and is answered `released: false`", async () => {
     const rig = await setUp();
     let heldAtDaemonRelease: readonly string[] = [];
     rig.fake.onRelease = async () => {
@@ -1216,11 +1216,65 @@ describe("the agent-device front, through the whole worker daemon", () => {
 
     await granted(rig, 2);
     await command(rig, "close", 2);
+    await expect.poll(async () => leases(rig)).toEqual([]);
     const afterClose = await envelopeOf(await release(rig, 2));
 
     expect(afterClose.result).toMatchObject({ ok: true, released: false });
-    expect(heldAtDaemonRelease).toEqual([hex(2)]);
+    expect(heldAtDaemonRelease).toEqual([]);
     expect(await leases(rig)).toEqual([]);
+    await expect
+      .poll(async () => (await devices(rig)).map((device) => device.state))
+      .toEqual(["ready"]);
+  });
+
+  const ended = [{ leaseId: hex(1), outcome: "released" }];
+  it.each([
+    [
+      "a `close` that succeeds, in `data`",
+      { result: { data: { endedLeases: ended } } },
+      (rig: Rig) => command(rig, "close", 1),
+    ],
+    [
+      "a `close` that fails, in `error.details`",
+      { error: { data: { details: { endedLeases: ended } } } },
+      (rig: Rig) => {
+        rig.fake.failNextCommand({ code: "COMMAND_FAILED", message: "close failed" });
+        return command(rig, "close", 1);
+      },
+    ],
+    [
+      "a `batch` with a close step, in `data` beside `results`",
+      { result: { data: { endedLeases: ended, results: [] } } },
+      (rig: Rig) => batch(rig, 1, [{ command: "snapshot" }, { command: "close" }]),
+    ],
+  ] as const)(
+    "%s: a command that ends the agent-device lease and names it in `endedLeases` releases the simlock lease and frees the device though the CLI sends no release, and a later heartbeat answers `LEASE_NOT_FOUND`",
+    async (_case, reply, send) => {
+      const rig = await setUp();
+      await granted(rig, 1);
+
+      expect(await envelopeOf(await send(rig))).toMatchObject(reply);
+      await expect.poll(async () => listed(rig)).toEqual([]);
+      await expect
+        .poll(async () => (await devices(rig)).map((device) => device.state))
+        .toEqual(["ready"]);
+      expectLeaseGone(await envelopeOf(await heartbeat(rig, 1)), "LEASE_NOT_FOUND");
+    },
+  );
+
+  it("a streamed command reply whose last frame names `endedLeases` releases the simlock lease though the CLI sends no release, and the CLI gets the body unchanged", async () => {
+    const rig = await setUp();
+    await granted(rig, 1);
+    const chunks = [
+      '{"progress":1}\n',
+      `${JSON.stringify({ result: { data: { endedLeases: ended } } })}\n`,
+    ];
+    rig.fake.streamNextCommand(chunks);
+
+    const streamed = await command(rig, "close", 1);
+
+    expect(await streamed.text()).toBe(chunks.join(""));
+    await expect.poll(async () => listed(rig)).toEqual([]);
     await expect
       .poll(async () => (await devices(rig)).map((device) => device.state))
       .toEqual(["ready"]);
