@@ -39,6 +39,10 @@ edit yourself keeps the mode you give it until the next `config set`; run
 | `capabilities.agent-device.enabled`             | **Both sides.** On a worker: run one agent-device daemon on this worker, started and watched by Simlock. It sees Simlock's devices and no others, refuses `boot` and `shutdown`, and keeps its files in `~/.simlock/agent-device`. If agent-device is missing, older than 0.21.28, speaks another RPC protocol or needs a newer Node than Simlock runs on, it is not started and Simlock runs on without it. A daemon a killed Simlock left behind is stopped at the next start with `capabilities.agent-device.enabled` `true`; with it off, Simlock does not look for one. With `http.enabled` also `true`, the agent-device CLI reaches it at `/v1/agent-device` (see [HTTP-API.md](HTTP-API.md#v1agent-device)). On a gateway: serve `/v1/agent-device` and send each agent to a worker whose agent-device is available; the gateway runs no daemon of its own. | `false` |
 | `capabilities.agent-device.leaseTtlCapMs`       | **Both sides.** Caps the TTL of the leases the agent-device CLI makes and renews through Simlock: a longer `ttlMs` is lowered to it, and a lease that sends none gets it. A whole number of milliseconds from `5000` to `lease.maxTtlMs`; a value outside that range stops the daemon at start, on a gateway too. Used only when `capabilities.agent-device.enabled` is `true`. | unset (no cap) |
 | `capabilities.agent-device.command`             | **Worker side.** The agent-device executable: a name looked up on `PATH`, or a path. A gateway ignores it and logs a warning. Used only when `capabilities.agent-device.enabled` is `true`. | `agent-device` |
+| `capabilities.stream.enabled`                  | **Both sides.** Offer a live view of a leased simulator's or emulator's screen. On a worker: answer `GET /v1/stream/leases/{leaseId}` (see [HTTP-API.md](HTTP-API.md#get-v1streamleasesleaseid)) by capturing the screen of the device that lease holds. On a gateway: serve the same URL and relay each request to the worker that holds the lease. Off by default because a stream is a capture pinned to a leased device — with it off, nothing is running until someone asks to look, and nothing is running when they stop. Read at start; changing it needs a restart. | `false` |
+| `capabilities.stream.fps`                      | **Worker side.** The frame rate the encoder is asked for. A capture sends full frames only when the device's screen changes, and on a still screen only small keep-alive frames, so this is a ceiling and not a promise: an untouched home screen stays far below it, which is what keeps an idle stream cheap. A whole number from `1` to `60`. | `30` |
+| `capabilities.stream.maxDimension`             | **Worker side.** Cap on the encoded picture's longest side, in pixels; the other side follows the device's aspect ratio. This is the lever that costs the most bandwidth — a device that encodes at about 6 Mbit/s native is nearer 1.4 Mbit/s at `720`. A whole number from `96` to `4096`. | `720` |
+| `capabilities.stream.bitrateKbps`              | **Worker side.** Target bitrate in kilobits per second, handed to the encoder as an average rather than a ceiling; a frame that needs more takes it. A whole number from `100` to `40000`; the iOS encoder takes nothing lower. | `1500` |
 | `exec.timeoutMs`                  | **Worker side.** How long one `device.exec` command (`simlock simctl` / `simlock adb` against a gateway or over HTTP) may run before the worker kills it and the operation fails with `EXEC_TIMEOUT`. Authoritative: it bounds the process that actually runs. | `10 minutes`                                                     |
 | `gateway.routing`                 | **Gateway side.** Which routing policy places a queued request on a worker. `warm-then-free` is the only policy in v1. Among the workers that can serve the request, in order: a worker whose health is not `running`, or that has requests of its own waiting, is left out; a worker holding a ready device that fits goes first (the device's mode must fit the request, a request with no mode fits a device that serves the worker's default mode, and its runtime must be the one requested or, with none requested, the one the worker would pick: the newest runtime the model pairs with); otherwise a worker with no free running slot for the platform or overall is left out (a running device that is not leased counts as free: the worker shuts it down to make room), a worker under its RAM budget for the platform is preferred over one at it (a worker at its budget is still asked when it is the only one left), and the one with the most free running capacity for the platform wins. A worker that is left out is busy, not unable: the request waits for it. Ties go to the lowest worker id. | `warm-then-free`                                                 |
 | `gateway.disconnectedRetentionMs` | **Gateway side.** How long a disconnected worker is kept (greyed, never dispatched to) before the gateway forgets it. The clock is held while the gateway still knows of gateway-issued leases on that worker, and that hold ends when the last of those leases passes its deadline.  | `24 hours`                                                       |
@@ -73,6 +77,7 @@ edit yourself keeps the mode you give it until the next `config set`; run
 | `stalledTransition.thresholdMultiplier` | Factor applied to a driver's own `provision + boot` (for `provisioning`) or `reclaim` (for `reclaiming`) estimate to get the stall threshold: past it, `simlock doctor` reports a `stalled-transition` finding and `simlock status` marks the device `stalled`. | `3`                                                               |
 | `stalledTransition.minimumThresholdMs` | Floor under the multiplied estimate, for a driver whose estimate is near zero.                                                                                                                                | `1 minute`                                                        |
 | `drivers.ios.deviceRoot`          | The CoreSimulator device set Simlock owns and scopes every `simctl` call to. See [Device roots](#device-roots).                                                                                              | `${SIMLOCK_HOME}/devices/ios`                                    |
+| `drivers.ios.screenCaptureCommand` | The program that captures a simulator's screen for `capabilities.stream.enabled`. Unset, the one `pnpm build` put beside the daemon. | unset |
 | `drivers.android.deviceRoot`      | The AVD home Simlock owns; exported as `ANDROID_AVD_HOME` to every `avdmanager`/`emulator` call. See [Device roots](#device-roots).                                                                          | `${SIMLOCK_HOME}/devices/android`                                |
 | `drivers.android.adbServerPort`   | TCP port for Simlock's own adb server. Must not be the shared server's `5037`. Startup fails closed if it is occupied.                                                                                       | `5038`                                                            |
 | `ios.defaultMode`                 | The device mode an iOS lease request gets when it names none: `slim` or `full`. Every worker makes both kinds whatever this says. See [Device mode: slim and full](#device-mode-slim-and-full).                             | `full`                                                           |
@@ -166,8 +171,9 @@ off by default.
 capacity, drivers, downloads, idle, warmPool, health, ios, android, stalledTransition —
 configures devices, which a gateway does not have; each one present in a
 gateway's config is reported with a warning and ignored, the same treatment an
-unknown key gets. The worker-side `gateway.url`/`token`/`label` and
-`capabilities.agent-device.command` are warned about there too. Nothing is stripped: the same file can be copied between a
+unknown key gets. The worker-side `gateway.url`/`token`/`label`,
+`capabilities.agent-device.command` and `capabilities.stream.fps`/`maxDimension`/`bitrateKbps`
+are warned about there too. Nothing is stripped: the same file can be copied between a
 worker and a gateway with only `mode` differing, and the warning is what makes
 the difference visible rather than silent.
 
@@ -567,6 +573,47 @@ snapshot.
 Only these four keys exist. There is no way to pass other emulator
 arguments from config, so nothing here can move an emulator's port or AVD
 home.
+
+## Screen streaming
+
+`capabilities.stream.enabled` turns a leased device's screen into something you can look at:
+a worker captures the screen of the device a lease holds, encodes it as
+H.264, and the bytes reach a browser as the body of one ordinary
+`GET /v1/stream/leases/{leaseId}` (see
+[HTTP-API.md](HTTP-API.md#get-v1streamleasesleaseid)). On a gateway the same URL
+relays the request to the worker that holds the lease, and the gateway forwards
+the bytes without reading one of them.
+
+Nothing is captured until someone asks to look, and asking is the only
+on-command there is: the request itself keeps the capture running, and closing
+it — pressing Stop, navigating away, closing the tab — is the off-command. A
+lease that ends by any other route stops the capture too, so a device never
+goes on being filmed after it has been handed back, and no stream outlives a
+viewer or a lease.
+
+What it costs is mostly `capabilities.stream.maxDimension` and `capabilities.stream.bitrateKbps`. Against
+a device whose screen is being actively redrawn on an Apple silicon Mac, the
+encoder's native settings produce about 6 Mbit/s; at `maxDimension` `720` and
+`bitrateKbps` `1500` the same motion is about 1.4 Mbit/s, and a device nobody is
+touching sits between 25 and 90 kbit/s because a screen that has not changed
+sends almost nothing. `capabilities.stream.fps` is a ceiling rather than a rate for the same
+reason. On a Mac an iOS capture costs about 50-80 MB of memory per device being
+watched.
+
+An iOS simulator's screen and an Android emulator's screen can be streamed. A
+lease on a physical iPhone or Android phone is refused with
+`STREAM_NOT_SUPPORTED`, naming that as the reason rather than failing for one
+the reader has to guess.
+
+- **iOS** needs the capture program `pnpm build` builds on a Mac with Xcode
+  selected. Without it an iOS stream is refused with
+  `STREAM_UNAVAILABLE`, saying why; `simlock status` says why too when no
+  platform on the worker can stream. `drivers.ios.screenCaptureCommand` names a
+  program at another path.
+- **Android** needs nothing more than the SDK the emulators already use. Each
+  stream copies a small screen server into the emulator, and removes it when
+  the stream ends. An emulator encodes in software unless its GPU mode gives it
+  a hardware encoder, so expect about 20 frames a second while the screen moves.
 
 ## Capacity strategies
 

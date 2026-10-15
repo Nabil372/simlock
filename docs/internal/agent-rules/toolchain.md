@@ -61,6 +61,25 @@ that goes through the reviews its diff's kind gets and the merge gate:
 | Comment gardening  | `garden-comments`   | weekly |
 | Review calibration | `calibrate-reviews` | weekly |
 
+## The screen capture programs
+
+`pnpm build` runs `scripts/build-capture.mjs`: it copies the vendored scrcpy
+server into `dist/vendor/scrcpy/` after checking its pinned SHA-256, and on a
+Mac with Xcode selected it builds `vendor/screen-capture/` (Swift) into
+`dist/bin/simlock-screen-capture`. Elsewhere the Swift build is skipped and iOS
+streams report unavailable.
+
+Neither runs in the unit, e2e or console lanes: both read a booted device's
+screen, which means real devices and the slow lane. The lanes cover what this
+repo writes -- the stream module, the drivers' capture code against fakes, the
+envelope -- and the console lane runs a stand-in program that writes the same
+envelope from stills (`e2e/console/screen-capture.ts`), named by the fake
+driver's `screenCaptureCommand`. A change to the Swift program is checked by
+hand on a machine with a simulator, where
+`node vendor/screen-capture/scripts/unframe.mjs <capture> out.264` turns the
+bytes it wrote into Annex-B and counts each tag, and `ffprobe out.264` says
+whether they decode.
+
 ## Slow lane
 
 Tests that start real simulators or emulators. Run them only through
@@ -113,7 +132,7 @@ the tool's docs alone.
 
 | Tool | Version | Read it |
 | ---- | ------- | ------- |
-| agent-device | the version `package.json` pins for `@agent-device/proxy` (tag `v<version>`) | `git -C <checkout> show v<version>:<path>` in a clone of `callstackincubator/agent-device` (on a machine that runs the slow lane, the one `.slow-lane.env` names). No clone: `gh api 'repos/callstackincubator/agent-device/contents/<path>?ref=v<version>' -H 'Accept: application/vnd.github.raw'`. The proxy as simlock bundles it: `node_modules/@agent-device/proxy/dist` |
+| agent-device | the version `package.json` pins for `@agent-device/proxy` (tag `v<version>`) | `git -C <checkout> show v<version>:<path>` in a clone of `callstack/agent-device` (on a machine that runs the slow lane, the one `.slow-lane.env` names). No clone: `gh api 'repos/callstack/agent-device/contents/<path>?ref=v<version>' -H 'Accept: application/vnd.github.raw'`. The proxy as simlock bundles it: `node_modules/@agent-device/proxy/dist` |
 | Android SDK tools, Xcode tools | the installed ones | run them: `<tool> --help`, or the command itself |
 | simlock's own CLI | `main` | `pnpm build`, then `node dist/cli/main.js <command> --help` or the command itself |
 

@@ -14,6 +14,7 @@ Parent: [drivers](../AGENTS.md). Flows: [device selection](../../../docs/interna
 | `devicectl-exec.ts` | `devicectlExecCommand`: the reviewed `devicectl` list                         |
 | `slim-labels.ts`    | `SLIM_CATEGORIES`, `resolveSlimCategories`, `labelsFor`, `slimSignature`      |
 | `prerequisites.ts`  | `iosPrerequisites`: Xcode selected, license accepted, first launch done       |
+| `screen-capture.ts` | `createIosScreenCapture`: runs `vendor/screen-capture/` on a simulator        |
 
 ## How it works
 
@@ -78,6 +79,12 @@ Passthrough —
 
 Lease environment: virtual `SIMLOCK_IOS_DEVICE_SET=<root>`; physical `SIMLOCK_DEVICE_UDID=<udid>`.
 
+Screen — `screenCapture` (only when `create` is given a launcher): `simlock-screen-capture <udid>
+--codec avcc --fps --bitrate --max-dimension` with `SIMLOCK_IOS_DEVICE_SET=<root>`; stdout is
+the frames, stdin its liveness. Close: stdin, 2 s, SIGKILL. Physical → `ScreenNotSupportedError`;
+program missing → `ScreenUnavailableError`. Default program: dist/bin, built by `pnpm build`;
+`drivers.ios.screenCaptureCommand` names another.
+
 Advisories — `runtime-cache-unreclaimable` (asset bundles no installed runtime mounts);
 `slim-runtime-unsupported` (installed runtimes below 18.5, only when `ios.defaultMode` is `slim`).
 
@@ -115,4 +122,8 @@ record of a device's mode; `driverData` holds the slim signature.
 - **Slim drift is invisible.** `launchctl disable` accepts labels that do not exist. Narrowing
   `ios.slim.categories` never re-enables a daemon: reclaim or destroy old devices first.
 - **A recovered slim device runs full but its record says `slim` (#174)** until its next `makeReady`.
+- **A screen stream can freeze after a reboot under its lease.** The capture program checks the
+  simulator is booted only when it starts, then repaints its last surface every 200 ms, so after
+  the health monitor reboots a crashed simulator the viewer can see the old picture until they
+  press Stop and Show screen again. A lease ending stops it as usual.
 - **A cold slim lease takes ~160 s.** MCP clients need `resetTimeoutOnProgress` or a longer timeout.

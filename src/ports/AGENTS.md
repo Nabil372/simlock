@@ -23,6 +23,8 @@ Uses: nothing from other components. Imported by: every component that touches t
 | `HostInfo`                                 | `host-info.ts`              | `NodeHostInfo`                                               | `FakeHostInfo`                | OS, version (`sw_vers` on macOS), arch                    |
 | `HostLoadProbe`                            | `host-load.ts`              | `DarwinHostLoadProbe`, `LinuxHostLoadProbe`                  | `FakeHostLoadProbe`           | CPU, memory, disk counters                                |
 | `TcpProbe`                                 | `tcp-probe.ts`              | `NodeTcpProbe`                                               | `FakeTcpProbe`                | Is a loopback port listening; send bytes                  |
+| `TcpStreamConnector`                       | `tcp-stream.ts`             | `NodeTcpStreamConnector`                                     | `FakeTcpStreamConnector`      | A long-lived loopback connection, bytes both ways         |
+| `BytePipeLauncher`                         | `byte-pipe.ts`              | `NodeBytePipeLauncher`                                       | `FakeBytePipeLauncher`        | A child with binary stdout and stdin as its liveness      |
 | `IdGenerator`                              | `id-generator.ts`           | `CryptoIdGenerator`                                          | none; tests inline one        | Random ids                                                |
 | `TokenSecrets`                             | `token-secrets.ts`          | `CryptoTokenSecrets`                                         | none; tests inline one        | New secret, its hash                                      |
 | Paths                                      | `paths.ts`                  | `resolveSimlockHome`, `resolveDaemonSocketPath`              | —                             | `SIMLOCK_HOME` (default `~/.simlock`), socket path length |
@@ -33,7 +35,7 @@ Uses: nothing from other components. Imported by: every component that touches t
 ## Rules
 
 - Application code never imports `fs` or `child_process`, or calls `Date.now()` or
-  `setTimeout`: it takes a port. Lint fails core, leasing, agent-device and host-load on an
+  `setTimeout`: it takes a port. Lint fails core, leasing, agent-device, host-load and stream on an
   `fs` or `child_process` import (`no-fs-or-process` in `.dependency-cruiser.mjs`).
 - The real adapters are built once, in the composition root (`src/daemon/main.ts`, or the
   CLI and MCP environment builders), and injected.

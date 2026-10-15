@@ -17,6 +17,7 @@ Manuals: [Android](android/AGENTS.md), [iOS](ios/AGENTS.md). Flows: [device sele
 | `inspectPhysical`, `listPresentPhysical`                                 | Enrollment read and presence of physical devices                                                                  |
 | `leaseEnvironment`, `virtualLeaseEnvironment`, `passthrough`             | What a holder needs to reach its device                                                                           |
 | `dispose`                                                                | Daemon stop. Android reaps its adb server here                                                                    |
+| `screenCapture` (optional)                                               | A device's screen as core's frame envelope (`core/screen.ts`); absent = cannot stream                             |
 
 ## Rules both drivers keep
 

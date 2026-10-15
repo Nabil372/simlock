@@ -8,7 +8,17 @@ import type {
   grantedDeviceSchema,
   workerViewSchema,
 } from "../contract/index.js";
-import type { Config, Platform } from "../core/index.js";
+import type {
+  Config,
+  DeviceRecord,
+  LeaseRecord,
+  PhysicalDriverDevice,
+  Platform,
+  ScreenAvailability,
+  ScreenFeed,
+  ScreenSettings,
+  VirtualDriverDevice,
+} from "../core/index.js";
 import type {
   Clock,
   Filesystem,
@@ -96,6 +106,26 @@ export interface WorkerModule {
   readonly hooks?: WorkerHooks;
 }
 
+// why: a read of the worker's registry as it stands, so a module that serves a lease checks the lease
+// against the worker's own record rather than against what a caller claims.
+export interface ModuleRegistryView {
+  readonly snapshot: {
+    readonly devices: readonly DeviceRecord[];
+    readonly leases: readonly LeaseRecord[];
+  };
+}
+
+// why: the drivers' screen capture, routed by platform, without handing a module the drivers.
+export interface ModuleScreens {
+  openScreen(
+    platform: Platform,
+    device: VirtualDriverDevice | PhysicalDriverDevice,
+    settings: ScreenSettings,
+    signal: AbortSignal,
+  ): Promise<ScreenFeed>;
+  screenAvailability(): Promise<readonly ScreenAvailability[]>;
+}
+
 export interface WorkerContext<C> {
   readonly name: string;
   readonly config: C;
@@ -112,6 +142,8 @@ export interface WorkerContext<C> {
   readonly nodeVersion: string;
   readonly platforms: readonly Platform[];
   readonly leaseEnvironment: Readonly<Record<string, string>>;
+  readonly registry: ModuleRegistryView;
+  readonly screens: ModuleScreens;
   cancelPending(requesterId: string): Promise<unknown>;
   readonly events: {
     subscribe<Event extends EventName>(event: Event, handler: EventHandler<Event>): () => void;

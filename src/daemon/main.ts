@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { EVENT_FILE_NAME, EventBus, EventHistory, type EventBusLogger } from "../bus/index.js";
 import { fitHostFacts, fitHostLoad } from "../contract/index.js";
@@ -72,7 +72,9 @@ import {
   NodeProcessRunner,
   NodeProcessSupervisor,
   NodeSystemStats,
+  NodeBytePipeLauncher,
   NodeTcpProbe,
+  NodeTcpStreamConnector,
   resolveDaemonSocketPath,
   readPackageVersion,
   resolveSimlockHome,
@@ -346,6 +348,8 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
       platforms: drivers.map((driver) => driver.platform),
       processRunner,
       processSupervisor,
+      registry,
+      screens: new DriverCatalog(drivers),
       tcpProbe,
     },
     definitions: moduleDefinitions,
@@ -790,7 +794,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
   // `GatewayOwnerRoutedFacts`'s own doc comment for why the fleet's lease index, not a worker's
   // relayed payload, is what a fleet lease's push has to be routed by.
   const gatewayOwnerRoutedFacts = new GatewayOwnerRoutedFacts(eventBus, leaseIndex);
-  const gatewayRelay = new GatewayRelay({ directory: gatewayService });
+  const gatewayRelay = new GatewayRelay({ clock, directory: gatewayService });
   // why: a test reaches the gateway's relay through this callback.
   options.gatewayRelay?.(gatewayRelay);
   const moduleHost = await createModuleHost({
@@ -965,6 +969,17 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
   return daemon;
 }
 
+// why: `pnpm build` puts both capture artifacts beside the compiled daemon (scripts/build-capture.mjs),
+// so a checkout that built finds them without configuration; `drivers.ios.screenCaptureCommand`
+// names another iOS program.
+const PACKAGED_SCREEN_CAPTURE = fileURLToPath(
+  new URL("../bin/simlock-screen-capture", import.meta.url),
+);
+const PACKAGED_SCRCPY_SERVER = fileURLToPath(
+  // fallow-ignore-next-line unresolved-import -- a file pnpm build copies into dist, not a module.
+  new URL("../vendor/scrcpy/scrcpy-server-v5.0.1", import.meta.url),
+);
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1103,6 +1118,12 @@ async function discoverIosDriver(
       idGenerator: options.idGenerator,
       instanceId: options.instanceId,
       onSlimmed: emitSlimDiagnostic(options.eventBus),
+      screenCapture: {
+        baseEnvironment: process.env,
+        command: PACKAGED_SCREEN_CAPTURE,
+        launcher: new NodeBytePipeLauncher(),
+        onLog: (line) => logger.debug("Screen capture", { line }),
+      },
       onSlimSkipped: (fact) => {
         logger.warn("Skipped iOS device slim", {
           deviceId: fact.deviceId,
@@ -1158,8 +1179,10 @@ async function discoverAndroidDriver(
       instanceId: options.instanceId,
       processRunner: options.processRunner,
       processSupervisor: options.processSupervisor,
+      scrcpyServerPath: PACKAGED_SCRCPY_SERVER,
       simlockHome: options.simlockHome,
       tcpProbe: options.tcpProbe,
+      tcpStreamConnector: new NodeTcpStreamConnector(),
       // Ambient like `homedir()` above, and read here rather than in the driver so the
       // composition root stays the only place that touches process state.
       ...(process.getuid === undefined ? {} : { uid: process.getuid() }),

@@ -42,10 +42,11 @@ worker daemon ── uplink (WebSocket to /v1/uplink, worker dials) ──┘
 | core | Registry, device lifecycle, reclaim, quarantine, cleanup, components, doctor | [core](../../src/core/AGENTS.md) |
 | core/warm-pool | What stays booted, and warm targets | [warm-pool](../../src/core/warm-pool/AGENTS.md) |
 | core/capacity | Limits, RAM budget, reservations | [capacity](../../src/core/capacity/AGENTS.md) |
-| drivers | The `Driver` port's two implementations | [drivers](../../src/drivers/AGENTS.md) · [android](../../src/drivers/android/AGENTS.md) · [ios](../../src/drivers/ios/AGENTS.md) |
+| drivers | The `Driver` port's two implementations | [drivers](../../src/drivers/AGENTS.md) · [android](../../src/drivers/android/AGENTS.md) · [android screen](../../src/drivers/android/screen/AGENTS.md) · [ios](../../src/drivers/ios/AGENTS.md) |
 | gateway | Fleet queue, routing, forwarding to workers, relay | [gateway](../../src/gateway/AGENTS.md) · [routing](../../src/gateway/routing/AGENTS.md) |
 | link | Byte channels over the uplink | [link](../../src/link/AGENTS.md) |
 | agent-device | Optional edge: the agent-device daemon beside a worker, its HTTP front | [agent-device](../../src/agent-device/AGENTS.md) |
+| stream | Optional edge: a leased device's live screen over HTTP, relayed by a gateway | [stream](../../src/stream/AGENTS.md) |
 | http | HTTP frontend: routes, tokens, SSE | [http](../../src/http/AGENTS.md) |
 | cli | Operator command surface | [cli](../../src/cli/AGENTS.md) |
 | mcp | stdio MCP server for one agent session | [mcp](../../src/mcp/AGENTS.md) |
@@ -69,12 +70,13 @@ Arrows point from the optional to the required (architecture rule 15).
 | `past-index` | Outside a component, import only its index file (tests may also import its testing file) |
 | `core-not-leasing` | Core declares a port; the composition root connects leasing to it |
 | `core-not-drivers` | Core and leasing reach a platform only through the `Driver` interface |
-| `no-fs-or-process` | Core, leasing, agent-device and host-load use ports, never `fs` or `child_process` |
+| `no-fs-or-process` | Core, leasing, agent-device, host-load and stream use ports, never `fs` or `child_process` |
 | `definition-is-light` | A module's definition file imports its own module only for types or by dynamic import |
 | `modules-imports-little`, `modules-imports-bus-types-only` | `src/modules` imports only ports, contract and core, and the bus for types |
 | `not-modules` | Core, leasing, drivers, gateway and contract import nothing from modules or module-registry |
 | `not-agent-device` | Core, leasing and drivers import nothing from agent-device |
 | `host-load-imports-ports-only`, `not-host-load` | host-load stands alone |
+| `not-stream`, `stream-not-edges` | Nothing required imports stream; stream imports no frontend, gateway or driver |
 | `gateway-not-edges`, `gateway-only-dispatch` | Gateway imports no driver or frontend, and from daemon only `src/daemon/dispatch.ts` |
 | `only-main-knows-gateway` | In daemon, only `src/daemon/main.ts` imports the gateway |
 | `link-is-portable`, `link-imports-port-types-only` | The link uses no Node module or package, and only the types of ports |
@@ -93,6 +95,7 @@ never import each other, directly or through a third.
 | Startup and stop | [startup](flows/startup.md) |
 | `device.exec`, local and through a gateway | [device-exec](flows/device-exec.md) |
 | agent-device through simlock | [agent-device](../../src/agent-device/AGENTS.md) |
+| A screen stream, local and through a gateway | [stream](../../src/stream/AGENTS.md) |
 
 ## Rules that cut across modules
 

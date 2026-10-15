@@ -156,6 +156,11 @@ export async function fakeWorkerContext<C>(name: string, config: C): Promise<Fak
       platforms: ["ios"],
       processRunner,
       processSupervisor,
+      registry: { snapshot: { devices: [], leases: [] } },
+      screens: {
+        openScreen: () => Promise.reject(new Error("no screen in a fake context")),
+        screenAvailability: () => Promise.resolve([]),
+      },
       tcpProbe: new FakeTcpProbe(),
     },
     processRunner,
