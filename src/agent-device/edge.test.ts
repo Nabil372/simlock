@@ -1226,6 +1226,41 @@ describe("the agent-device front, through the whole worker daemon", () => {
       .toEqual(["ready"]);
   });
 
+  const ended = [{ leaseId: hex(1), outcome: "released" }];
+  it.each([
+    [
+      "a `close` that succeeds, in `data`",
+      { result: { data: { endedLeases: ended } } },
+      (rig: Rig) => command(rig, "close", 1),
+    ],
+    [
+      "a `close` that fails, in `error.details`",
+      { error: { data: { details: { endedLeases: ended } } } },
+      (rig: Rig) => {
+        rig.fake.failNextCommand({ code: "COMMAND_FAILED", message: "close failed" });
+        return command(rig, "close", 1);
+      },
+    ],
+    [
+      "a `batch` with a close step, in `data` beside `results`",
+      { result: { data: { endedLeases: ended, results: [] } } },
+      (rig: Rig) => batch(rig, 1, [{ command: "snapshot" }, { command: "close" }]),
+    ],
+  ] as const)(
+    "%s: a command that ends the agent-device lease and names it in `endedLeases` releases the simlock lease and frees the device though the CLI sends no release, and a later heartbeat answers `LEASE_NOT_FOUND`",
+    async (_case, reply, send) => {
+      const rig = await setUp();
+      await granted(rig, 1);
+
+      expect(await envelopeOf(await send(rig))).toMatchObject(reply);
+      await expect.poll(async () => listed(rig)).toEqual([]);
+      await expect
+        .poll(async () => (await devices(rig)).map((device) => device.state))
+        .toEqual(["ready"]);
+      expectLeaseGone(await envelopeOf(await heartbeat(rig, 1)), "LEASE_NOT_FOUND");
+    },
+  );
+
   it("a release the agent-device daemon fails keeps the simlock lease and answers the daemon's error", async () => {
     const rig = await setUp();
     await granted(rig, 1);
