@@ -86,6 +86,22 @@ describe("TokenStore", () => {
     expect(records.map((record) => record.label)).toEqual(["one", "two"]);
   });
 
+  it("persists and verifies both tokens created concurrently", async () => {
+    const { store, filesystem } = tokenStore();
+
+    const created = await Promise.all([
+      store.create("agent", "one"),
+      store.create("operator", "two"),
+    ]);
+
+    const persisted = JSON.parse(await filesystem.readFile(tokensPath)) as unknown[];
+    expect(persisted).toHaveLength(2);
+    expect(persisted).toEqual(expect.arrayContaining(created.map(({ record }) => record)));
+    await expect(Promise.all(created.map(({ secret }) => store.verify(secret)))).resolves.toEqual(
+      created.map(({ record }) => ({ requesterId: record.id, role: record.role })),
+    );
+  });
+
   it("verifies a token by hashing the presented secret against stored hashes", async () => {
     const { store } = tokenStore();
     const { record, secret } = await store.create("operator", "root");
