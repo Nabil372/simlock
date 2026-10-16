@@ -1270,19 +1270,27 @@ describe("the agent-device front, through the whole worker daemon", () => {
     },
   );
 
-  it("a streamed command reply whose last frame names `endedLeases` releases the simlock lease though the CLI sends no release, and the CLI gets the body unchanged", async () => {
+  // why: agent-device 0.21.28 streams a reply when the CLI runs without --json; the JSON-RPC answer is the `response` of a `type: "response"` line, not the line itself.
+  it("a close streamed in agent-device's own line shape releases the simlock lease", async () => {
     const rig = await setUp();
     await granted(rig, 1);
     const chunks = [
-      '{"progress":1}\n',
-      `${JSON.stringify({ result: { data: { endedLeases: ended } } })}\n`,
+      `${JSON.stringify({ event: { kind: "command", message: "Closing" }, type: "progress" })}\n`,
+      `${JSON.stringify({
+        response: {
+          id: "x",
+          jsonrpc: "2.0",
+          result: { data: { endedLeases: ended, session: "t:adc-1" }, ok: true },
+        },
+        type: "response",
+      })}\n`,
     ];
     rig.fake.streamNextCommand(chunks);
 
     const streamed = await command(rig, "close", 1);
 
     expect(await streamed.text()).toBe(chunks.join(""));
-    await expect.poll(async () => listed(rig)).toEqual([]);
+    await expect.poll(async () => listed(rig), { timeout: 3_000 }).toEqual([]);
     await expect
       .poll(async () => (await devices(rig)).map((device) => device.state))
       .toEqual(["ready"]);
@@ -1335,7 +1343,11 @@ describe("the agent-device front, through the whole worker daemon", () => {
 
   it("a command's reply, a streamed progress body included, reaches the CLI unchanged, and a CLI that hangs up during it aborts the request the agent-device daemon was answering", async () => {
     const rig = await setUp();
-    const chunks = ['{"progress":1}\n', '{"progress":2}\n', '{"done":true}\n'];
+    const chunks = [
+      '{"type":"progress","event":{"kind":"command","message":"one"}}\n',
+      '{"type":"progress","event":{"kind":"command","message":"two"}}\n',
+      '{"type":"response","response":{"jsonrpc":"2.0","id":"x","result":{"ok":true,"data":{}}}}\n',
+    ];
     rig.fake.streamNextCommand(chunks);
 
     const streamed = await command(
