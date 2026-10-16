@@ -57,7 +57,7 @@ Flows: [device selection](../../docs/internal/flows/device-selection.md),
    `catalog.get` and `config.get` on the tick, after `component.installed`, or with no catalog yet.
    One at a time; refreshes asked meanwhile merge into one. 2 timed-out refreshes in a row → close.
 6. Worker events are republished with `workerId`. `lease.*`, `device.*`, `component.install*`
-   trigger a refresh. A worker event named like a gateway fact (`worker.*`, `request.granted`) is dropped.
+   trigger a refresh. A worker event named like a gateway fact (`worker.*`, `request.dispatched`, `request.granted`) is dropped.
 
 **Fleet request** (`FleetLeaseCoordinator.request`, under its own `SerializedDecision`; routing's
 `assess` and nine stages are in [routing](routing/AGENTS.md)):
