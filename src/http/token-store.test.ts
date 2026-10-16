@@ -67,6 +67,14 @@ describe("TokenStore", () => {
     expect(JSON.stringify(persisted)).not.toContain("fake-secret");
   });
 
+  it("writes tokens.json owner-only, mode 0o600, as the daemon's local-state guarantee says", async () => {
+    const { store, filesystem } = tokenStore();
+
+    await store.create("agent", "ci-runner");
+
+    expect((await filesystem.stat(tokensPath)).mode).toBe(0o600);
+  });
+
   it("creates a token without a label when none is given", async () => {
     const { store } = tokenStore();
 

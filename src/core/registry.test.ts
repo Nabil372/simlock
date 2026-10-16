@@ -23,9 +23,13 @@ const spec: VirtualSpec = {
 class ObservingFilesystem extends MemoryFilesystem {
   readonly operations: string[] = [];
 
-  override async writeFileAtomic(path: string, contents: string): Promise<void> {
+  override async writeFileAtomic(
+    path: string,
+    contents: string,
+    options?: { mode?: number },
+  ): Promise<void> {
     this.operations.push("save");
-    await super.writeFileAtomic(path, contents);
+    await super.writeFileAtomic(path, contents, options);
   }
 }
 
@@ -191,6 +195,27 @@ describe("Registry", () => {
     const reloaded = await Registry.load(options);
 
     expect(reloaded.snapshot).toEqual(registry.snapshot);
+  });
+
+  it("writes state.json owner-only, mode 0o600, as the daemon's local-state guarantee says", async () => {
+    const clock = new FakeClock(1_000);
+    const filesystem = new MemoryFilesystem();
+    const registry = await Registry.load({
+      clock,
+      eventBus: new EventBus(clock),
+      filesystem,
+      idGenerator: { generate: () => "test" },
+      statePath,
+    });
+
+    await registry.registerDevice({
+      driverData: {},
+      driverDeviceId: "driver_test",
+      provisionDuration: 25,
+      spec,
+    });
+
+    expect((await filesystem.stat(statePath)).mode).toBe(0o600);
   });
 
   it("loads a legacy warm record as busy reclaiming rather than eligible ready inventory", async () => {
