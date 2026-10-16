@@ -770,4 +770,32 @@ describe("GatewayRelay against a worker that breaks the protocol", () => {
 
     expect(await pending).toMatchObject({ code: "WORKER_UNREACHABLE", state: "rejected" });
   });
+
+  it("drops every hop-by-hop and framing header of a worker's relay head, in any case, and keeps an ordinary header, on the response it hands the caller", async () => {
+    const { connection, relay } = await setup();
+    const pending = relay.relay(WORKER_ID, call());
+    const request = await sentFrame(connection, "relay.request");
+    await openedChannel(connection);
+
+    connection.push("relay-head", {
+      headers: [
+        ["connection", "close"],
+        ["Content-Length", "5"],
+        ["keep-alive", "timeout=5"],
+        ["proxy-authenticate", "Basic realm=worker"],
+        ["proxy-authorization", "Basic worker-secret"],
+        ["te", "trailers"],
+        ["Te", "custom-checksum"],
+        ["trailer", "X-Note"],
+        ["TRANSFER-ENCODING", "chunked"],
+        ["upgrade", "h2c"],
+        ["x-kept", "yes"],
+      ],
+      requestId: request.id,
+      status: 200,
+    });
+    const response = await pending;
+
+    expect([...response.headers.entries()]).toEqual([["x-kept", "yes"]]);
+  });
 });
