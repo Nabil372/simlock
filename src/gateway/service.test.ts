@@ -743,6 +743,40 @@ describe("GatewayService", () => {
     await harness.service.stop();
   });
 
+  it("refuses to republish a request.dispatched a worker pushes, which only the gateway itself emits", async () => {
+    const harness = fleet();
+    await harness.service.start();
+    const worker = new ScriptedWorkerClient();
+    await harness.join("wrk_1", worker);
+    await vi.waitFor(() => expect(worker.subscribed).toBe(true));
+
+    worker.pushEvent({
+      event: "request.dispatched",
+      module: "fleet-lease-coordinator",
+      payload: {
+        platform: "ios",
+        queuedMs: 0,
+        reason: "warm-hit",
+        requestId: "req_forged",
+        requesterId: "agent-1",
+        stage: "warm-hit",
+        workerId: "wrk_forged",
+      },
+    });
+    worker.pushEvent({
+      event: "lease.granted",
+      module: "lease-engine",
+      payload: { deviceId: "dev_1", leaseId: "lease_1", requester: "agent-1" },
+    });
+    await vi.waitFor(() =>
+      expect(harness.events.some((event) => event.event === "lease.granted")).toBe(true),
+    );
+
+    expect(harness.events.filter((event) => event.event === "request.dispatched")).toEqual([]);
+
+    await harness.service.stop();
+  });
+
   it("refreshes the view on a worker event that changes capacity or leases", async () => {
     const harness = fleet();
     await harness.service.start();
