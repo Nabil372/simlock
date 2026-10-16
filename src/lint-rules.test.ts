@@ -115,6 +115,21 @@ type Expectation = readonly [Verdict, path: string, specifier: string, unbuilt?:
 // why: one dependency-cruiser run serves every case, so a fixture named x.ts gets its case's number to keep cases apart; main.ts and testing.ts collect every case's imports.
 const pathCases: readonly (readonly [string, readonly Expectation[]])[] = [
   [
+    "fails reach-ins into cleanup, routing, warm-pool and contract helpers, and passes their indexes",
+    [
+      ["fails", "src/core/x.ts", "./cleanup/types.js"],
+      ["passes", "src/core/x.ts", "./cleanup/index.js"],
+      ["fails", "src/gateway/x.ts", "./routing/request-match.js"],
+      ["passes", "src/gateway/x.ts", "./routing/index.js"],
+      ["fails", "src/core/x.ts", "./warm-pool/policy.js"],
+      ["passes", "src/core/x.ts", "./warm-pool/index.js"],
+      ["fails", "src/core/x.ts", "../contract/os-range.js"],
+      ["fails", "src/cli/x.ts", "../contract/duration.js"],
+      ["passes", "src/core/x.ts", "../contract/index.js"],
+      ["passes", "src/cli/x.ts", "../contract/index.js"],
+    ],
+  ],
+  [
     "fails a daemon file importing a private core file, and passes core's index",
     [
       ["fails", "src/daemon/x.ts", "../core/lease-ports.js"],
@@ -720,6 +735,20 @@ describe("the console's layers", () => {
 });
 
 describe("the repo's known violations", () => {
+  it("imports OS range and duration helpers through the contract index across the repo", () => {
+    const found = cruise(repoRoot, ["src", "e2e", "ui"]);
+
+    expect(
+      found
+        .filter(
+          (v) =>
+            v.rule.name === "past-index" && /^src\/contract\/(os-range|duration)\.ts$/.test(v.to),
+        )
+        .map((v) => `${v.from} -> ${v.to}`)
+        .sort(),
+    ).toEqual([]);
+  }, 60_000);
+
   const read = (file: string): Violation[] =>
     JSON.parse(readFileSync(join(repoRoot, file), "utf8")) as Violation[];
   const key = (v: Violation): string => `${v.rule.name} ${v.from} -> ${v.to}`;
