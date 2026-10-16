@@ -1288,6 +1288,29 @@ describe("the agent-device front, through the whole worker daemon", () => {
       .toEqual(["ready"]);
   });
 
+  // why: agent-device 0.21.28 streams a reply when the CLI runs without --json; the JSON-RPC answer is the `response` of a `type: "response"` line, not the line itself.
+  it("a close streamed in agent-device's own line shape releases the simlock lease", async () => {
+    const rig = await setUp();
+    await granted(rig, 1);
+    const chunks = [
+      `${JSON.stringify({ event: { kind: "command", message: "Closing" }, type: "progress" })}\n`,
+      `${JSON.stringify({
+        response: {
+          id: "x",
+          jsonrpc: "2.0",
+          result: { data: { endedLeases: ended, session: "t:adc-1" }, ok: true },
+        },
+        type: "response",
+      })}\n`,
+    ];
+    rig.fake.streamNextCommand(chunks);
+
+    const streamed = await command(rig, "close", 1);
+
+    expect(await streamed.text()).toBe(chunks.join(""));
+    await expect.poll(async () => listed(rig), { timeout: 3_000 }).toEqual([]);
+  });
+
   it("a release the agent-device daemon fails keeps the simlock lease and answers the daemon's error", async () => {
     const rig = await setUp();
     await granted(rig, 1);
