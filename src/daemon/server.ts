@@ -653,10 +653,13 @@ export class DaemonServer {
     for (const connection of this.#connections) {
       await connection.socket.close();
     }
-    await this.options.host.stop();
-    // why: a daemon that lost the start race never persisted it, and `#stop()` is never reached on that
-    // instance.
-    await this.options.adminSecret?.remove();
+    // why: releasing the endpoint lets a replacement write its credential, so removal must happen while this daemon still owns it.
+    // why: a failed removal must still release the endpoint, or the stopping daemon keeps listening and blocks its replacement.
+    try {
+      await this.options.adminSecret?.remove();
+    } finally {
+      await this.options.host.stop();
+    }
     this.#logger.info("Daemon stopped", { reason });
   }
 
