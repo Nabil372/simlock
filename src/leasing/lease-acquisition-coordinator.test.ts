@@ -1189,6 +1189,173 @@ describe("LeaseAcquisitionCoordinator", () => {
     await expect(acquisition).resolves.toMatchObject({ device: { id: shutdown.id } });
   });
 
+  it("delivers the grant to a queued waiter whose queue timeout falls due while its lease is being written", async () => {
+    const harness = await createHarness();
+    const held = await harness.coordinator.request(request, {
+      ownerId: "holder",
+      requesterId: "holder",
+    });
+    const waiting = harness.coordinator.request(request, {
+      ownerId: "waiter",
+      requesterId: "waiter",
+      timeoutMs: 100,
+    });
+    const waitingOutcome = promiseState(waiting);
+    let callerError: string | undefined;
+    void waiting.then(undefined, (error: unknown) => {
+      callerError = (error as Error).name;
+    });
+    await flush();
+    expect({
+      now: harness.clock.now(),
+      outcome: waitingOutcome.state,
+      queueDepth: harness.coordinator.queueDepth,
+    }).toEqual({ now: 1_000, outcome: "pending", queueDepth: 1 });
+
+    const write = harness.filesystem.writeFileAtomic.bind(harness.filesystem);
+    let deadlineFellDueDuringTheGrantWrite = false;
+    harness.filesystem.writeFileAtomic = (path, contents) => {
+      // why: a real clock keeps turning while a commit is in flight, so the only faithful way to
+      // put this waiter's timeout inside the grant's write is to advance it from the write itself.
+      const inFlight = write(path, contents);
+      const leases = (JSON.parse(contents) as { leases?: { requesterId: string }[] }).leases ?? [];
+      if (leases.some((lease) => lease.requesterId === "waiter")) {
+        harness.clock.advance(100);
+        deadlineFellDueDuringTheGrantWrite = harness.clock.now() >= 1_100;
+      }
+      return inFlight;
+    };
+
+    await harness.registry.beginRelease(held.lease.id);
+    await harness.registry.transitionDevice(held.device.id, "ready", {
+      event: "device.reclaimed",
+      payload: { deviceId: held.device.id, duration: 0, strategy: "wipe" },
+    });
+    harness.coordinator.kick();
+    await settle();
+
+    expect({
+      callerError,
+      deadlineFellDueDuringTheGrantWrite,
+      deviceStates: harness.registry.snapshot.devices.map((device) => device.state),
+      leaseRequesters: harness.registry.snapshot.leases.map((lease) => lease.requesterId),
+      outcome: waitingOutcome.state,
+      storedRequestStates: harness.registry
+        .leaseRequests()
+        .map((record) => [record.requesterId, record.state]),
+    }).toEqual({
+      callerError: undefined,
+      storedRequestStates: [
+        ["holder", "granted"],
+        ["waiter", "granted"],
+      ],
+      deadlineFellDueDuringTheGrantWrite: true,
+      deviceStates: ["leased"],
+      leaseRequesters: ["waiter"],
+      outcome: "fulfilled",
+    });
+    await expect(waiting).resolves.toMatchObject({
+      device: { id: held.device.id },
+      lease: { requesterId: "waiter" },
+    });
+  });
+
+  it("defers a waiter whose grant of a ready device failed to store, logs the grant step, and grants it on the next wake", async () => {
+    const { logger, sink } = capturingLogger();
+    const harness = await createHarness({ logger });
+    const device = await seedReady(harness);
+    let failing = true;
+    const write = harness.filesystem.writeFileAtomic.bind(harness.filesystem);
+    harness.filesystem.writeFileAtomic = (path, contents) => {
+      // why: the grant is one registry commit, so failing the write that stores this waiter's
+      // lease is how a dead disk looks to the coordinator; the registry keeps its old state.
+      const stored = (JSON.parse(contents) as { leases?: { requesterId: string }[] }).leases ?? [];
+      if (failing && stored.some((lease) => lease.requesterId === "retrying")) {
+        return Promise.reject(new Error("state.json write refused"));
+      }
+      return write(path, contents);
+    };
+
+    const acquisition = harness.coordinator.request(request, {
+      ownerId: "retrying",
+      requesterId: "retrying",
+    });
+    const outcome = promiseState(acquisition);
+    await settle();
+
+    const failedGrant = sink.records.filter((record) => record.fields?.["step"] === "grant");
+    expect(failedGrant).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        fields: {
+          deviceId: device.id,
+          error: "Error: state.json write refused",
+          requesterId: "retrying",
+          step: "grant",
+        },
+      }),
+    ]);
+    expect({
+      deviceStates: harness.registry.snapshot.devices.map((candidate) => candidate.state),
+      leaseRequesters: harness.registry.snapshot.leases.map((lease) => lease.requesterId),
+      outcome: outcome.state,
+      queueDepth: harness.coordinator.queueDepth,
+      storedRequestStates: harness.registry
+        .leaseRequests()
+        .map((record) => [record.requesterId, record.state]),
+    }).toEqual({
+      deviceStates: ["ready"],
+      leaseRequesters: [],
+      outcome: "pending",
+      queueDepth: 1,
+      storedRequestStates: [["retrying", "open"]],
+    });
+
+    failing = false;
+    harness.coordinator.kick();
+    await expect(acquisition).resolves.toMatchObject({ device: { id: device.id } });
+    // why: the retry is a fresh grant, so a second `grant` line here means the failed one left
+    // more behind than the one warning it earned.
+    expect(sink.records.filter((record) => record.fields?.["step"] === "grant")).toHaveLength(1);
+  });
+
+  it("writes no lease for a ready grant the queue will not put in flight", async () => {
+    const harness = await createHarness();
+    await seedReady(harness);
+    let markedProcessingCalls = 0;
+    // why: the queue refuses to put a waiter past its deadline in flight (its own rule, proved in
+    // wait-queue.test.ts); the refusal is modelled directly here because the state it leaves — a
+    // live waiter whose deadline has passed — is one only the queue's own re-queue path creates.
+    // The coordinator must not write a lease for a waiter the queue has refused.
+    harness.queue.markProcessing = () => {
+      markedProcessingCalls += 1;
+      return false;
+    };
+
+    const acquisition = harness.coordinator.request(request, {
+      ownerId: "late",
+      requesterId: "late",
+    });
+    const outcome = promiseState(acquisition);
+    await settle();
+
+    expect({
+      deviceStates: harness.registry.snapshot.devices.map((candidate) => candidate.state),
+      leaseRequesters: harness.registry.snapshot.leases.map((lease) => lease.requesterId),
+      markedProcessingCalls,
+      outcome: outcome.state,
+      storedRequestStates: harness.registry
+        .leaseRequests()
+        .map((record) => [record.requesterId, record.state]),
+    }).toEqual({
+      deviceStates: ["ready"],
+      leaseRequesters: [],
+      markedProcessingCalls: 1,
+      outcome: "pending",
+      storedRequestStates: [["late", "open"]],
+    });
+  });
+
   it("keeps admission closed until concurrent maintenance callers have all finished", async () => {
     const harness = await createHarness();
     await harness.coordinator.beginMaintenance();
