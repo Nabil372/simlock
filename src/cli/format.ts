@@ -173,7 +173,6 @@ export function formatStatus(status: StatusGetOutput, now: number): string {
       ...consoleLines(daemon),
       `Host: ${formatHost(host)}`,
       ...loadLines(status),
-      ...historyLines(status.history),
       "Devices, leases and capacity appear once startup finishes.",
     ].join("\n");
   }

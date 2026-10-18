@@ -538,9 +538,7 @@ export class DaemonServer {
       }),
     );
 
-    // why: Redacted: the payload lands in the ring and `events.jsonl`, and the log line in
-    // `daemon.log`, none of which is as guarded as `config.json`. `this.options.config` itself
-    // stays whole -- `config.get` answers from it.
+    // why: redacted because the payload lands in the ring and `history.db`, and the log line in `daemon.log`, none of which is as guarded as `config.json`; `this.options.config` stays whole for `config.get`.
     const configSnapshot = redactConfig(this.options.config);
     this.options.eventBus.emit(
       "daemon.started",

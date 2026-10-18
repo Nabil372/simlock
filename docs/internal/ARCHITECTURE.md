@@ -52,7 +52,8 @@ worker daemon ── uplink (WebSocket to /v1/uplink, worker dials) ──┘
 | mcp | stdio MCP server for one agent session | [mcp](../../src/mcp/AGENTS.md) |
 | simlock-client, client, admin | The typed programmatic client (`simlock/client`, `simlock/admin`) | [simlock-client](../../src/simlock-client/AGENTS.md) · [client](../../src/client/AGENTS.md) · [admin](../../src/admin/AGENTS.md) |
 | lease-policy | Client-side renew timer | [lease-policy](../../src/lease-policy/AGENTS.md) |
-| bus | Post-commit business events and the event file | [bus](../../src/bus/AGENTS.md) |
+| bus | Post-commit business events and their in-memory ring | [bus](../../src/bus/AGENTS.md) |
+| history | The durable event history: `history.db`, prune, set-aside, projections | [history](../../src/history/AGENTS.md) |
 | ports | Every external API behind an interface, with a fake | [ports](../../src/ports/AGENTS.md) |
 | host-load | CPU, memory and disk load samples | [host-load](../../src/host-load/AGENTS.md) |
 | agent-identity | Default requester id for CLI and MCP | [agent-identity](../../src/agent-identity/AGENTS.md) |

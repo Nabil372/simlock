@@ -327,14 +327,7 @@ export interface Config {
 /** What `redactConfig` puts in place of a secret's value. */
 export const REDACTED_VALUE = "[redacted]";
 
-/**
- * The config with its secrets masked, for every place that writes the config somewhere other
- * than `config.json` and `config.get`: the `Daemon started` log line and the `daemon.started`
- * payload, which land in `daemon.log`, the event ring and `events.jsonl`. Masked rather than
- * deleted so the copy keeps `Config`'s keys and a reader can still tell "set" from "unset".
- * Returns a copy and never touches its input: the live config is what `config.get` answers
- * and what the uplink presents, so the masked copy must never be handed to either.
- */
+// why: masked rather than deleted, so the copy keeps `Config`'s keys and a reader can tell "set" from "unset"; a copy, because the live config is what `config.get` answers and the uplink presents.
 export function redactConfig(config: Config): Config {
   if (config.gateway.token === undefined) return config;
   return { ...config, gateway: { ...config.gateway, token: REDACTED_VALUE } };

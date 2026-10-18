@@ -152,8 +152,8 @@ carry no `workerId` beyond the worker they are about.
 
 A relayed event keeps the worker's `id` and `timestamp`. Its `payload.workerId`
 is the only mark that it was relayed, and `seq` is the gateway's own. So the
-same fact has the same `id` in the worker's `events.jsonl` and the gateway's,
-and you can join the two files by it. A relayed line's time is when the fact
+same fact has the same `id` in the worker's history and the gateway's,
+and you can join the two by it. A relayed line's time is when the fact
 happened on the worker, not when the gateway heard it: a worker whose clock
 runs ahead or behind the gateway's shows that skew in the gateway's order.
 A replay (`simlock events`, `--since`, `GET /v1/events`, the console's buffer)
@@ -163,8 +163,8 @@ behind prints after a later gateway event. A worker event whose `timestamp` is
 not a time a date can hold (beyond 8.64e15 ms either side of the epoch) is not
 relayed.
 
-Relayed events are written to the gateway's own event file
-(`events.jsonl`) along with its own, so `simlock events --since` against a
+Relayed events are written to the gateway's own event history
+(`history.db`) along with its own, so `simlock events --since` against a
 gateway reaches back across a gateway restart. Two consequences of relaying
 rather than owning: the gateway's history only holds what arrived while its
 uplinks were up (a worker's events from before it connected are not
@@ -183,12 +183,12 @@ lease index, rather than trusting the relayed payload's `ownerId` verbatim.
 - Every event carries: `id` (`evt_` and a unique suffix; it names the event for
   good and survives a daemon restart), `seq`, `timestamp`, `event`, `payload`,
   emitting module.
-- The `id` arrived with protocol 10. Lines already in `events.jsonl` from before
-  the upgrade have none and are not shown by `simlock events --since`.
+- The `id` arrived with protocol 10. Events recorded before that upgrade have
+  none and are not shown by `simlock events --since`.
 - Events are appended to an in-memory ring buffer, which `simlock events`
-  without `--since` replays, and to the event file `~/.simlock/events.jsonl`,
-  one JSON line per event with the same fields. The file survives daemon
-  restarts and crashes, is what `simlock events --since` reads, and is the
-  durable record: no event is copied into `daemon.log`. It is kept for
-  `eventLog.retention`, bounded in size by `eventLog.maxBytes`, in numbered
-  generations of `eventLog.rotateBytes` each.
+  without `--since` replays, and to the event history `~/.simlock/history.db`, a SQLite file with one
+  row per event holding the same fields. It survives daemon restarts and
+  crashes, is what `simlock events --since` reads, and is the durable record:
+  no event is copied into `daemon.log`. It is kept for `eventLog.retention`, and the stored size of its events is bounded by
+  `eventLog.maxBytes`. An `events.jsonl` left by an earlier version is left
+  untouched and never read.

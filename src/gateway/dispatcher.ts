@@ -96,7 +96,6 @@ export interface GatewayTokenStore {
 export interface GatewayDispatcherOptions {
   /** The gateway's own config -- what `config.get` returns (ADR 0005 §34). */
   readonly config: GatewayConfig;
-  /** Answers `events.replay`: the ring, or the event file for a `sinceTs`. */
   readonly eventHistory: Pick<EventHistoryHandle, "replay" | "status">;
   readonly workers: WorkerRegistry;
   /** Each worker's live link, for `worker.install-component` (ADR 0010 §7). `GatewayService`

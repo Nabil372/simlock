@@ -1340,13 +1340,7 @@ export function modelPreferenceWiring(
   );
 }
 
-/**
- * Turns the iOS driver's `SlimmedFact` into the matching `device.slimmed` bus event. The driver
- * never depends on the event bus directly (architecture rule 5) -- this is the one place, at driver construction, that bridges the
- * driver's `onSlimmed` callback to a post-commit fact for observers (`simlock events`, and the
- * event file behind it). A *skipped* slim is deliberately not bridged here
- * -- see `onSlimSkipped` in `discoverDrivers`, which logs it instead (see `docs/internal/EVENTS.md`).
- */
+// why: the iOS driver never depends on the event bus directly (architecture rule 5); this is the one place that bridges its `onSlimmed` callback to a post-commit fact. A skipped slim is not bridged: `onSlimSkipped` in `discoverDrivers` logs it instead.
 export function emitSlimDiagnostic(eventBus: Pick<EventBus, "emit">): (fact: SlimmedFact) => void {
   return (fact) => {
     eventBus.emit(

@@ -1455,6 +1455,17 @@ first 15 seconds after a start. A part that could not be read says
 (macOS). Until the first reading finishes the line is absent, and `--json`
 carries no `load`.
 
+Once startup has finished, `status` adds a `History:` line when the event
+history needs attention, and nothing when it is healthy. If the history is not
+being written (a write failed, or the file could not be opened), it says
+`History: the event history is not being written; see daemon.log.` If this
+start found `history.db` damaged and renamed it aside, it says `History: the
+event history was damaged and set aside at 2026-10-16 09:12; a fresh one was
+started.` (local time); the damaged file stays beside the new one as
+`history.db.damaged-<epoch ms>`. Both lines can appear together. In `--json`
+the block is `history`: `opened`, `writing` and, after a set-aside,
+`setAsideAt` (epoch ms); the daemon sends it while starting too.
+
 `--json` prints the answer as the daemon sent it, with `devices`, `leases`,
 `capacity`, `queueDepth` and `physicalQueueDepth` absent. On a gateway, a worker that is still starting
 shows `starting` after its connection state and `leases unknown` in place of a
@@ -2281,16 +2292,18 @@ history from before the upgrade that added it is not shown.
   (`eventBuffer.capacity`, 1000 by default), which start empty after a
   restart.
 - `--since 1h` reaches further back. Every event is also written to
-  `~/.simlock/events.jsonl`, which survives restarts and crashes, so
+  `~/.simlock/history.db`, which survives restarts and crashes, so
   `--since` returns events from before the last restart and beyond the
-  in-memory limit, across every generation of the file, back to the oldest
-  event it still holds. Durations take `ms`, `s`, `m`, `h` and `d` units
+  in-memory limit, back to the oldest event it still holds. Durations take `ms`, `s`, `m`, `h` and `d` units
   (`--since 2d`); a bare number is milliseconds. The history is kept for
   `eventLog.retention` (seven days by default), with `eventLog.maxBytes` as
   a size backstop (see [CONFIGURATION.md](CONFIGURATION.md)); the oldest
   events go first.
-- `--since` without `--follow`, with no daemon running, reads the file
-  directly and does not start a daemon. `--follow` starts one as usual.
+- `--since` without `--follow`, with no daemon running, reads `history.db`
+  directly and does not start a daemon. With no `history.db` it prints
+  nothing and exits 0; with one it cannot read it prints one JSON error line
+  on stderr and exits 1. `--follow` starts a daemon as usual. An
+  `events.jsonl` left by an earlier version is never read.
 - `--follow` keeps streaming live events. With `--since`, it prints that
   history first and then streams, with no event missing or printed twice
   where the two meet.
@@ -2303,7 +2316,7 @@ the payload, interleaved with the gateway's own `worker.connected` /
 `worker.rejected` is how you find out why a machine never appeared in
 `simlock worker list` at all — it reports an uplink refused at the door,
 which nothing else records. The gateway writes these relayed events to its
-own `events.jsonl` along with its own, so `--since` reaches back across a
+own `history.db` along with its own, so `--since` reaches back across a
 gateway restart. It holds only what arrived while the gateway was up — a
 worker's events from before its uplink connected are not backfilled.
 
@@ -2450,6 +2463,11 @@ under `capacity.config` — see
 is running, both a global and a per-platform running limit must have room
 before Simlock provisions or boots a shutdown device.
 
+`simlock config set` also removes `eventLog.rotateBytes` from `config.json`
+when it holds one: that key no longer exists (the event history is one SQLite
+file, not rotated generations). The command then prints `Removed
+eventLog.rotateBytes from <config path>: it is no longer used.` on stderr, once.
+
 `simlock config set mode gateway` turns this daemon into a **gateway** — one
 that owns no devices and fronts the workers that join it — and `simlock
 config set mode worker` turns it back. Like every `config set`, it is a
@@ -2558,7 +2576,7 @@ fleet; `simlock worker remove` then forgets its view.
 ### `SIMLOCK_HOME`
 
 Overrides the data directory the CLI, MCP server, and daemon all use for
-`config.json`, `state.json`, `daemon.sock`, `daemon.log`, `events.jsonl`, and — unless
+`config.json`, `state.json`, `daemon.sock`, `daemon.log`, `history.db`, and — unless
 overridden — the device roots themselves under `devices/`. Defaults to
 `~/.simlock`. Because devices live under it, it needs a local volume with tens
 of gigabytes free. All three frontends resolve it through the same function

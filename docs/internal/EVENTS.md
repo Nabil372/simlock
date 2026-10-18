@@ -8,9 +8,9 @@ in short: `subject.past-tense-fact`, emitted post-commit, facts not commands.
 > implemented, and add new events here in the same change that introduces them.
 
 > **The event `id` is a one-time exception to additive-only** for the event
-> file, taken by [ADR 0014](adr/0014-an-event-has-one-id-minted-where-the-fact-happened.md)
-> the way ADR 0004's was: every envelope gains a required `id`, and a line in
-> `events.jsonl` without one is not replayed. History from before the upgrade
+> history, taken by [ADR 0014](adr/0014-an-event-has-one-id-minted-where-the-fact-happened.md)
+> the way ADR 0004's was: every envelope gains a required `id`, and a stored
+> event without one is not replayed. History from before the upgrade
 > is not shown.
 
 > **The payload removals in the lease rows are a deliberate exception to
@@ -143,7 +143,7 @@ left behind (#79), each when there is one.
 
 | Event | Payload (key fields) | Emitted when | Emitter | Status |
 |---|---|---|---|---|
-| `daemon.started` | version, config snapshot (`gateway.token`, when set, reads `[redacted]`: the payload reaches the ring and `events.jsonl`, which are not a token's place the way `config.json` and `config.get` are; masked rather than dropped so the keys stay the same, #170) | daemon finished startup + reconcile | DaemonServer | implemented |
+| `daemon.started` | version, config snapshot (`gateway.token`, when set, reads `[redacted]`: the payload reaches the ring and `history.db`, which are not a token's place the way `config.json` and `config.get` are; masked rather than dropped so the keys stay the same, #170) | daemon finished startup + reconcile | DaemonServer | implemented |
 | `daemon.stopping` | reason | graceful shutdown began | DaemonServer | implemented |
 | `disk.pressure-detected` | free bytes, threshold | free disk crossed under the configured threshold (edge-triggered: once per crossing, not once per tick while it persists) | CleanupReaper | implemented |
 | `cleanup.executed` | rule name, action, target, reason | cleanup executor committed a proposed action | CleanupExecutor | implemented |
@@ -194,8 +194,8 @@ worker to lose.
 **A relayed event keeps the worker's `id` and `timestamp`** (ADR 0014 §2, §5,
 §6). A gateway republishes a worker's business events through the bus's
 `republish`, whose only caller is the worker link: it mints `seq` and nothing
-else, so one fact has one `id` in the worker's event file, the gateway's, both
-rings and both streams, and the two files can be joined by it.
+else, so one fact has one `id` in the worker's history, the gateway's, both
+rings and both streams, and the two can be joined by it.
 `payload.workerId` is the only mark of a relay; nothing is added to the
 envelope. A relayed line's time is when the fact happened on the worker, so a
 worker's clock skew shows in the gateway's order, and `--since` on the gateway
@@ -207,7 +207,7 @@ prints after a later gateway event. A worker's `id` and
 `timestamp` are claims, bounded by the push schema before the relay sees them: the
 `id` by its pattern, the `timestamp` to the range a JavaScript date holds
 (|t| <= 8.64e15 ms), so no value the console cannot render as a date reaches the
-gateway's bus or event file.
+gateway's bus or history.
 
 **`device.exec` emits no event, and that is deliberate.** It is the one
 operation here with no fact of its own. Running a command against a device is
@@ -235,8 +235,8 @@ field: additive, and only ever on a gateway. The eight events in this
 section's own table are the gateway's own, and carry no `workerId` beyond
 the worker they are about.
 
-Relayed events are written to the gateway's own event file
-(`events.jsonl`) along with its own, so `simlock events --since` against a
+Relayed events are written to the gateway's own event history
+(`history.db`) along with its own, so `simlock events --since` against a
 gateway reaches back across a gateway restart. Two consequences of relaying
 rather than owning: the gateway's history only holds what arrived while its
 uplinks were up (a worker's events from before it connected are not
@@ -263,12 +263,12 @@ verbatim off the wire.
 - Every event carries: `id` (`evt_` and a unique suffix; it names the event for
   good and survives a daemon restart), `seq`, `timestamp`, `event`, `payload`,
   emitting module.
-- The `id` arrived with protocol 10. Lines already in `events.jsonl` from before
-  the upgrade have none and are not shown by `simlock events --since`.
+- The `id` arrived with protocol 10. Events recorded before that upgrade have
+  none and are not shown by `simlock events --since`.
 - Events are appended to an in-memory ring buffer, which `simlock events`
-  without `--since` replays, and to the event file `~/.simlock/events.jsonl`,
-  one JSON line per event with the same fields. The file survives daemon
-  restarts and crashes, is what `simlock events --since` reads, and is the
-  durable record: no event is copied into `daemon.log`. It is kept for
-  `eventLog.retention` (seven days), bounded by `eventLog.maxBytes`, in numbered
-  generations of `eventLog.rotateBytes` each. See ADR 0006 and ADR 0016.
+  without `--since` replays, and to the event history `~/.simlock/history.db`, a SQLite file with one
+  row per event holding the same fields. It survives daemon restarts and
+  crashes, is what `simlock events --since` reads, and is the durable record:
+  no event is copied into `daemon.log`. It is kept for `eventLog.retention` (seven days), and the stored size of its events is bounded by
+  `eventLog.maxBytes`. An `events.jsonl` left by an earlier version is left
+  untouched and never read. See ADR 0006 and ADR 0016.

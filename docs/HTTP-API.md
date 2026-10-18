@@ -156,14 +156,21 @@ nothing for, `short` — one of `disabled`, `no-driver`, `runtime-missing`,
 `short: "disabled"`. A gateway's own `warmPool` is empty and off; each worker's
 is on its entry in `workers`.
 
+`history` says how the event history is doing: `opened` (the daemon has
+opened `history.db`), `writing` (events are being written to it) and, only
+when this start found `history.db` damaged and renamed it aside,
+`setAsideAt` (epoch ms). The daemon sends it, on a worker and on a gateway,
+in the `starting` answer too.
+
 While the daemon is starting (`daemon.health` is `starting`), the answer is
-`200` with the `daemon` block, `host` and, once read, `load` only: it has not yet checked what it
+`200` with the `daemon` block, `history`, `host` and, once read, `load` only: it has not yet checked what it
 holds, so `capabilities`, `devices`, `leases`, `capacity`, `queueDepth`, `physicalQueueDepth`, `installs`,
 `waiting`, `warmPool` and `workers` are absent, not empty. They are all there once `health` is
 `running`, and also when it is `failed`.
 
 ```json
 { "daemon": { "health": "starting", "mode": "worker" },
+  "history": { "opened": false, "writing": false },
   "host": { "os": "macOS", "osVersion": "15.5", "arch": "arm64", "tools": [] } }
 ```
 
@@ -1510,9 +1517,9 @@ an all-or-nothing that leaves the operator guessing.
   `transitionAgeMs` and `stalled` as [`GET /v1/status`](#get-v1status)
   describes them (`simlock list --devices`).
 - `GET /v1/events?since=<duration>` — replay business events newer than
-  `since` (`simlock events --since`). They come from the daemon's event file,
-  so they include events from before a daemon restart and beyond the 1000
-  held in memory, back to the oldest event the file still holds
+  `since` (`simlock events --since`). They come from the daemon's event history
+  (`history.db`), so they include events from before a daemon restart and
+  beyond the 1000 held in memory, back to the oldest event it still holds
   (`eventLog.retention` and `eventLog.maxBytes`). `since` takes `ms`, `s`,
   `m`, `h` and `d` units (`?since=2d`). Without `since`, the recent events held in
   memory. Every event carries an `id`, the same one after a daemon restart;

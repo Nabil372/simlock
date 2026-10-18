@@ -28,7 +28,7 @@ Flows: [startup](../../docs/internal/flows/startup.md), [device.exec](../../docs
 
 ## Composition (`main.ts`)
 
-Both modes: config (`config.json`) → `Logger` → host info → `EventBus` → `EventHistory`.
+Both modes: config (`config.json`) → `Logger` → host info → `EventBus` → event history (`createEventHistory`, not yet started).
 `config.mode` then picks one branch; a gateway builds none of the worker's parts.
 
 - **Worker** — `Registry` (`state.json`) → instance id (`instance.json`) →
@@ -131,9 +131,10 @@ Security model: cooperative identity, not a hostile-process boundary.
 - `daemon.log`: `JsonLinesLogger` over `NodeFileLogSink`; `log.level` (`info`),
   rotates to `daemon.log.1` past `log.rotateBytes` (5 MiB).
 - At `log.level: debug`, `LoggingProcessRunner` logs one `process` line per command.
-- Events: ring of `eventBuffer.capacity` (1000) in memory; `events.jsonl` via
-  `EventHistory`, rotated at `eventLog.rotateBytes` (5 MiB), kept `eventLog.retention`
-  (7 days), total `eventLog.maxBytes` (256 MiB). A file that fails costs only history.
+- Events: ring of `eventBuffer.capacity` (1000) in memory; `history.db` via the
+  [history](../history/AGENTS.md), kept `eventLog.retention` (7 days), event rows capped at
+  `eventLog.maxBytes` (256 MiB). `onSocketClaimed` starts it in both modes; `dispose` stops it
+  last. A file that fails costs only history. `status.get` carries its `history`, also while starting.
 - A start that throws is logged by a fallback logger to the default `daemon.log`; exit 1.
 
 ## Rules
