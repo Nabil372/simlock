@@ -4968,6 +4968,30 @@ describe("FleetLeaseCoordinator lists why each worker cannot take a waiting requ
       ]);
     });
 
+    it("rejects the request when the other worker is drained, which cannot take it", async () => {
+      const { clients, coordinator, workers } = fleet(["wrk_a", "wrk_b"]);
+      await workers.setDrained("wrk_b", true);
+      clients["wrk_a"]?.requestLeaseQueue.push(provisionFailed("worker a: boom"));
+
+      const { ended, state } = await ask(coordinator);
+
+      expect(state.state).toBe("rejected");
+      expect(await ended).toMatchObject({ code: "PROVISION_FAILED", message: "worker a: boom" });
+    });
+
+    it("leaves the request queued when the other worker is full in its view, so the gateway never asks it", async () => {
+      const { clients, coordinator } = fleet(["wrk_a", "wrk_b"], (id) =>
+        id === "wrk_b" ? { capacity: saturatedIos() } : {},
+      );
+      clients["wrk_a"]?.requestLeaseQueue.push(provisionFailed("worker a: boom"));
+
+      const { state } = await ask(coordinator);
+
+      expect(state.state).toBe("pending");
+      expect(coordinator.waitingRequests()).toEqual([expect.objectContaining({ stage: "queued" })]);
+      expect(clients["wrk_b"]?.requestLeaseQueue).toEqual([]);
+    });
+
     it("leaves the request queued when the worker that is only full refused first and the one asked after a view change failed to provision", async () => {
       const { clients, coordinator, workers } = fleet(["wrk_a", "wrk_b"]);
       clients["wrk_a"]?.requestLeaseQueue.push(noCapacity());

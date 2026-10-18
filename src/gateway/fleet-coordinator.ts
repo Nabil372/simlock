@@ -113,8 +113,6 @@ const CANNOT_SERVE_REASONS: Readonly<Record<string, WorkerReason["reason"]>> = {
   UNKNOWN_MODEL: "unknown-model",
 };
 
-/** The only worker error codes that mean "this worker cannot serve this request" and so send it to
- * another worker (ADR 0009 §5). Any other code is final. */
 const CANNOT_SERVE_CODES: ReadonlySet<string> = new Set([
   "UNKNOWN_MODEL",
   "RUNTIME_MISSING",
@@ -850,7 +848,7 @@ export class FleetLeaseCoordinator {
     return capacityReason === undefined ? { reason: "full" } : { capacityReason, reason: "full" };
   }
 
-  // why: a second failed provision walks on like a cannot-serve code, and only when every worker that could take the request failed so does it end with the last answer.
+  // why: a second failed provision walks on like a cannot-serve code, and only when every worker that could take the request failed so does it end with the last answer; a worker full in its view could take it later, so it keeps the request queued.
   #rejectIfEveryWorkerFailedProvisioning(
     waiter: FleetWaiter,
     request: RoutableRequest,
@@ -860,7 +858,7 @@ export class FleetLeaseCoordinator {
     if (refusals === undefined) return;
     const open = this.options.routing
       .explain(request, views)
-      .filter((entry) => entry.filter === undefined)
+      .filter((entry) => entry.filter === undefined || entry.filter.reason === "full")
       .map((entry) => entry.workerId);
     const failed = [...refusals]
       .filter(([workerId]) => open.includes(workerId))
@@ -1059,9 +1057,7 @@ export class FleetLeaseCoordinator {
         this.#staleView(waiter, workerId);
         return;
       }
-      // ADR 0009 §5: the worker says it cannot serve this request at all, before any device work.
-      // Another worker may, so the request goes back to the walk without this one. After a
-      // progress push the failure falls through to the terminal branch below, as today.
+      // why: a provision failure before the worker's progress push did no device work, so another worker may serve it and the walk goes on without this one; after a progress push it falls through to the terminal branch below, as today.
       if (isSimlockError(error) && error.code === "PROVISION_FAILED" && !announced) {
         this.#rememberRefusal(waiter, workerId, {
           provisionFailure: this.#classifyRelayedError(error, workerId),

@@ -573,7 +573,7 @@ known and a reconnecting one stays known from its last catalog.
 | A known worker could serve it, but none that takes requests can | `503 NO_CAPACITY` |
 | The request requires capabilities (not a body field; the programmatic client sends it), and no connected worker that could serve it has all of them available | `422 CAPABILITY_MISSING`, with `capabilities` naming the required ones |
 | A worker that takes requests can serve it but is busy | queues; `503 NO_CAPACITY` only with `noWait: true` |
-| A worker fails to create a device for it twice (`PROVISION_FAILED`) | The gateway asks the next worker. When every worker that could take it has failed so, the request fails with `500 PROVISION_FAILED` and the last worker's message, and is not queued; a worker that is only busy keeps it queued |
+| A worker fails to create a device for it twice (`PROVISION_FAILED`), before it reported any progress | The gateway asks the next worker. When every worker that could take it has failed so, the request fails with `500 PROVISION_FAILED` and the last worker's message, also when it was already queued; a worker that is only busy keeps it queued. After the worker reported progress, `PROVISION_FAILED` is returned as it is and the next worker is not asked |
 
 A request that is already waiting is held to the same table: when the only
 worker able to serve it is drained or disconnects, the request ends `failed`
