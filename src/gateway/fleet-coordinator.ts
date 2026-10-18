@@ -823,12 +823,11 @@ export class FleetLeaseCoordinator {
   ): WorkerReason {
     if (entry?.filter !== undefined) return entry.filter;
     if (options.unreachable === view.id) return { reason: "disconnected" };
+    const claimed = options.claimed?.(view.id) === true;
     return (
       this.#cannotServeReason(waiter, view.id) ??
       this.#refusedReason(waiter, view, entry?.zero) ??
-      (options.claimed?.(view.id) === true ? { reason: "not-chosen" } : entry?.zero) ?? {
-        reason: "not-chosen",
-      }
+      passedOver(claimed, entry?.zero)
     );
   }
 
@@ -1486,6 +1485,11 @@ function refusedCapacityReason(details: unknown): Refusal["capacityReason"] {
       : undefined,
   );
   return parsed.success ? parsed.data : undefined;
+}
+
+// why: a worker claimed earlier in the walk, or one nothing else names, lost to the worker picked.
+function passedOver(claimed: boolean, zero: WorkerReason | undefined): WorkerReason {
+  return claimed || zero === undefined ? { reason: "not-chosen" } : zero;
 }
 
 function leaseIdTaken(leaseId: string): DispatchError {
