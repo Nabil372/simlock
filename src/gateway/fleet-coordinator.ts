@@ -823,15 +823,30 @@ export class FleetLeaseCoordinator {
   ): WorkerReason {
     if (entry?.filter !== undefined) return entry.filter;
     if (options.unreachable === view.id) return { reason: "disconnected" };
-    const cannot = CANNOT_SERVE_REASONS[this.#cannotServe.get(waiter)?.get(view.id)?.code ?? ""];
-    if (cannot !== undefined) return { reason: cannot };
-    if (this.#refused(waiter, view)) {
-      const capacityReason =
-        this.#refusals.get(waiter)?.get(view.id)?.capacityReason ?? entry?.zero?.capacityReason;
-      return capacityReason === undefined ? { reason: "full" } : { capacityReason, reason: "full" };
-    }
-    if (options.claimed?.(view.id) === true) return { reason: "not-chosen" };
-    return entry?.zero ?? { reason: "not-chosen" };
+    return (
+      this.#cannotServeReason(waiter, view.id) ??
+      this.#refusedReason(waiter, view, entry?.zero) ??
+      (options.claimed?.(view.id) === true ? { reason: "not-chosen" } : entry?.zero) ?? {
+        reason: "not-chosen",
+      }
+    );
+  }
+
+  #cannotServeReason(waiter: FleetWaiter, workerId: string): WorkerReason | undefined {
+    const code = this.#cannotServe.get(waiter)?.get(workerId)?.code;
+    const reason = code === undefined ? undefined : CANNOT_SERVE_REASONS[code];
+    return reason === undefined ? undefined : { reason };
+  }
+
+  #refusedReason(
+    waiter: FleetWaiter,
+    view: WorkerView,
+    zero: WorkerReason | undefined,
+  ): WorkerReason | undefined {
+    if (!this.#refused(waiter, view)) return undefined;
+    const capacityReason =
+      this.#refusals.get(waiter)?.get(view.id)?.capacityReason ?? zero?.capacityReason;
+    return capacityReason === undefined ? { reason: "full" } : { capacityReason, reason: "full" };
   }
 
   // why: a second failed provision walks on like a cannot-serve code, and only when every worker that could take the request failed so does it end with the last answer.
