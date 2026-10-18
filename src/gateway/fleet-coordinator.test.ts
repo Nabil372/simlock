@@ -4969,6 +4969,28 @@ describe("FleetLeaseCoordinator lists why each worker cannot take a waiting requ
       ]);
     });
 
+    it("leaves the request queued when the other worker is not ready, having read no capacity or catalog yet", async () => {
+      const { clients, coordinator, workers } = fleet(["wrk_a"]);
+      workers.connected("wrk_b", undefined, "0.3.0");
+      clients["wrk_a"]?.requestLeaseQueue.push(provisionFailed("worker a: boom"));
+
+      const { state } = await ask(coordinator);
+
+      expect(state.state).toBe("pending");
+      expect(coordinator.waitingRequests()).toEqual([expect.objectContaining({ stage: "queued" })]);
+    });
+
+    it("leaves the request queued when the other worker is unhealthy, still starting", async () => {
+      const { clients, coordinator, workers } = fleet(["wrk_a", "wrk_b"]);
+      workers.refresh("wrk_b", { health: "starting" });
+      clients["wrk_a"]?.requestLeaseQueue.push(provisionFailed("worker a: boom"));
+
+      const { state } = await ask(coordinator);
+
+      expect(state.state).toBe("pending");
+      expect(coordinator.waitingRequests()).toEqual([expect.objectContaining({ stage: "queued" })]);
+    });
+
     it("rejects the request when the other worker is disconnected, which cannot take it", async () => {
       const { clients, coordinator, workers } = fleet(["wrk_a", "wrk_b"]);
       workers.disconnected("wrk_b");
