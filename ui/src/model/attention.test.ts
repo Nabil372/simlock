@@ -313,6 +313,20 @@ describe("the attention page", () => {
     }
   });
 
+  it("gives a stalled device that is not quarantined no Cause, even when its record still carries one", () => {
+    const w = worker({
+      devices: [
+        Object.assign(device("dev_stuck", { stalled: true, state: "reclaiming" }), {
+          quarantineCause: { kind: "purge-failed", message: "Error: erase failed" },
+        }),
+      ],
+    });
+
+    const labels = factsOf(w, "wrk_1/dev_stuck/stalled").map((fact) => fact.label);
+
+    expect(labels).not.toContain("Cause");
+  });
+
   it("gives a stalled device on a disconnected worker no time in its state", () => {
     // why: a gateway keeps a disconnected worker's devices as last reported, with an age it can no
     // longer count from.
