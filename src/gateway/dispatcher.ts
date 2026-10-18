@@ -393,7 +393,7 @@ export class GatewayDispatcher {
       .flatMap((view) =>
         (view.waiting ?? [])
           .filter((request) => !leaseIndex.isGatewayRequester(request.requesterId))
-          .map((request) => ({ ...request, workerId: view.id })),
+          .map(({ workers: _workers, ...request }) => ({ ...request, workerId: view.id })),
       );
     return [...this.options.coordinator.waitingRequests(), ...onWorkers];
   }

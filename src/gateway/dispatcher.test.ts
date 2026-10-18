@@ -1486,6 +1486,8 @@ describe("GatewayDispatcher: waiting requests", () => {
         capacity: { ...capacity, ios: { ...capacity.ios, maxRunning: 0 } },
         catalog: catalogFixture([{ models: ["iPhone 17"], platform: "ios", runtimes: ["26.0"] }])
           .platforms,
+        health: "running",
+        queueDepth: 0,
         waiting: [
           onWorker(
             requestId,

@@ -381,7 +381,7 @@ const waitingReasonSchema = z.enum([
   "no-free-physical",
 ]);
 
-const capacityReasonSchema = z.enum([
+export const capacityReasonSchema = z.enum([
   "device-limit",
   "ram-budget",
   "global-running-limit",

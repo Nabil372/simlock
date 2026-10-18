@@ -1,5 +1,5 @@
 export {
-  type Explanation,
+  type CapacityReason,
   explainStages,
   type RoutableRequest,
   type RoutingStage,
