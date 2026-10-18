@@ -11,6 +11,7 @@ import {
   type DeviceClass,
   type DeviceMode,
   type DeviceRecord,
+  type QuarantineCause,
   type DeviceState,
   type DeviceTransitionUpdate,
   IllegalTransition,
@@ -332,7 +333,11 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
    * reached from ReclaimCoordinator for the lease-end paths -- emits `device.quarantined`
    * (and, for a lease-end failure, `device.purge-failed`) after this commits.
    */
-  async enterQuarantine(deviceId: string, nextRetryAt: number): Promise<DeviceRecord> {
+  async enterQuarantine(
+    deviceId: string,
+    nextRetryAt: number,
+    _cause?: QuarantineCause,
+  ): Promise<DeviceRecord> {
     const { device, index } = this.#requireDeviceRecord(deviceId);
     if (
       device.state !== "reclaiming" &&

@@ -44,6 +44,7 @@ describe("leaseGrantSchema's device projection", () => {
     "quarantinedAt",
     "quarantineAttempts",
     "quarantineNextRetryAt",
+    "quarantineCause",
     "leaseIdentity",
     "transitionAgeMs",
   ] as const;
@@ -67,6 +68,7 @@ describe("leaseGrantSchema's device projection", () => {
       quarantinedAt: 50,
       quarantineAttempts: 3,
       quarantineNextRetryAt: 60,
+      quarantineCause: { kind: "purge-failed", message: "Error: boom" },
       address: "127.0.0.1:1234",
       mode: "slim",
       leaseIdentity: "fresh",
@@ -258,6 +260,43 @@ describe("statusDeviceSchema's device projection", () => {
       expect(() =>
         schema.parse({ ...physical, presence: { present: false, reason: "unplugged" } }),
       ).toThrow();
+    }
+  });
+
+  it("statusDeviceSchema and deviceRecordSchema accept each of the four quarantine cause kinds and refuse every malformed cause", () => {
+    const device = { ...fullCoreShapedDevice(), servesDefaultMode: true };
+    const accepted = [
+      { kind: "purge-failed", message: "DriverCrashError: simctl erase exited 164" },
+      { kind: "shutdown-failed", message: "Error: shutdown exploded" },
+      { kind: "delete-failed", message: "x".repeat(300) },
+      { kind: "purge-failed" },
+      { kind: "stalled", stalledState: "provisioning" },
+      { kind: "stalled", stalledState: "reclaiming" },
+    ];
+    const refused = [
+      { kind: "exploded", message: "Error: x" },
+      { kind: "stalled" },
+      { kind: "purge-failed", message: "Error: x", stalledState: "reclaiming" },
+      { kind: "stalled", message: "Error: x", stalledState: "reclaiming" },
+      { kind: "stalled", stalledState: "ready" },
+      { kind: "purge-failed", message: 7 },
+      { kind: "purge-failed", message: "" },
+      { kind: "purge-failed", message: "x".repeat(301) },
+      { kind: "purge-failed", message: "Error: a\nb" },
+      { kind: "purge-failed", message: "Error: a\u2028b" },
+    ];
+
+    for (const schema of [statusDeviceSchema, deviceRecordSchema]) {
+      for (const quarantineCause of accepted) {
+        expect(schema.parse({ ...device, quarantineCause })).toMatchObject({ quarantineCause });
+      }
+      expect(schema.parse(device)).not.toHaveProperty("quarantineCause");
+      for (const quarantineCause of refused) {
+        expect(
+          () => schema.parse({ ...device, quarantineCause }),
+          JSON.stringify(quarantineCause),
+        ).toThrow();
+      }
     }
   });
 

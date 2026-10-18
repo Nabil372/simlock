@@ -3399,3 +3399,260 @@ describe("Registry: absent physical devices (ADR 0022 §2, §8)", () => {
     await expect(load()).rejects.toThrow(invalid);
   });
 });
+
+describe("Registry: quarantineCause", () => {
+  const virtualRecord = {
+    createdAt: 500,
+    driverData: {},
+    driverDeviceId: "driver_virtual",
+    id: "dev_virtual",
+    mode: "full",
+    physical: false,
+    spec,
+    state: "reclaiming",
+  };
+  const physicalRecord = {
+    createdAt: 600,
+    driverData: {},
+    driverDeviceId: "00008110-001A2B3C4D5E",
+    enrolledApps: ["com.example.one"],
+    id: "dev_physical",
+    physical: true,
+    spec: {
+      class: "phone",
+      model: "iPhone 15 Pro",
+      osVersion: "18.4",
+      physical: true,
+      platform: "ios",
+    },
+    state: "reclaiming",
+  };
+  const quarantineFields = {
+    quarantineAttempts: 0,
+    quarantineNextRetryAt: 5_000,
+    quarantinedAt: 900,
+  };
+  const purgeCause = { kind: "purge-failed", message: "DriverCrashError: simctl erase exited 164" };
+  const invalid = "Invalid device record in registry state";
+
+  async function stateFile(state: Record<string, unknown>) {
+    const clock = new FakeClock(1_000);
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    await filesystem.writeFileAtomic(statePath, JSON.stringify({ leases: [], ...state }));
+    const load = () =>
+      Registry.load({
+        clock,
+        eventBus: new EventBus(clock),
+        filesystem,
+        idGenerator: { generate: () => "new" },
+        statePath,
+      });
+    const written = async () =>
+      JSON.parse(await filesystem.readFile(statePath)) as Record<string, Record<string, unknown>[]>;
+    return { filesystem, load, written };
+  }
+
+  const quarantinedVirtual = (cause: unknown) => ({
+    ...virtualRecord,
+    ...quarantineFields,
+    quarantineCause: cause,
+    state: "quarantined",
+  });
+  const quarantinedPhysical = (cause: unknown) => ({
+    ...physicalRecord,
+    ...quarantineFields,
+    quarantineCause: cause,
+    state: "quarantined",
+  });
+
+  it("a quarantined record with each kind, written by enterQuarantine and loaded by a new Registry, has its cause, with the clock short of quarantineNextRetryAt", async () => {
+    const causes = [
+      { kind: "purge-failed", message: "Error: purge exploded" },
+      { kind: "shutdown-failed", message: "Error: shutdown exploded" },
+      { kind: "delete-failed", message: "Error: delete exploded" },
+      { kind: "stalled", stalledState: "provisioning" },
+      { kind: "stalled", stalledState: "reclaiming" },
+    ] as const;
+
+    for (const cause of causes) {
+      const { load } = await stateFile({
+        devices: [
+          { ...virtualRecord, state: cause.kind === "delete-failed" ? "shutdown" : "reclaiming" },
+        ],
+      });
+      const registry = await load();
+      const entered = await registry.enterQuarantine("dev_virtual", 5_000, cause);
+      expect(entered.quarantineCause, cause.kind).toEqual(cause);
+
+      const reloaded = await stateFileReload(registry);
+      expect(reloaded.snapshot.devices[0], cause.kind).toMatchObject({
+        quarantineCause: cause,
+        state: "quarantined",
+      });
+    }
+  });
+
+  // why: enterQuarantine wrote through the registry's own filesystem, so reload through it.
+  async function stateFileReload(registry: Registry): Promise<Registry> {
+    const clock = new FakeClock(1_000);
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    await filesystem.writeFileAtomic(
+      statePath,
+      JSON.stringify({ devices: registry.snapshot.devices, leases: [] }),
+    );
+    return Registry.load({
+      clock,
+      eventBus: new EventBus(clock),
+      filesystem,
+      idGenerator: { generate: () => "new" },
+      statePath,
+    });
+  }
+
+  it("a quarantined record with a cause from an earlier entry loads as is, and a record with no cause loads with none", async () => {
+    const withCause = await stateFile({ devices: [quarantinedVirtual(purgeCause)] });
+    const without = await stateFile({
+      devices: [{ ...virtualRecord, ...quarantineFields, state: "quarantined" }],
+    });
+
+    expect((await withCause.load()).snapshot.devices[0]?.quarantineCause).toEqual(purgeCause);
+    expect((await without.load()).snapshot.devices[0]).not.toHaveProperty("quarantineCause");
+  });
+
+  it("a record that is not quarantined loads without its cause, well-formed or malformed, with no RegistryLoadError, and the next write does not carry it", async () => {
+    const causes = [purgeCause, { kind: "bogus", message: 7 }, "not an object"];
+    for (const state of ["ready", "reclaiming"] as const) {
+      for (const cause of causes) {
+        const { load, written } = await stateFile({
+          devices: [{ ...virtualRecord, quarantineCause: cause, state }],
+        });
+
+        const registry = await load();
+        await registry.markForeignStateDetected("dev_virtual", 5);
+
+        const why = `${state} ${JSON.stringify(cause)}`;
+        expect(registry.snapshot.devices[0], why).toMatchObject({ state });
+        expect(registry.snapshot.devices[0], why).not.toHaveProperty("quarantineCause");
+        expect((await written()).devices?.[0], why).not.toHaveProperty("quarantineCause");
+      }
+    }
+    const physical = await stateFile({
+      physicalDevices: [{ ...physicalRecord, quarantineCause: purgeCause, state: "ready" }],
+    });
+    const registry = await physical.load();
+    await registry.markForeignStateDetected("dev_physical", 5);
+    expect(registry.snapshot.devices[0]).not.toHaveProperty("quarantineCause");
+    expect((await physical.written()).physicalDevices?.[0]).not.toHaveProperty("quarantineCause");
+  });
+
+  it("a quarantined record whose cause has an unknown kind, stalled without stalledState, stalledState on another kind, a message on stalled, a non-string, empty or 301-character message, or a control character fails the load", async () => {
+    const accepted = await stateFile({ devices: [quarantinedVirtual(purgeCause)] });
+    await expect((await accepted.load()).snapshot.devices[0]?.quarantineCause).toEqual(purgeCause);
+    const bad: readonly (readonly [string, unknown])[] = [
+      ["an unknown kind", { kind: "exploded", message: "Error: x" }],
+      ["stalled without stalledState", { kind: "stalled" }],
+      [
+        "stalledState on another kind",
+        { kind: "purge-failed", message: "Error: x", stalledState: "reclaiming" },
+      ],
+      [
+        "a message on stalled",
+        { kind: "stalled", message: "Error: x", stalledState: "reclaiming" },
+      ],
+      [
+        "a stalledState that is not provisioning or reclaiming",
+        { kind: "stalled", stalledState: "ready" },
+      ],
+      ["a non-string message", { kind: "purge-failed", message: 7 }],
+      ["an empty message", { kind: "purge-failed", message: "" }],
+      ["a 301-character message", { kind: "purge-failed", message: "x".repeat(301) }],
+      ["a control character", { kind: "purge-failed", message: "Error: a\nb" }],
+      ["a cause that is not an object", "purge-failed"],
+    ];
+
+    for (const [why, cause] of bad) {
+      const { load } = await stateFile({ devices: [quarantinedVirtual(cause)] });
+      await expect(load(), why).rejects.toThrow(invalid);
+      const physical = await stateFile({ physicalDevices: [quarantinedPhysical(cause)] });
+      await expect(physical.load(), `${why} (physical)`).rejects.toThrow(invalid);
+    }
+  });
+
+  describe("every exit from quarantined removes it", () => {
+    const readyEvent = (id: string) => ({
+      event: "device.ready" as const,
+      payload: { bootDuration: 0, deviceId: id },
+    });
+    const exits: readonly (readonly [string, (registry: Registry) => Promise<unknown>])[] = [
+      ["recoverFromQuarantine to ready", (r) => r.recoverFromQuarantine("dev_virtual", "ready")],
+      [
+        "recoverFromQuarantine to shutdown",
+        (r) => r.recoverFromQuarantine("dev_virtual", "shutdown"),
+      ],
+      ["deleteQuarantined", (r) => r.deleteQuarantined("dev_virtual", "lease-end")],
+      ["markDeviceMissing", (r) => r.markDeviceMissing("dev_virtual", "doctor")],
+      [
+        "transitionDevice to ready",
+        (r) => r.transitionDevice("dev_virtual", "ready", readyEvent("dev_virtual")),
+      ],
+      [
+        "transitionDevice to shutdown",
+        (r) =>
+          r.transitionDevice("dev_virtual", "shutdown", {
+            event: "device.shutdown",
+            payload: { deviceId: "dev_virtual", initiator: "idle" },
+          }),
+      ],
+      [
+        "transitionDevice to deleted",
+        (r) =>
+          r.transitionDevice("dev_virtual", "deleted", {
+            event: "device.deleted",
+            payload: { deviceId: "dev_virtual", initiator: "lease-end" },
+          }),
+      ],
+    ];
+
+    it.each(exits)("%s", async (_name, exit) => {
+      const { load, written } = await stateFile({ devices: [quarantinedVirtual(purgeCause)] });
+      const registry = await load();
+      expect(registry.snapshot.devices[0]).toHaveProperty("quarantineCause");
+
+      const result = await exit(registry);
+
+      expect(result).not.toHaveProperty("quarantineCause");
+      expect(registry.snapshot.devices[0]).not.toHaveProperty("quarantineCause");
+      expect((await written()).devices?.[0]).not.toHaveProperty("quarantineCause");
+    });
+
+    it.each([
+      [
+        "reenrollPhysical",
+        (r: Registry) =>
+          r.reenrollPhysical("dev_physical", {
+            apps: ["com.example.one"],
+            class: "phone",
+            driverDeviceId: "00008110-001A2B3C4D5E",
+            model: "iPhone 15 Pro",
+            osVersion: "18.4",
+            platform: "ios",
+          }),
+      ],
+      ["unenrollPhysical", (r: Registry) => r.unenrollPhysical("dev_physical")],
+    ])("%s", async (_name, exit) => {
+      const { load, written } = await stateFile({
+        physicalDevices: [quarantinedPhysical(purgeCause)],
+      });
+      const registry = await load();
+      expect(registry.snapshot.devices[0]).toHaveProperty("quarantineCause");
+
+      const result = await exit(registry);
+
+      expect(result).not.toHaveProperty("quarantineCause");
+      expect(registry.snapshot.devices[0]).not.toHaveProperty("quarantineCause");
+      expect((await written()).physicalDevices?.[0]).not.toHaveProperty("quarantineCause");
+    });
+  });
+});

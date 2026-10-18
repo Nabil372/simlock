@@ -433,6 +433,37 @@ describe("GatewayDispatcher", () => {
     expect(list.workers[0]?.devices?.map(({ id, mode }) => ({ id, mode }))).toEqual(expected);
   });
 
+  it("a gateway's status.get gives an agent session a worker's quarantined device with kind and no message, in devices and in workers[].devices, and an admin session the message", async () => {
+    const { dispatcher, workers } = harness();
+    workers.connected("wrk_1", undefined, "0.3.0");
+    const quarantineCause = { kind: "purge-failed", message: "Error: erase failed" };
+    workers.refresh("wrk_1", {
+      capacity: statusFixture().capacity,
+      devices: [
+        Object.assign(deviceFixture("dev_q"), { quarantineCause, state: "quarantined" as const }),
+      ],
+      health: "running",
+      leases: [],
+      queueDepth: 0,
+    });
+
+    const forAdmin = await dispatcher.dispatch("status.get", {}, session());
+    const forAgent = await dispatcher.dispatch("status.get", {}, session({ role: "agent" }));
+
+    expect(forAdmin.devices?.[0]).toMatchObject({ quarantineCause });
+    expect(forAdmin.workers?.[0]?.devices?.[0]).toMatchObject({ quarantineCause });
+    expect(forAgent.devices?.[0]).toMatchObject({
+      id: "dev_q",
+      quarantineCause: { kind: "purge-failed" },
+      state: "quarantined",
+    });
+    expect(forAgent.devices?.[0]).not.toHaveProperty("quarantineCause.message");
+    expect(forAgent.workers?.[0]?.devices?.[0]).toMatchObject({
+      quarantineCause: { kind: "purge-failed" },
+    });
+    expect(forAgent.workers?.[0]?.devices?.[0]).not.toHaveProperty("quarantineCause.message");
+  });
+
   it("answers catalog.get as the union of the fleet's catalogs", async () => {
     const { dispatcher, workers } = harness();
     workers.connected("wrk_1", undefined, undefined);

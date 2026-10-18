@@ -47,7 +47,7 @@ describe("helloRequestSchema", () => {
 });
 
 describe("PROTOCOL_VERSION_RANGE", () => {
-  it("is one above the base branch's, for agent-device's section moving into config.get's capabilities", () => {
-    expect(PROTOCOL_VERSION_RANGE).toEqual({ max: 39, min: 39 });
+  it("is one above the base branch's, for a quarantined device's cause on status.get and list.get", () => {
+    expect(PROTOCOL_VERSION_RANGE).toEqual({ max: 40, min: 40 });
   });
 });

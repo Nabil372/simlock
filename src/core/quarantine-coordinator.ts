@@ -7,6 +7,7 @@ import {
   mayBeGranted,
   type PhysicalDevice,
   type Platform,
+  type QuarantineCause,
   type VirtualDevice,
 } from "./domain.js";
 import { type Driver, toDriverDevice } from "./driver.js";
@@ -20,7 +21,11 @@ export interface QuarantineDriverCatalog {
 
 export interface QuarantineRegistry {
   readonly snapshot: { readonly devices: readonly DeviceRecord[] };
-  enterQuarantine(deviceId: string, nextRetryAt: number): Promise<DeviceRecord>;
+  enterQuarantine(
+    deviceId: string,
+    nextRetryAt: number,
+    cause?: QuarantineCause,
+  ): Promise<DeviceRecord>;
   recordQuarantineRetryFailure(
     deviceId: string,
     attempts: number,
@@ -34,6 +39,7 @@ export interface QuarantineRegistry {
 export interface QuarantinePurgeFailure {
   readonly deviceId: string;
   readonly leaseId?: string | undefined;
+  readonly kind?: "purge-failed" | "shutdown-failed" | "delete-failed";
   readonly attemptedStrategy: "erase" | "snapshot" | "wipe" | "delete" | "uninstall";
   readonly duration: number;
   readonly error: string;

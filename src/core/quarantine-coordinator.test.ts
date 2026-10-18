@@ -1395,3 +1395,281 @@ describe("QuarantineCoordinator enterFromStalledTransition under the device's re
     expect(failing.claims.isClaimed(failing.target.id)).toBe(false);
   });
 });
+
+describe("QuarantineCoordinator quarantine cause", () => {
+  const androidSpec: VirtualSpec = {
+    physical: false,
+    model: "Pixel 8",
+    osVersion: "35",
+    platform: "android",
+  };
+  const PHYSICAL_ID = "00008110-001A2B3C4D5E";
+
+  type StartState = "provisioning" | "reclaiming" | "shutdown";
+
+  async function build(
+    options: {
+      readonly physical?: boolean;
+      readonly platform?: "ios" | "android";
+      readonly state?: StartState;
+      readonly fresh?: boolean;
+    } = {},
+  ) {
+    const platform = options.platform ?? "ios";
+    const clock = new FakeClock(1_000);
+    const bus = new EventBus(clock);
+    const driver = new FakeDriver({ clock, platform, reclaimResult: "ready" });
+    const state = options.state ?? "reclaiming";
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    let id: string;
+    let record: Record<string, unknown>;
+    if (options.physical === true) {
+      driver.setPhysicalPresence(PHYSICAL_ID, true);
+      id = "dev_physical";
+      record = {
+        createdAt: 600,
+        driverData: {},
+        driverDeviceId: PHYSICAL_ID,
+        enrolledApps: [],
+        id,
+        lastLeaseEndedAt: 700,
+        physical: true,
+        spec: {
+          class: "phone",
+          model: "iPhone 15 Pro",
+          osVersion: "18.4",
+          physical: true,
+          platform: "ios",
+        },
+        state,
+      };
+    } else {
+      const virtualSpec = platform === "android" ? androidSpec : spec;
+      const provisioned = await driver.provision(virtualSpec);
+      id = "dev_virtual";
+      record = {
+        createdAt: 1,
+        driverData: {},
+        driverDeviceId: provisioned.deviceId,
+        id,
+        mode: "full",
+        physical: false,
+        spec: virtualSpec,
+        state,
+        ...(options.fresh === true ? { lastLeaseEndedAt: 900, leaseIdentity: "fresh" } : {}),
+      };
+    }
+    await filesystem.writeFileAtomic(
+      "/home/agent/.simlock/state.json",
+      JSON.stringify(
+        options.physical === true
+          ? { devices: [], leases: [], physicalDevices: [record] }
+          : { devices: [record], leases: [] },
+      ),
+    );
+    const registry = await Registry.load({
+      clock,
+      eventBus: bus,
+      filesystem,
+      idGenerator: { generate: () => "id" },
+      statePath: "/home/agent/.simlock/state.json",
+    });
+    const claims = new DeviceOperationClaims();
+    const coordinator = new QuarantineCoordinator({
+      claims,
+      clock,
+      config: retryConfig,
+      decisions: new SerializedDecision(),
+      drivers: new DriverCatalog([driver]),
+      eventBus: bus,
+      notifyAvailability: vi.fn(),
+      registry,
+    });
+    const device = () => registry.snapshot.devices.find((candidate) => candidate.id === id);
+    const quarantinedPayload = () =>
+      bus.replay().find((event) => event.event === "device.quarantined")?.payload;
+    return { bus, claims, clock, coordinator, device, driver, id, quarantinedPayload, registry };
+  }
+
+  function failure(
+    id: string,
+    kind: "purge-failed" | "shutdown-failed" | "delete-failed",
+    error: string,
+  ) {
+    return {
+      attemptedStrategy: kind === "purge-failed" ? ("wipe" as const) : ("delete" as const),
+      deviceId: id,
+      duration: 5,
+      error,
+      kind,
+      leaseId: "lease-1",
+    };
+  }
+
+  it.each([
+    ["purge-failed", "reclaiming"],
+    ["shutdown-failed", "reclaiming"],
+    ["delete-failed", "shutdown"],
+  ] as const)(
+    "enter writes quarantineCause kind %s and its message on the record and on device.quarantined",
+    async (kind, state) => {
+      const harness = await build({ fresh: kind !== "purge-failed", state });
+
+      await harness.coordinator.enter(failure(harness.id, kind, "DriverCrashError: it broke"));
+
+      expect(harness.device()).toMatchObject({ state: "quarantined" });
+      expect(harness.device()?.quarantineCause).toEqual({
+        kind,
+        message: "DriverCrashError: it broke",
+      });
+      expect(harness.quarantinedPayload()).toMatchObject({
+        kind,
+        message: "DriverCrashError: it broke",
+      });
+      expect(harness.quarantinedPayload()).not.toHaveProperty("stalledState");
+    },
+  );
+
+  it("cleans the message: control characters become spaces, it is trimmed, cut at 300 with a final ellipsis, and left out when empty; device.purge-failed keeps the full text", async () => {
+    const long = (length: number) => `Error: ${"x".repeat(length - 7)}`;
+    const cases: readonly (readonly [string, string, string | undefined])[] = [
+      ["control characters", "\n Error: a\r\nb\u0000c d \t", "Error: a  b c d"],
+      ["300 characters", long(300), long(300)],
+      ["301 characters", long(301), `${long(301).slice(0, 299)}…`],
+      ["a high surrogate at 299", `${"x".repeat(298)}😀yyy`, `${"x".repeat(298)}…`],
+      ["only whitespace and controls", " \n\t\u0007 ", undefined],
+    ];
+
+    for (const [name, error, expected] of cases) {
+      const harness = await build();
+
+      await harness.coordinator.enter(failure(harness.id, "purge-failed", error));
+
+      const cause = harness.device()?.quarantineCause;
+      expect(cause, name).toBeDefined();
+      expect(cause?.message, name).toBe(expected);
+      if (expected === undefined) expect(cause, name).toEqual({ kind: "purge-failed" });
+      else expect(expected.length, name).toBeLessThanOrEqual(300);
+      expect(harness.quarantinedPayload(), name).toMatchObject({ kind: "purge-failed" });
+      expect((harness.quarantinedPayload() as { message?: string }).message, name).toBe(expected);
+      const purgeFailed = harness.bus
+        .replay()
+        .find((event) => event.event === "device.purge-failed");
+      expect(purgeFailed?.payload, name).toMatchObject({ error });
+    }
+  });
+
+  it.each([
+    ["provisioning", false],
+    ["reclaiming", false],
+    ["reclaiming", true],
+  ] as const)(
+    "enterFromStalledTransition of a device stalled %s (physical %s) writes kind stalled with its stalledState and no message, on the record and on the event",
+    async (stalledState, physical) => {
+      const harness = await build({ physical, state: stalledState });
+
+      await harness.coordinator.enterFromStalledTransition(harness.id, stalledState);
+
+      expect(harness.device()?.state).toBe("quarantined");
+      expect(harness.device()?.quarantineCause).toEqual({ kind: "stalled", stalledState });
+      expect(harness.quarantinedPayload()).toMatchObject({ kind: "stalled", stalledState });
+      expect(harness.quarantinedPayload()).not.toHaveProperty("message");
+    },
+  );
+
+  it.each(["ios", "android"] as const)(
+    "device.quarantined carries the %s device's platform from enter and from enterFromStalledTransition",
+    async (platform) => {
+      const entered = await build({ platform });
+      await entered.coordinator.enter(failure(entered.id, "purge-failed", "Error: boom"));
+      const stalled = await build({ platform });
+      await stalled.coordinator.enterFromStalledTransition(stalled.id, "reclaiming");
+
+      expect(entered.quarantinedPayload()).toMatchObject({ platform });
+      expect(stalled.quarantinedPayload()).toMatchObject({ platform });
+    },
+  );
+
+  it("a stalled entry that writes nothing, because the device is claimed or has moved on, leaves no cause", async () => {
+    const claimed = await build();
+    const held = claimed.claims.tryClaim(claimed.id, "boot");
+    await claimed.coordinator.enterFromStalledTransition(claimed.id, "reclaiming");
+    held?.release();
+    const moved = await build({ state: "provisioning" });
+    await moved.coordinator.enterFromStalledTransition(moved.id, "reclaiming");
+
+    for (const harness of [claimed, moved]) {
+      expect(harness.device()?.state).not.toBe("quarantined");
+      expect(harness.device()).not.toHaveProperty("quarantineCause");
+      expect(harness.bus.replay()).toEqual([]);
+    }
+  });
+
+  it("a failed reclaim retry keeps the cause written at entry", async () => {
+    const harness = await build();
+    harness.driver.failOn("reclaim", 1, new Error("still stuck"));
+    await harness.coordinator.enter(failure(harness.id, "purge-failed", "Error: first"));
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.device()).toMatchObject({ quarantineAttempts: 1, state: "quarantined" });
+    expect(harness.device()?.quarantineCause).toEqual({
+      kind: "purge-failed",
+      message: "Error: first",
+    });
+  });
+
+  it("a failed delete retry keeps the cause written at entry", async () => {
+    const harness = await build({ fresh: true, state: "shutdown" });
+    harness.driver.failOn("destroy", 1, new Error("still stuck"));
+    await harness.coordinator.enter(failure(harness.id, "delete-failed", "Error: first"));
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.device()).toMatchObject({ quarantineAttempts: 1, state: "quarantined" });
+    expect(harness.device()?.quarantineCause).toEqual({
+      kind: "delete-failed",
+      message: "Error: first",
+    });
+  });
+
+  it("a physical retry that waits for the device to be present keeps the cause written at entry", async () => {
+    const harness = await build({ physical: true });
+    await harness.coordinator.enter(failure(harness.id, "purge-failed", "Error: first"));
+    harness.driver.setPhysicalPresence(PHYSICAL_ID, false);
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+
+    expect(harness.device()).toMatchObject({ quarantineAttempts: 0, state: "quarantined" });
+    expect(harness.device()?.quarantineCause).toEqual({
+      kind: "purge-failed",
+      message: "Error: first",
+    });
+  });
+
+  it("a stranded give-up keeps the cause written at entry", async () => {
+    const harness = await build();
+    harness.driver.failOn("reclaim", 1, new Error("still stuck"));
+    harness.driver.failOn("reclaim", 2, new Error("still stuck"));
+    harness.driver.failOn("destroy", 1, new Error("cannot destroy"));
+    await harness.coordinator.enter(failure(harness.id, "purge-failed", "Error: first"));
+
+    harness.clock.advance(retryConfig.retryBackoffMs);
+    await flush();
+    harness.clock.advance(2_000);
+    await flush();
+
+    expect(harness.bus.replay().map((event) => event.event)).toContain(
+      "device.quarantine-stranded",
+    );
+    expect(harness.device()).toMatchObject({ quarantineAttempts: 2, state: "quarantined" });
+    expect(harness.device()?.quarantineCause).toEqual({
+      kind: "purge-failed",
+      message: "Error: first",
+    });
+  });
+});

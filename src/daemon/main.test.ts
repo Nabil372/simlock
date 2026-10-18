@@ -931,6 +931,69 @@ describe("startDaemon wires core and leasing together", () => {
     expect(driver.calls.filter((call) => call.operation === "reclaim")).toHaveLength(1);
   });
 
+  describe("a device quarantined by a failed purge", () => {
+    type CauseView = {
+      readonly id: string;
+      readonly quarantineCause?: { readonly kind: string; readonly message?: string };
+      readonly state: string;
+    };
+
+    async function quarantinedAfterFailedPurge() {
+      const clock = new FakeClock(1_000);
+      const driver = new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" });
+      driver.failOn("reclaim", 1, new DriverCrashError("purge exploded"));
+      const { daemon } = await start({ clock, drivers: [driver] });
+      const grant = (await daemon.dispatch("lease.request", ios, agent)) as Grant;
+      await daemon.dispatch("lease.release", { leaseId: grant.lease.id }, agent);
+      await settleRealTime();
+      return daemon;
+    }
+
+    const devicesOf = async (
+      daemon: Awaited<ReturnType<typeof quarantinedAfterFailedPurge>>,
+      session: typeof agent | typeof admin,
+    ) =>
+      (
+        (await daemon.dispatch("status.get", {}, session)) as {
+          readonly devices: readonly CauseView[];
+        }
+      ).devices;
+
+    it("shows quarantineCause purge-failed with the driver's error in status.get and list.get", async () => {
+      const daemon = await quarantinedAfterFailedPurge();
+
+      const status = await devicesOf(daemon, admin);
+      const listed = (await daemon.dispatch(
+        "list.get",
+        { kind: "devices" },
+        admin,
+      )) as readonly CauseView[];
+
+      for (const devices of [status, listed]) {
+        expect(devices).toHaveLength(1);
+        expect(devices[0]).toMatchObject({ state: "quarantined" });
+        expect(devices[0]?.quarantineCause).toEqual({
+          kind: "purge-failed",
+          message: "DriverCrashError: purge exploded",
+        });
+      }
+    });
+
+    it("shows its message to an admin session and only its kind to an agent session", async () => {
+      const daemon = await quarantinedAfterFailedPurge();
+
+      const forAdmin = await devicesOf(daemon, admin);
+      const forAgent = await devicesOf(daemon, agent);
+
+      expect(forAdmin[0]?.quarantineCause).toEqual({
+        kind: "purge-failed",
+        message: "DriverCrashError: purge exploded",
+      });
+      expect(forAgent[0]).toMatchObject({ state: "quarantined" });
+      expect(forAgent[0]?.quarantineCause).toEqual({ kind: "purge-failed" });
+    });
+  });
+
   it("probes a leased device again as time passes once startup is done", async () => {
     const clock = new FakeClock(1_000);
     const { driver } = await leasedIos({ availableOsVersions: ["26.5"], clock, platform: "ios" });
@@ -1453,6 +1516,67 @@ async function pollUntilListening(port: number, secret: string): Promise<unknown
   }
   throw new Error("HTTP gateway never started listening");
 }
+
+describe("startDaemon HTTP status for a quarantined device", () => {
+  it("gives an operator token the cause's message and an agent token its kind alone", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "simlock-main-http-cause-"));
+    temporaryDirectories.push(directory);
+    const clock = new FakeClock(1_000);
+    const filesystem = new MemoryFilesystem();
+    const secrets = new CryptoTokenSecrets();
+    await filesystem.mkdirp(directory);
+    await filesystem.writeFileAtomic(
+      join(directory, "tokens.json"),
+      JSON.stringify([
+        { id: "tok_agent", hash: secrets.hash("slk_cause_agent"), role: "agent", createdAt: 0 },
+        { id: "tok_op", hash: secrets.hash("slk_cause_operator"), role: "operator", createdAt: 0 },
+      ]),
+    );
+    const port = await freeLoopbackPort();
+    const driver = new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" });
+    driver.failOn("reclaim", 1, new DriverCrashError("purge exploded"));
+    const daemon = await startDaemon({
+      clock,
+      configOverrides: { http: { enabled: true, host: "127.0.0.1", port } },
+      dataDirectory: directory,
+      drivers: [driver],
+      filesystem,
+      hostLoadProbe: null,
+      statePath: join(directory, "state.json"),
+      version: "1.2.3",
+    } as StartDaemonOptions);
+    runningDaemons.push(daemon);
+    const session = {
+      manageEventSubscription: () => undefined,
+      principal: "agent-1",
+      role: "agent",
+    } as const;
+    const grant = (await daemon.dispatch(
+      "lease.request",
+      { model: "iPhone 16", osVersion: "26.5", platform: "ios", requesterId: "agent-1" },
+      session,
+    )) as { readonly lease: { readonly id: string } };
+    await daemon.dispatch("lease.release", { leaseId: grant.lease.id }, session);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const causeFor = async (secret: string) => {
+      const status = (await pollUntilListening(port, secret)) as {
+        readonly devices?: readonly {
+          readonly quarantineCause?: unknown;
+          readonly state: string;
+        }[];
+      };
+      expect(status.devices?.[0]?.state).toBe("quarantined");
+      return status.devices?.[0]?.quarantineCause;
+    };
+
+    expect(await causeFor("slk_cause_operator")).toEqual({
+      kind: "purge-failed",
+      message: "DriverCrashError: purge exploded",
+    });
+    expect(await causeFor("slk_cause_agent")).toEqual({ kind: "purge-failed" });
+  });
+});
 
 describe("discoverDrivers", () => {
   it("logs a skip when the Android SDK cannot be found, without throwing", async () => {

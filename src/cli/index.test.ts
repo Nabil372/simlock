@@ -4276,6 +4276,62 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
     expect(lines).toContain("Device dev_v1: ready, mode full, serves default mode: yes");
   });
 
+  it("status ends a quarantined device's marker with ; and the cause for each kind, and prints today's marker when there is no cause", async () => {
+    const quarantined = (
+      id: string,
+      quarantineCause?: Record<string, unknown>,
+    ): Record<string, unknown> => ({
+      id,
+      mode: "full",
+      physical: false,
+      quarantineAttempts: 1,
+      quarantineNextRetryAt: 1_760_619_150_000,
+      servesDefaultMode: true,
+      spec: { model: "iPhone 16", osVersion: "18.4", physical: false, platform: "ios" },
+      state: "quarantined",
+      ...(quarantineCause === undefined ? {} : { quarantineCause }),
+    });
+    const status = {
+      ...EMPTY_STATUS,
+      devices: [
+        quarantined("dev_purge", {
+          kind: "purge-failed",
+          message: "DriverCrashError: simctl erase exited 164, then stalled",
+        }),
+        quarantined("dev_shutdown", {
+          kind: "shutdown-failed",
+          message: "Error: shutdown exploded",
+        }),
+        quarantined("dev_delete", { kind: "delete-failed", message: "Error: delete exploded" }),
+        quarantined("dev_prov", { kind: "stalled", stalledState: "provisioning" }),
+        quarantined("dev_recl", { kind: "stalled", stalledState: "reclaiming" }),
+        quarantined("dev_none"),
+      ],
+    } as unknown as StatusGetOutput;
+    const output = outputCapture();
+
+    await runCli(
+      ["status"],
+      output.environmentWith({
+        connectAdmin: async () => fakeClient({ getStatus: () => Promise.resolve(status) }),
+      }),
+    );
+
+    const lines = output.stdout.split("\n");
+    const head =
+      "quarantined, mode full, serves default mode: yes (purge retry 1, next retry at 1760619150000";
+    expect(lines).toContain(
+      `Device dev_purge: ${head}; purge failed: DriverCrashError: simctl erase exited 164, then stalled)`,
+    );
+    expect(lines).toContain(
+      `Device dev_shutdown: ${head}; shutdown failed: Error: shutdown exploded)`,
+    );
+    expect(lines).toContain(`Device dev_delete: ${head}; delete failed: Error: delete exploded)`);
+    expect(lines).toContain(`Device dev_prov: ${head}; stalled while provisioning)`);
+    expect(lines).toContain(`Device dev_recl: ${head}; stalled while reclaiming)`);
+    expect(lines).toContain(`Device dev_none: ${head})`);
+  });
+
   it("status prints absent (<reason>) as the state of an absent device", async () => {
     const physical = (id: string, state: string, absentReason?: string) => ({
       class: "phone",
