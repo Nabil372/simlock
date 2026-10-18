@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { EventBus, type EventEnvelope, EventHistory } from "../bus/index.js";
+import { fixedEventHistory } from "../history/testing.js";
 import { OPERATIONS, type OperationName } from "../contract/index.js";
 import { DispatchError, runDispatch, type DispatchSession } from "../daemon/dispatch.js";
 import {
@@ -752,6 +753,24 @@ describe("GatewayDispatcher", () => {
     );
     expect(asked).toEqual([{ sinceTs: 10 }]);
   });
+
+  it.each([
+    {
+      health: "running" as const,
+      history: { opened: true, setAsideAt: 1_760_605_920_000, writing: false },
+    },
+    { health: "starting" as const, history: { opened: false, writing: false } },
+    { health: "running" as const, history: { opened: true, writing: true } },
+  ])(
+    "status.get carries the gateway's own history opened, writing and setAsideAt, in the starting answer too ($health, $history)",
+    async ({ health, history }) => {
+      const { dispatcher } = harness({ eventHistory: fixedEventHistory(history), health });
+
+      const status = await dispatcher.dispatch("status.get", {}, session());
+
+      expect((status as { history?: unknown }).history).toStrictEqual(history);
+    },
+  );
 
   it("mints and revokes its own tokens, worker join tokens included", async () => {
     const { dispatcher, tokens } = harness();

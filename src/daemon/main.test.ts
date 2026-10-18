@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer as createHttpServer } from "node:http";
@@ -20,7 +20,8 @@ import { agentDeviceModuleWith, FakeAgentDeviceHealth } from "../agent-device/te
 import { FakeDriver } from "../core/testing.js";
 import { fakeModule, type FakeModule } from "../modules/testing.js";
 import { IosSimctlDriver } from "../drivers/ios/index.js";
-import { EventBus } from "../bus/index.js";
+import { EventBus, type EventEnvelope } from "../bus/index.js";
+import { readHistoryEvents, seedHistory } from "../history/testing.js";
 import { DAEMON_PROTOCOL_VERSION } from "../daemon-protocol/index.js";
 import {
   CryptoIdGenerator,
@@ -87,6 +88,26 @@ async function start(
   return { daemon, directory, sink };
 }
 
+async function historyEventsWhen(
+  directory: string,
+  done: (events: readonly EventEnvelope[]) => boolean,
+): Promise<EventEnvelope[]> {
+  let events: EventEnvelope[] = [];
+  await vi.waitFor(
+    async () => {
+      events = await readHistoryEvents(directory);
+      expect(done(events)).toBe(true);
+    },
+    { timeout: 4_000 },
+  );
+  return events;
+}
+
+const hasEvent =
+  (name: string) =>
+  (events: readonly EventEnvelope[]): boolean =>
+    events.some((event) => event.event === name);
+
 describe("the version a daemon reports", () => {
   it("is the version in package.json when the caller names none", async () => {
     const directory = await mkdtemp(join(tmpdir(), "simlock-main-"));
@@ -121,25 +142,17 @@ describe("the version a daemon reports", () => {
   });
 });
 
-describe("the event file sink", () => {
-  it("judges retention by the injected clock, so a generation younger than the retention on that clock survives the start-up sweep", async () => {
+describe("the event history", () => {
+  it("judges retention by the injected clock, so an event younger than the retention on that clock survives the start-up prune", async () => {
     const directory = await mkdtemp(join(tmpdir(), "simlock-main-"));
     temporaryDirectories.push(directory);
     // The fake clock reads 1_000; a real clock would put the 7-day cutoff far past 500.
-    await writeFile(join(directory, "events.jsonl.1"), `{"timestamp":500}\n`);
-    const clock = new FakeClock(1_000);
-    const daemon = await startDaemon({
-      clock,
-      dataDirectory: directory,
-      drivers: [new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" })],
-      filesystem: new MemoryFilesystem(),
-      logger: new JsonLinesLogger({ clock, level: "debug", sink: new MemoryLogSink() }),
-      statePath: join(directory, "state.json"),
-      version: "1.2.3",
-    });
-    runningDaemons.push(daemon);
+    await seedHistory(directory, [500]);
 
-    expect(await readFile(join(directory, "events.jsonl.1"), "utf8")).toBe(`{"timestamp":500}\n`);
+    await start({ dataDirectory: directory });
+
+    const events = await historyEventsWhen(directory, hasEvent("daemon.started"));
+    expect(events.map((event) => event.id)).toContain("evt_1");
   });
 });
 
@@ -233,7 +246,7 @@ describe("startDaemon", () => {
     expect(record?.fields?.config).toMatchObject({ log: { level: "info" } });
   });
 
-  it("keeps gateway.token out of the daemon log, the events.replay answer, and events.jsonl, while config.get still returns it", async () => {
+  it("keeps gateway.token out of the daemon log, the events.replay answer, and history.db, while config.get still returns it", async () => {
     const secret = "secret-join-token-170";
     const { daemon, directory, sink } = await start({
       configOverrides: { gateway: { token: secret, url: await unreachableGatewayUrl() } },
@@ -245,7 +258,9 @@ describe("startDaemon", () => {
     } as const;
 
     const replayed = await daemon.dispatch("events.replay", {}, admin);
-    const eventFile = await readFile(join(directory, "events.jsonl"), "utf8");
+    const eventFile = JSON.stringify(
+      await historyEventsWhen(directory, hasEvent("daemon.started")),
+    );
     const config = (await daemon.dispatch("config.get", {}, admin)) as {
       readonly gateway: { readonly token?: string };
     };
@@ -258,8 +273,8 @@ describe("startDaemon", () => {
     expect({
       daemonLog: JSON.stringify(sink.records).includes(secret),
       eventsReplay: JSON.stringify(replayed).includes(secret),
-      eventsJsonl: eventFile.includes(secret),
-    }).toEqual({ daemonLog: false, eventsReplay: false, eventsJsonl: false });
+      historyDb: eventFile.includes(secret),
+    }).toEqual({ daemonLog: false, eventsReplay: false, historyDb: false });
     expect(config.gateway.token).toBe(secret);
   });
 
@@ -661,10 +676,7 @@ describe("startDaemon wires core and leasing together", () => {
   it("announces the capacity figures and then the queue depth once startup is done", async () => {
     const { directory } = await start();
 
-    const events = (await readFile(join(directory, "events.jsonl"), "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { readonly event: string; readonly module: string });
+    const events = await historyEventsWhen(directory, hasEvent("queue.changed"));
     const names = events.map((event) => event.event);
 
     expect(names.indexOf("capacity.changed")).toBeGreaterThan(-1);
@@ -675,10 +687,9 @@ describe("startDaemon wires core and leasing together", () => {
   it("runs doctor's startup pass on the startup read before core's device steps announce the capacity figures", async () => {
     const { directory } = await start();
 
-    const names = (await readFile(join(directory, "events.jsonl"), "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => (JSON.parse(line) as { readonly event: string }).event);
+    const names = (await historyEventsWhen(directory, hasEvent("capacity.changed"))).map(
+      (event) => event.event,
+    );
 
     expect(names.indexOf("doctor.reconciled")).toBeGreaterThan(-1);
     expect(names.indexOf("doctor.reconciled")).toBeLessThan(names.indexOf("capacity.changed"));
@@ -715,10 +726,9 @@ describe("startDaemon wires core and leasing together", () => {
     });
     runningDaemons.push(daemon);
 
-    const names = (await readFile(join(directory, "events.jsonl"), "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => (JSON.parse(line) as { readonly event: string }).event);
+    const names = (await historyEventsWhen(directory, hasEvent("capacity.changed"))).map(
+      (event) => event.event,
+    );
     expect(names.indexOf("lease.rejected")).toBeGreaterThan(-1);
     expect(names.indexOf("capacity.changed")).toBeGreaterThan(names.indexOf("lease.rejected"));
   });
@@ -2076,7 +2086,7 @@ describe("processRunnerFor", () => {
   });
 });
 
-describe("startDaemon event file", () => {
+describe("startDaemon event history", () => {
   const previousModule = process.env.SIMLOCK_DRIVERS_MODULE;
 
   afterEach(() => {
@@ -2087,19 +2097,47 @@ describe("startDaemon event file", () => {
     }
   });
 
-  it("starts a daemon whose event file cannot be opened, and logs one error line", async () => {
+  it("starts a daemon whose history path is a directory, sets it aside and writes a fresh file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "simlock-main-event-file-"));
     temporaryDirectories.push(directory);
-    await mkdir(join(directory, "events.jsonl"));
+    await mkdir(join(directory, "history.db"));
 
-    const { daemon, sink } = await start({ dataDirectory: directory });
+    const { daemon } = await start({ dataDirectory: directory });
 
+    const events = await historyEventsWhen(directory, hasEvent("daemon.started"));
+    const names = await readdir(directory);
+    const status = (await daemon.dispatch(
+      "status.get",
+      {},
+      { manageEventSubscription: () => undefined, principal: "operator", role: "admin" },
+    )) as { readonly history?: unknown };
     expect(daemon.health).toBe("running");
+    expect(names).toContain("history.db.damaged-1000");
+    expect((await stat(join(directory, "history.db.damaged-1000"))).isDirectory()).toBe(true);
+    expect((await stat(join(directory, "history.db"))).isFile()).toBe(true);
+    expect(events.length).toBeGreaterThan(0);
+    expect(status.history).toEqual({ opened: true, setAsideAt: 1_000, writing: true });
+  });
+
+  it("a daemon that loses the socket claim leaves a damaged history.db byte-identical and in place", async () => {
+    const winner = await mkdtemp(join(tmpdir(), "simlock-main-claim-"));
+    const loser = await mkdtemp(join(tmpdir(), "simlock-main-claim-"));
+    temporaryDirectories.push(winner, loser);
+    const junk = "this is not a sqlite database ".repeat(20);
+    await writeFile(join(loser, "history.db"), junk);
+    const socketPath = join(winner, "daemon.sock");
+    await start({ dataDirectory: winner, socketPath });
+
+    const outcome = await start({ dataDirectory: loser, socketPath }).then(
+      () => "resolved" as const,
+      () => "rejected" as const,
+    );
+
+    expect(outcome).toBe("rejected");
     expect(
-      sink.records.filter(
-        (record) => record.level === "error" && record.module === "daemon.events",
-      ),
-    ).toHaveLength(1);
+      await readdir(loser).then((names) => names.filter((name) => name.startsWith("history"))),
+    ).toEqual(["history.db"]);
+    expect(await readFile(join(loser, "history.db"), "utf8")).toBe(junk);
   });
 
   it("mints event ids from the idGenerator the daemon was given", async () => {
@@ -2118,10 +2156,11 @@ describe("startDaemon event file", () => {
       idGenerator: { generate: () => "from-the-given-generator" },
     });
 
-    const ids = (await readFile(join(directory, "events.jsonl"), "utf8"))
-      .trimEnd()
-      .split("\n")
-      .map((line) => (JSON.parse(line) as { id: string }).id);
+    const ids = (
+      await historyEventsWhen(directory, (events) =>
+        events.some((event) => event.id === "evt_from-the-given-generator"),
+      )
+    ).map((event) => event.id);
     expect(ids).toContain("evt_from-the-given-generator");
   });
 
@@ -2142,10 +2181,9 @@ describe("startDaemon event file", () => {
 
     const { sink } = await start({ dataDirectory: directory, drivers: undefined });
 
-    const written = (await readFile(join(directory, "events.jsonl"), "utf8"))
-      .trimEnd()
-      .split("\n")
-      .map((line) => (JSON.parse(line) as { event: string }).event);
+    const written = (await historyEventsWhen(directory, hasEvent("device.slimmed"))).map(
+      (event) => event.event,
+    );
     expect(written).toEqual(expect.arrayContaining(["component.installed", "device.slimmed"]));
     expect(
       sink.records.filter((record) =>
@@ -2922,7 +2960,7 @@ describe("startDaemon with the agent-device edge", () => {
             ).findings
               .filter((finding) => finding.kind === "module-unavailable")
               .map((finding) => finding.module),
-          { timeout: 5_000 },
+          { timeout: 4_000 },
         )
         .toEqual(["agent-device", "alpha"]);
     });

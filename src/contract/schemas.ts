@@ -910,6 +910,12 @@ export const nukeReportSchema = z.object({
 /** The largest magnitude, in ms, a JavaScript `Date` holds. */
 const MAX_DATE_MS = 8.64e15;
 
+export const historyStatusSchema = z.object({
+  opened: z.boolean(),
+  writing: z.boolean(),
+  setAsideAt: z.number().min(-MAX_DATE_MS).max(MAX_DATE_MS).optional(),
+});
+
 export const EVENT_ID_PATTERN = /^evt_[A-Za-z0-9_-]{1,64}$/;
 
 export const eventEnvelopeSchema = z.object({

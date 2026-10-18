@@ -114,3 +114,11 @@ export {
   type MemoryCounters,
   productionHostLoadProbe,
 } from "./host-load.js";
+export { NodeSqliteOpener, SqliteUnavailableError } from "./sqlite.js";
+export type {
+  SqliteDatabase,
+  SqliteOpener,
+  SqliteRunResult,
+  SqliteStatement,
+  SqliteValue,
+} from "./sqlite.js";

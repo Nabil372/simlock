@@ -7,6 +7,7 @@ import {
 } from "../core/testing.js";
 
 import { EventBus, type EventEnvelope, EventHistory } from "../bus/index.js";
+import { fixedEventHistory } from "../history/testing.js";
 import {
   CleanupReaper,
   ComponentInstaller,
@@ -1259,6 +1260,42 @@ describe("Dispatcher: events.replay", () => {
     ).resolves.toEqual(fromHistory);
     expect(asked).toEqual([{ sinceTs: 10 }]);
   });
+});
+
+describe("Dispatcher: config.get eventLog", () => {
+  it("config.get reports eventLog.retention and maxBytes and no rotateBytes", async () => {
+    const { dispatcher } = await buildDispatcher();
+
+    const { eventLog } = await dispatcher.dispatch("config.get", {}, session({ role: "admin" }));
+
+    expect(eventLog).toStrictEqual({
+      maxBytes: 256 * 1024 * 1024,
+      retention: 7 * 24 * 60 * 60 * 1000,
+    });
+  });
+});
+
+describe("Dispatcher: status.get history", () => {
+  it.each([
+    {
+      health: "running" as const,
+      history: { opened: true, setAsideAt: 1_760_605_920_000, writing: false },
+    },
+    { health: "starting" as const, history: { opened: false, writing: false } },
+    { health: "running" as const, history: { opened: true, writing: true } },
+  ])(
+    "status.get carries the history's opened, writing and setAsideAt, in the starting answer too ($health, $history)",
+    async ({ health, history }) => {
+      const { dispatcher } = await buildDispatcher({
+        eventHistory: fixedEventHistory(history),
+        health,
+      });
+
+      const status = await dispatcher.dispatch("status.get", {}, session());
+
+      expect((status as { history?: unknown }).history).toStrictEqual(history);
+    },
+  );
 });
 
 describe("Dispatcher: nuke.run", () => {

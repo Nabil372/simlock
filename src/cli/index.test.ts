@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { testComponentWiring } from "../core/testing.js";
 
 import { EventBus, EventHistory } from "../bus/index.js";
+import { seedHistory } from "../history/testing.js";
 import { CleanupReaper, type Config, Registry } from "../core/index.js";
 import { FakeDriver } from "../core/testing.js";
 import {
@@ -2235,6 +2236,50 @@ describe("CLI: config set validates with the real config loader (ADR 0003 §11, 
   });
 });
 
+describe("CLI: config set and the retired eventLog.rotateBytes", () => {
+  const configSet = async (file: Record<string, unknown>) => {
+    const output = outputCapture(realCliEnvironmentPorts());
+    let written: Record<string, unknown> | undefined;
+    const environment = output.environmentWith({
+      readConfigFile: async () => structuredClone(file),
+      writeConfigFile: async (contents) => {
+        written = contents;
+      },
+    });
+    const exitCode = await runCli(["config", "set", "log.level", "debug"], environment);
+    return { configPath: environment.configPath, exitCode, output, written };
+  };
+
+  it("simlock config set on a file holding eventLog.rotateBytes writes it without that key and prints the Removed line once; on a file without it, no such line", async () => {
+    const holding = await configSet({
+      eventLog: { retention: 86_400_000, rotateBytes: 1_048_576 },
+      log: { level: "info" },
+    });
+    const without = await configSet({
+      eventLog: { retention: 86_400_000 },
+      log: { level: "info" },
+    });
+
+    expect(holding.exitCode).toBe(0);
+    expect(holding.written).toEqual({
+      eventLog: { retention: 86_400_000 },
+      log: { level: "debug" },
+    });
+    expect(holding.output.stderr).toBe(
+      `Removed eventLog.rotateBytes from ${holding.configPath}: it is no longer used.\n`,
+    );
+    expect(holding.output.stdout).toBe(
+      `Updated log.level in ${holding.configPath}; takes effect on daemon restart.\n`,
+    );
+    expect(without.exitCode).toBe(0);
+    expect(without.written).toEqual({
+      eventLog: { retention: 86_400_000 },
+      log: { level: "debug" },
+    });
+    expect(without.output.stderr).toBe("");
+  });
+});
+
 describe("CLI: config set and the file mode of config.json (#252)", () => {
   it("writes the config.json holding gateway.token owner-only, whether it creates the file or replaces an owner-only one", async () => {
     // why: Two homes, one per way `config set` comes to write the join token. `MemoryFilesystem`
@@ -4044,6 +4089,46 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
     expect(await start(EMPTY_STATUS)).toBe("Daemon running\n");
   });
 
+  describe("the history lines of simlock status", () => {
+    const NOT_WRITTEN = "History: the event history is not being written; see daemon.log.";
+    const SET_ASIDE_AT = Date.UTC(2026, 9, 16, 9, 12, 30);
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    const local = new Date(SET_ASIDE_AT);
+    const setAside = `History: the event history was damaged and set aside at ${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())} ${pad(local.getHours())}:${pad(local.getMinutes())}; a fresh one was started.`;
+
+    const statusLines = async (history: StatusGetOutput["history"]): Promise<string[]> => {
+      const output = outputCapture();
+      await runCli(
+        ["status"],
+        output.environmentWith({
+          connectAdmin: async () =>
+            fakeClient({
+              getStatus: () =>
+                Promise.resolve({
+                  ...EMPTY_STATUS,
+                  ...(history === undefined ? {} : { history }),
+                } as StatusGetOutput),
+            }),
+        }),
+      );
+      return output.stdout.trimEnd().split("\n");
+    };
+
+    it("prints the not-written line when writing is false, the set-aside line with the local time when setAsideAt is set, both when both hold, and neither otherwise", async () => {
+      const healthy = await statusLines({ opened: true, writing: true });
+      const notWritten = await statusLines({ opened: false, writing: false });
+      const aside = await statusLines({ opened: true, setAsideAt: SET_ASIDE_AT, writing: true });
+      const both = await statusLines({ opened: true, setAsideAt: SET_ASIDE_AT, writing: false });
+
+      expect(healthy.filter((line) => line.startsWith("History:"))).toEqual([]);
+      expect(notWritten.filter((line) => line.startsWith("History:"))).toEqual([NOT_WRITTEN]);
+      expect(aside.filter((line) => line.startsWith("History:"))).toEqual([setAside]);
+      expect(both.filter((line) => line.startsWith("History:")).sort()).toEqual(
+        [NOT_WRITTEN, setAside].sort(),
+      );
+    });
+  });
+
   it("prints an install line while one runs and none after", async () => {
     const install = {
       component: "26.4",
@@ -5475,33 +5560,81 @@ describe("CLI: events history", () => {
   }
 
   function printed(stdout: string): unknown[] {
+    if (stdout.trim() === "") return [];
     return stdout
       .trimEnd()
       .split("\n")
       .map((line) => JSON.parse(line) as unknown);
   }
 
-  it("events --since with nothing listening prints the file's events and launches no daemon", async () => {
-    const filesystem = new MemoryFilesystem();
-    await filesystem.mkdirp("/simlock");
-    await filesystem.writeFileAtomic(
-      "/simlock/events.jsonl",
-      [envelope(1, 500), envelope(2, hour + 500)].map((entry) => JSON.stringify(entry)).join("\n"),
-    );
+  async function historyDirectory(
+    prepare: (directory: string) => Promise<void>,
+  ): Promise<CliEnvironmentPorts> {
+    const directory = await mkdtemp(join(tmpdir(), "simlock-cli-history-"));
+    temporaryDirectories.push(directory);
+    await prepare(directory);
+    return {
+      ...realCliEnvironmentPorts(new NodeFilesystem()),
+      clock: new FakeClock(2 * hour),
+      dataDirectory: directory,
+    };
+  }
+
+  const stopped = (seq: number, timestamp: number) => ({
+    event: "daemon.stopping",
+    id: `evt_${seq}`,
+    module: "daemon",
+    payload: { reason: `r${seq}` },
+    seq,
+    timestamp,
+  });
+
+  it("events --since with nothing listening reads history.db and launches no daemon", async () => {
+    const ports = await historyDirectory((directory) => seedHistory(directory, [500, hour + 500]));
     const launcher = new FakeDaemonLauncher(() => {
       throw new Error("a daemon was launched");
     });
-    const output = outputCapture({
-      ...realCliEnvironmentPorts(filesystem),
-      clock: new FakeClock(2 * hour),
-      launcher,
-    });
+    const output = outputCapture({ ...ports, launcher });
 
     const exitCode = await runCli(["events", "--since", "1h"], output.environmentWith());
 
     expect(launcher.launches).toBe(0);
     expect(exitCode).toBe(0);
-    expect(printed(output.stdout)).toEqual([envelope(2, hour + 500)]);
+    expect(printed(output.stdout)).toEqual([stopped(2, hour + 500)]);
+  });
+
+  it("events --since with nothing listening and no history.db prints nothing, exit 0, even beside an old events.jsonl", async () => {
+    const bare = outputCapture(await historyDirectory(async () => {}));
+    const withOldFile = outputCapture(
+      await historyDirectory((directory) =>
+        writeFile(join(directory, "events.jsonl"), `${JSON.stringify(envelope(1, hour + 500))}\n`),
+      ),
+    );
+
+    const codes = [
+      await runCli(["events", "--since", "1h"], bare.environmentWith()),
+      await runCli(["events", "--since", "1h"], withOldFile.environmentWith()),
+    ];
+
+    expect(codes).toEqual([0, 0]);
+    expect([bare.stdout, withOldFile.stdout]).toEqual(["", ""]);
+  });
+
+  it("events --since with nothing listening and an unreadable history.db prints one JSON error and exits 1", async () => {
+    const output = outputCapture(
+      await historyDirectory((directory) =>
+        writeFile(join(directory, "history.db"), "this is not a sqlite database ".repeat(20)),
+      ),
+    );
+
+    const exitCode = await runCli(["events", "--since", "1h"], output.environmentWith());
+
+    expect(exitCode).toBe(1);
+    expect(output.stdout).toBe("");
+    expect(output.stderr.trimEnd().split("\n")).toHaveLength(1);
+    const printedError = JSON.parse(output.stderr) as { error: { code: string; message: string } };
+    expect(printedError.error.code).toBe("INTERNAL");
+    expect(printedError.error.message).toMatch(/not a database/);
   });
 
   it("events --since reports a daemon that refuses the handshake rather than reading the file", async () => {

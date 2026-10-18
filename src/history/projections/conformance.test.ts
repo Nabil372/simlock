@@ -1,0 +1,151 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { EventBus } from "../../bus/index.js";
+import {
+  FakeClock,
+  JsonLinesLogger,
+  MemoryLogSink,
+  NodeFilesystem,
+  NodeSqliteOpener,
+} from "../../ports/index.js";
+import { createEventHistory, HISTORY_DB_NAME, type HistoryProjectionDefinition } from "../index.js";
+import { HISTORY_PROJECTIONS } from "./index.js";
+
+const directories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    directories.splice(0).map((path) => rm(path, { force: true, recursive: true })),
+  );
+});
+
+async function projectionRows(path: string): Promise<Record<string, number>> {
+  const database = await new NodeSqliteOpener().open(path, { readOnly: true });
+  try {
+    const tables = database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+      .all()
+      .map((row) => String(row.name))
+      .filter((name) => name !== "events");
+    return Object.fromEntries(
+      tables.map((name) => [
+        name,
+        Number(database.prepare(`SELECT count(*) AS n FROM "${name}"`).get()?.n),
+      ]),
+    );
+  } finally {
+    database.close();
+  }
+}
+
+async function run(
+  definition: HistoryProjectionDefinition,
+  act: (bus: EventBus, wrapped: { applied: string[] }) => void,
+  options: { readonly throwOn?: string } = {},
+): Promise<{
+  readonly applied: string[];
+  readonly events: number;
+  readonly rows: Record<string, number>;
+  readonly writing: boolean;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), "simlock-projection-"));
+  directories.push(directory);
+  const clock = new FakeClock(1_000);
+  const bus = new EventBus(clock);
+  const applied: string[] = [];
+  const wrapped: HistoryProjectionDefinition = {
+    create: (database) => {
+      const inner = definition.create(database);
+      return {
+        apply: (envelope) => {
+          applied.push(envelope.id);
+          inner.apply(envelope);
+          if (options.throwOn === envelope.id) throw new Error("apply failed");
+        },
+        prune: (now) => inner.prune(now),
+      };
+    },
+    name: definition.name,
+  };
+  const history = createEventHistory({
+    bus,
+    clock,
+    config: { maxBytes: 256 * 1024 * 1024, retention: 7 * 24 * 3_600_000 },
+    dataDirectory: directory,
+    filesystem: new NodeFilesystem(),
+    logger: new JsonLinesLogger({ clock, sink: new MemoryLogSink() }),
+    projections: [wrapped],
+    sqlite: new NodeSqliteOpener(),
+  });
+  await history.start();
+  act(bus, { applied });
+  const events = (await history.replay({ sinceTs: 0 })).length;
+  const writing = history.status().writing;
+  await history.stop();
+  return {
+    applied,
+    events,
+    rows: await projectionRows(join(directory, HISTORY_DB_NAME)),
+    writing,
+  };
+}
+
+function conformance(
+  label: string,
+  registry: Readonly<Record<string, HistoryProjectionDefinition>>,
+) {
+  describe.each(Object.entries(registry))(`${label} projection %s`, (_name, definition) => {
+    const relay = (bus: EventBus, id: string): void => {
+      bus.republish({
+        event: "daemon.stopping",
+        id,
+        module: "daemon",
+        payload: { reason: id },
+        timestamp: 1_000,
+      });
+    };
+
+    it("apply of a duplicate never runs", async () => {
+      const result = await run(definition, (bus) => {
+        relay(bus, "evt_a");
+        relay(bus, "evt_a");
+      });
+
+      expect(result.applied).toEqual(["evt_a"]);
+      expect(result.events).toBe(1);
+    });
+
+    it("a throwing apply writes nothing", async () => {
+      const baseline = await run(definition, (bus) => relay(bus, "evt_a"));
+      const result = await run(
+        definition,
+        (bus) => {
+          relay(bus, "evt_a");
+          relay(bus, "evt_boom");
+        },
+        { throwOn: "evt_boom" },
+      );
+
+      expect(result.events).toBe(1);
+      expect(result.rows).toEqual(baseline.rows);
+      expect(result.writing).toBe(false);
+    });
+  });
+}
+
+describe("the history projection conformance suite", () => {
+  conformance("registered", HISTORY_PROJECTIONS);
+  conformance("test", {
+    counter: {
+      create: (database) => {
+        database.exec("CREATE TABLE IF NOT EXISTS counted (id TEXT PRIMARY KEY)");
+        const insert = database.prepare("INSERT INTO counted (id) VALUES (?)");
+        return { apply: (envelope) => void insert.run(envelope.id), prune: () => undefined };
+      },
+      name: "counter",
+    },
+  });
+});
