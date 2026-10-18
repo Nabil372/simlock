@@ -88,6 +88,13 @@ export class NoCapacityError extends Error {
   }
 }
 
+export class ProvisionFailedError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "ProvisionFailedError";
+  }
+}
+
 class NukeCancelledError extends Error {
   constructor() {
     super("Request cancelled by nuke");
@@ -118,7 +125,6 @@ export type AcquisitionQueue = Pick<
   | "hasPendingRequester"
   | "head"
   | "isQueued"
-  | "list"
   | "markNew"
   | "markProcessing"
   | "notifyProgress"
@@ -854,20 +860,19 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
           this.options.queue.markNew(waiter);
           return true;
         }
-        // ADR 0021 §1: a probe is never queued on a worker. It is declined instead, and its
-        // caller (the gateway) walks on to another worker.
-        if (waiter.options.fleetRequestId !== undefined) {
-          this.#reject(waiter, new NoCapacityError("provisioning-failed"), "no-wait");
-          return false;
-        }
-        this.#enqueue(waiter, "provisioning-failed");
+        // why: ADR 0021 §1 declines a probe instead of rejecting it, and its caller (the gateway) reads the code.
+        this.#reject(
+          waiter,
+          new ProvisionFailedError(error),
+          waiter.options.fleetRequestId === undefined ? "unresolvable-spec" : "no-wait",
+        );
         return false;
       });
       if (retry) {
         this.#driving.delete(waiter);
         await this.#drive(waiter);
       } else {
-        this.#wakeQueue(waiter);
+        this.#wakeQueue();
       }
       return;
     }
@@ -919,14 +924,12 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     if (waiter.state === "rejected" || waiter.state === "granted" || waiter.spec === undefined) {
       return undefined;
     }
-    // why: a waiter that two provisions failed on holds nobody back, so the first one that did not fail twice plans.
-    const head = this.#lineHead();
+    const head = this.options.queue.head;
     if (head !== undefined && head !== waiter) {
       const reason = "behind-earlier-request";
       return waiter.options.noWait ? { kind: "no-capacity", reason } : { kind: "wait", reason };
     }
     return this.options.planner.plan({
-      failures: waiter.failures,
       noWait: waiter.options.noWait ?? false,
       owner: waiter.id,
       snapshot: this.options.registry.snapshot,
@@ -1237,22 +1240,9 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     }
   }
 
-  #lineHead(): AcquisitionWaiter | undefined {
-    return (this.options.queue.list() as readonly AcquisitionWaiter[]).find(
-      (waiter) => lineOf(waiter.request) === "virtual" && waiter.failures < 2,
-    );
-  }
-
-  // why: `failed` is a request that just failed its second provision; that wake does not replan it, but any other wake may drive a twice-failed waiter that is alone in line.
-  #wakeQueue(failed?: AcquisitionWaiter): void {
+  #wakeQueue(): void {
     void this.options.decisions.run(async () => {
-      const next =
-        this.#lineHead() ??
-        (failed === undefined
-          ? (this.options.queue.head as AcquisitionWaiter | undefined)
-          : (this.options.queue.list() as readonly AcquisitionWaiter[]).find(
-              (waiter) => waiter !== failed && lineOf(waiter.request) === "virtual",
-            ));
+      const next = this.options.queue.head as AcquisitionWaiter | undefined;
       if (next !== undefined && next.state === "queued") this.#track(this.#drive(next));
       for (const waiter of this.options.queue.pending() as readonly AcquisitionWaiter[]) {
         if (lineOf(waiter.request) === "physical") {

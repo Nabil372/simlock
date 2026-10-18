@@ -6636,7 +6636,6 @@ describe("simlock list --requests", () => {
       ["global-running-limit", "ios", "full: running limit"],
       ["platform-running-limit", "ios", "full: running limit for iOS"],
       ["platform-running-limit", "android", "full: running limit for Android"],
-      ["provisioning-failed", "ios", "creating a device failed twice"],
       ["waiting-for-device", "ios", "a matching device is starting"],
       ["no-free-physical", "ios", "every matching device is leased or absent"],
     ] as const)(
@@ -6659,7 +6658,7 @@ describe("simlock list --requests", () => {
       expect(field).toBeDefined();
       const listed = (field as { unwrap(): { options: readonly string[] } }).unwrap().options;
 
-      expect(listed).toHaveLength(8);
+      expect(listed).toHaveLength(7);
       for (const reason of listed) {
         const line = await printed(queued(reason));
         expect(line).toMatch(/ — [a-z]/);

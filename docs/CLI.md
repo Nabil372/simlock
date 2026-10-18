@@ -110,13 +110,15 @@ command starts it again) to bring the platform up.
 | 12 | `COMPONENT_IN_USE` | `component remove` of a component a device uses, Simlock's or your own |
 | 13 | `REQUESTER_ALREADY_LEASED` | requester already holds `lease.maxPerRequester` leases (default 1) or has a pending request; release the named lease first |
 | 13 | `LEASE_ID_TAKEN` | `lease --lease-id` named an ID an active lease or a waiting request already holds |
+| 14 | `PROVISION_FAILED` | creating a device for the request failed twice; the message is the driver's error |
 | 14 | — | `lease` without `--detach` only: the daemon ended the lease without the holder asking (TTL expiry, operator `release`, or an unrecoverable device) |
 | 15 | — | `component install --worker`/`--all-workers` on a gateway only: at least one worker did not end `installed` or `already-installed` (it refused, failed, was skipped, or its result is unknown) |
 
-Every row but 14 and 15 matches the `cliExitCode` column of the contract's
+Every row but the dash rows matches the `cliExitCode` column of the contract's
 error table (`src/contract/errors.ts`'s `ERROR_TABLE`) exactly — the CLI does
-not maintain a second mapping. 14 and 15 are not daemon error codes but
-outcomes of a command that succeeded: 14 of a `lease` that stays alive, so it
+not maintain a second mapping. The dash rows 14 and 15 are not daemon error codes but
+outcomes of a command that succeeded (exit 14 is also `PROVISION_FAILED`: a
+`lease` that fails prints an error line, one that was granted and ended does not): 14 of a `lease` that stays alive, so it
 lives beside the table's other `lease` outcome, 0; 15 of an install on
 several workers, whose per-worker report on stdout says which worker ended
 how.
@@ -1590,9 +1592,8 @@ on it: placing it as it arrives, or finding, creating, booting or downloading
 a device for it. A `queued` line ends with ` — ` and the reason the daemon's
 latest attempt to place the request stopped, when it has one: `behind an
 earlier request`, `full: device limit`, `full: RAM budget`, `full: running
-limit`, `full: running limit for iOS` (or `Android`), `creating a device
-failed twice`, `a matching device is starting`, or `every matching device is
-leased or absent`. The reason is the daemon's latest attempt, so it can change
+limit`, `full: running limit for iOS` (or `Android`), `a matching device is starting`, or `every
+matching device is leased or absent`. The reason is the daemon's latest attempt, so it can change
 while the request waits; a `starting` line has none. On a gateway, a worker's
 own queued entries keep their reason. With nothing waiting it prints
 `No requests are waiting.` A granted, failed or cancelled request is not

@@ -117,7 +117,6 @@ function plan(
   acquisitionPlanner: AcquisitionPlanner,
   devices: readonly VirtualDevice[],
   options: {
-    failures?: number;
     leases?: readonly LeaseRecord[];
     noWait?: boolean;
     owner?: string;
@@ -125,7 +124,6 @@ function plan(
   } = {},
 ) {
   return acquisitionPlanner.plan({
-    failures: options.failures ?? 0,
     noWait: options.noWait ?? false,
     ...(options.owner === undefined ? {} : { owner: options.owner }),
     snapshot: { devices, leases: options.leases ?? [], virtualDevices: devices },
@@ -698,22 +696,6 @@ describe("AcquisitionPlanner", () => {
       expect(plan(boots, [down], { noWait: true })).toEqual({
         kind: "no-capacity",
         reason: "waiting-for-device",
-      });
-    });
-
-    it("says provisioning-failed once two provisions have failed and capacity would allow a third", () => {
-      const { planner: acquisitionPlanner } = limited(roomyLimits);
-
-      const first = plan(acquisitionPlanner, [], { failures: 1 });
-      expect(first.kind).toBe("provision");
-      if (first.kind === "provision") first.reservation.release();
-      expect(plan(acquisitionPlanner, [], { failures: 2 })).toEqual({
-        kind: "wait",
-        reason: "provisioning-failed",
-      });
-      expect(plan(acquisitionPlanner, [], { failures: 2, noWait: true })).toEqual({
-        kind: "no-capacity",
-        reason: "provisioning-failed",
       });
     });
 

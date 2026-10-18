@@ -943,7 +943,6 @@ describe("waitingRequestSchema's reason", () => {
     "ram-budget",
     "global-running-limit",
     "platform-running-limit",
-    "provisioning-failed",
     "waiting-for-device",
     "no-free-physical",
   ] as const;

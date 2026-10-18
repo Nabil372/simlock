@@ -1,6 +1,6 @@
 export { createLeasing } from "./create-leasing.js";
 export { capacityReasonOf } from "./acquisition-planner.js";
-export { NoCapacityError } from "./lease-acquisition-coordinator.js";
+export { NoCapacityError, ProvisionFailedError } from "./lease-acquisition-coordinator.js";
 export { LeaseHealthMonitor } from "./lease-health-monitor.js";
 export { type PhysicalDeviceWatcher } from "./physical-device-watcher.js";
 export {

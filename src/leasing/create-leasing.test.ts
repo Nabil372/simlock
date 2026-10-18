@@ -24,7 +24,7 @@ import {
   MemoryLogSink,
 } from "../ports/index.js";
 import { createLeasing } from "./create-leasing.js";
-import { NoCapacityError } from "./lease-acquisition-coordinator.js";
+import { NoCapacityError, ProvisionFailedError } from "./lease-acquisition-coordinator.js";
 import { LeaseHealthMonitor } from "./lease-health-monitor.js";
 import { createTestEngine } from "./testing.js";
 import { QueueTimeoutError, RequestCancelledError } from "./wait-queue.js";
@@ -4312,12 +4312,13 @@ describe("createLeasing: a gateway dispatch is a probe (ADR 0021)", () => {
       return driver;
     }
 
-    it("declines a probe with reason no-wait, answers NO_CAPACITY, and emits no lease.queued", async () => {
+    it("declines a probe with reason no-wait, answers PROVISION_FAILED with the driver's message, and emits no lease.queued", async () => {
       const harness = await createHarness({ driver: failingTwice() });
 
       const outcome = await settledOrPending(harness.engine.request(request, probeOf("gw:one")));
 
-      expect(outcome).toBeInstanceOf(NoCapacityError);
+      expect(outcome).toBeInstanceOf(ProvisionFailedError);
+      expect(outcome).toMatchObject({ message: "simulator exited again" });
       expect(payloads(harness, "lease.declined")).toEqual([
         expect.objectContaining({ fleetRequestId: "req_gw1", reason: "no-wait" }),
       ]);
@@ -4325,15 +4326,17 @@ describe("createLeasing: a gateway dispatch is a probe (ADR 0021)", () => {
       expect(payloads(harness, "lease.rejected")).toEqual([]);
     });
 
-    it("still queues a local request in the same case", async () => {
+    it("rejects a local request in the same case with PROVISION_FAILED, lists nothing and emits no lease.queued", async () => {
       const harness = await createHarness({ driver: failingTwice() });
 
       const outcome = await settledOrPending(
         harness.engine.request(request, { ownerId: "local", requesterId: "local" }),
       );
 
-      expect(outcome).toBe("still pending");
-      expect(payloads(harness, "lease.queued")).toEqual([expect.objectContaining({})]);
+      expect(outcome).toBeInstanceOf(ProvisionFailedError);
+      expect(outcome).toMatchObject({ message: "simulator exited again" });
+      expect(harness.engine.waitingRequests()).toEqual([]);
+      expect(payloads(harness, "lease.queued")).toEqual([]);
       expect(payloads(harness, "lease.declined")).toEqual([]);
     });
   });
@@ -4461,7 +4464,23 @@ describe("createLeasing: a waiting request says why it is not placed (#636)", ()
     ]);
   });
 
-  it("lists a request re-queued after its second provisioning failure as provisioning-failed, and the request that queued meanwhile plans again", async () => {
+  it("plans again at once after a first provisioning failure, and a success then grants", async () => {
+    const driver = new FakeDriver({
+      availableOsVersions: ["26.5"],
+      clock: new FakeClock(1_000),
+      platform: "ios",
+    });
+    driver.failOn("provision", 1, new DriverCrashError("simulator exited"));
+    const harness = await createHarness({ driver });
+
+    const granted = await harness.engine.request(request, asking("retried"));
+
+    expect(granted.lease.id).toBeDefined();
+    expect(driver.calls.filter((call) => call.operation === "provision")).toHaveLength(2);
+    expect(listing(harness)).toEqual([]);
+  });
+
+  it("rejects a request whose provision failed twice with PROVISION_FAILED, lists nothing for it, and the request behind it plans again", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({
       availableOsVersions: ["26.5"],
@@ -4472,7 +4491,9 @@ describe("createLeasing: a waiting request says why it is not placed (#636)", ()
     driver.failOn("provision", 1, new DriverCrashError("simulator exited"));
     driver.failOn("provision", 2, new DriverCrashError("simulator exited again"));
     const harness = await createHarness({ driver });
-    void harness.engine.request(request, asking("failing"));
+    const rejected = harness.engine
+      .request(request, asking("failing"))
+      .catch((error: unknown) => error);
     await flush();
     clock.advance(50);
     await flush();
@@ -4486,42 +4507,11 @@ describe("createLeasing: a waiting request says why it is not placed (#636)", ()
     clock.advance(50);
     await flush();
 
+    expect(await rejected).toBeInstanceOf(ProvisionFailedError);
+    expect(await rejected).toMatchObject({ message: "simulator exited again" });
     expect(listing(harness)).toEqual([
-      { reason: "provisioning-failed", requesterId: "failing", stage: "queued" },
       { reason: undefined, requesterId: "meanwhile", stage: "starting" },
     ]);
-  });
-
-  it("does not plan the twice-failed request again on the wake that follows: it stays queued with provisioning-failed until the next kick", async () => {
-    const clock = new FakeClock(1_000);
-    const driver = new FakeDriver({
-      availableOsVersions: ["26.5"],
-      clock,
-      latencyMs: { provision: 50 },
-      platform: "ios",
-    });
-    driver.failOn("provision", 1, new DriverCrashError("simulator exited"));
-    driver.failOn("provision", 2, new DriverCrashError("simulator exited again"));
-    const harness = await createHarness({ driver });
-    void harness.engine.request(request, asking("failing"));
-    await flush();
-    clock.advance(50);
-    await flush();
-    void harness.engine.request(request, asking("meanwhile"));
-    await flush();
-    clock.advance(50);
-    await flush();
-    const provisions = () => driver.calls.filter((call) => call.operation === "provision").length;
-    const before = provisions();
-
-    await flush();
-
-    expect(listing(harness)).toContainEqual({
-      reason: "provisioning-failed",
-      requesterId: "failing",
-      stage: "queued",
-    });
-    expect(provisions()).toBe(before);
   });
 
   it("lists a request that waits for a device the warm pool is booting as waiting-for-device", async () => {
@@ -4592,127 +4582,6 @@ describe("createLeasing: a waiting request says why it is not placed (#636)", ()
     expect(listing(harness)).toEqual([
       { reason: "device-limit", requesterId: "second", stage: "queued" },
     ]);
-  });
-
-  it("plans the request behind a twice-failed head on its own: it is placed, not listed behind-earlier-request", async () => {
-    const clock = new FakeClock(1_000);
-    const driver = new FakeDriver({
-      availableOsVersions: ["26.4", "26.5"],
-      clock,
-      latencyMs: { provision: 50 },
-      platform: "ios",
-    });
-    const harness = await createHarness({ driver, limits: runningLimit });
-    const holding = harness.engine.request({ ...request, osVersion: "26.4" }, asking("holder"));
-    await flush();
-    clock.advance(50);
-    const holder = await holding;
-    driver.failOn("provision", 2, new DriverCrashError("simulator exited"));
-    driver.failOn("provision", 3, new DriverCrashError("simulator exited again"));
-    void harness.engine.request(request, asking("a"));
-    void harness.engine.request(request, asking("b"));
-    await flush();
-    expect(listing(harness)).toEqual([
-      { reason: "platform-running-limit", requesterId: "a", stage: "queued" },
-      { reason: "behind-earlier-request", requesterId: "b", stage: "queued" },
-    ]);
-    await harness.engine.release(holder.lease.id, "explicit");
-    for (let step = 0; step < 3; step += 1) {
-      clock.advance(50);
-      await flush();
-    }
-
-    expect(listing(harness)).toEqual([
-      { reason: "provisioning-failed", requesterId: "a", stage: "queued" },
-      { reason: undefined, requesterId: "b", stage: "starting" },
-    ]);
-  });
-
-  it("places the first waiter that has not failed twice when a release wakes the queue", async () => {
-    const clock = new FakeClock(1_000);
-    const driver = new FakeDriver({
-      availableOsVersions: ["26.4", "26.5"],
-      clock,
-      latencyMs: { provision: 50 },
-      platform: "ios",
-    });
-    const harness = await createHarness({ driver, limits: runningLimit });
-    const holding = harness.engine.request({ ...request, osVersion: "26.4" }, asking("holder"));
-    await flush();
-    clock.advance(50);
-    const holder = await holding;
-    driver.failOn("provision", 2, new DriverCrashError("simulator exited"));
-    driver.failOn("provision", 3, new DriverCrashError("simulator exited again"));
-    void harness.engine.request(request, asking("a"));
-    const second = harness.engine.request(request, asking("b"));
-    await flush();
-    await harness.engine.release(holder.lease.id, "explicit");
-    for (let step = 0; step < 3; step += 1) {
-      clock.advance(50);
-      await flush();
-    }
-    const third = harness.engine.request(request, asking("c"));
-    await flush();
-    clock.advance(50);
-    await flush();
-    expect(listing(harness)).toEqual([
-      { reason: "provisioning-failed", requesterId: "a", stage: "queued" },
-      { reason: "platform-running-limit", requesterId: "c", stage: "queued" },
-    ]);
-    const granted = await second;
-    void harness.engine.request(request, asking("d"));
-    await flush();
-
-    await harness.engine.release(granted.lease.id, "explicit");
-    for (let step = 0; step < 3; step += 1) {
-      clock.advance(50);
-      await flush();
-    }
-
-    expect((await third).lease.id).toBeDefined();
-    expect(listing(harness)).toEqual([
-      { reason: "provisioning-failed", requesterId: "a", stage: "queued" },
-      { reason: "platform-running-limit", requesterId: "d", stage: "queued" },
-    ]);
-  });
-
-  it("places a lone twice-failed waiter when a release frees a fitting device", async () => {
-    const clock = new FakeClock(1_000);
-    const driver = new FakeDriver({
-      availableOsVersions: ["26.4", "26.5"],
-      clock,
-      latencyMs: { provision: 50 },
-      platform: "ios",
-    });
-    const harness = await createHarness({
-      driver,
-      limits: {
-        android: { maxDevices: 1, maxRunning: 1 },
-        ios: { maxDevices: 2, maxRunning: 2 },
-        maxRunning: 2,
-      },
-    });
-    const holding = harness.engine.request({ ...request, osVersion: "26.5" }, asking("holder"));
-    await flush();
-    clock.advance(50);
-    const holder = await holding;
-    driver.failOn("provision", 2, new DriverCrashError("simulator exited"));
-    driver.failOn("provision", 3, new DriverCrashError("simulator exited again"));
-    const waiting = harness.engine.request(request, asking("a"));
-    await flush();
-    for (let step = 0; step < 3; step += 1) {
-      clock.advance(50);
-      await flush();
-    }
-    expect(listing(harness)).toEqual([
-      { reason: "provisioning-failed", requesterId: "a", stage: "queued" },
-    ]);
-
-    await harness.engine.release(holder.lease.id, "explicit");
-    await flush();
-
-    expect(listing(harness)).toEqual([]);
-    expect((await waiting).lease.id).toBeDefined();
   });
 
   it("lists no reason for a starting request that is being provisioned", async () => {

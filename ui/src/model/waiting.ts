@@ -76,7 +76,6 @@ const WHY_TEXT: Readonly<
   "global-running-limit": () => "Full: running limit",
   "no-free-physical": () => "Every matching device is leased or absent",
   "platform-running-limit": (platform) => `Full: running limit for ${platform}`,
-  "provisioning-failed": () => "Creating a device failed twice",
   "ram-budget": () => "Full: RAM budget",
   "waiting-for-device": () => "A matching device is starting",
 };

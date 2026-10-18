@@ -189,7 +189,6 @@ describe("why a request waits", () => {
     ["global-running-limit", "ios", "Full: running limit"],
     ["platform-running-limit", "ios", "Full: running limit for iOS"],
     ["platform-running-limit", "android", "Full: running limit for Android"],
-    ["provisioning-failed", "ios", "Creating a device failed twice"],
     ["waiting-for-device", "ios", "A matching device is starting"],
     ["no-free-physical", "ios", "Every matching device is leased or absent"],
   ] as const)("is the text for %s on %s: %s", (reason, platform, text) => {
@@ -206,7 +205,7 @@ describe("why a request waits", () => {
     expect(field).toBeDefined();
     const listed = (field as { unwrap(): { options: readonly string[] } }).unwrap().options;
 
-    expect(listed).toHaveLength(8);
+    expect(listed).toHaveLength(7);
     for (const reason of listed) {
       const why = whyOf(withReason(reason));
       expect(why).toBeDefined();

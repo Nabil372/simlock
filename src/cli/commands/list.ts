@@ -48,7 +48,6 @@ const WAITING_REASON_TEXT: Readonly<Record<WaitingReasonWord, (platform: string)
   "no-free-physical": () => "Every matching device is leased or absent",
   "platform-running-limit": (platform) =>
     `Full: running limit for ${platform === "ios" ? "iOS" : "Android"}`,
-  "provisioning-failed": () => "Creating a device failed twice",
   "ram-budget": () => "Full: RAM budget",
   "waiting-for-device": () => "A matching device is starting",
 };

@@ -33,7 +33,6 @@ export interface AcquisitionPlannerSnapshot {
 }
 
 export interface AcquisitionPlannerInput {
-  readonly failures: number;
   readonly noWait: boolean;
   readonly owner?: string | undefined;
   readonly snapshot: AcquisitionPlannerSnapshot;
@@ -54,7 +53,6 @@ export interface PhysicalPlanInput {
 export type WaitingReason =
   | CapacityRefusalReason
   | "behind-earlier-request"
-  | "provisioning-failed"
   | "waiting-for-device"
   | "no-free-physical";
 
@@ -201,9 +199,7 @@ export class AcquisitionPlanner {
       capacityDevices(input.snapshot.virtualDevices),
     );
     if (reservation.ok) {
-      if (input.failures < 2) return { kind: "provision", reservation: reservation.reservation };
-      reservation.reservation.release();
-      return blocked(input.noWait, "provisioning-failed");
+      return { kind: "provision", reservation: reservation.reservation };
     }
 
     const reason = CAPACITY_WAITING_REASON[reservation.reason];

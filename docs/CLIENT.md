@@ -632,11 +632,14 @@ const { waiting = [] } = await client.getStatus();
   request named.
 - `reason` is set only on a `queued` entry that the daemon has tried to place: why its
   latest attempt stopped (`behind-earlier-request`, `device-limit`, `ram-budget`,
-  `global-running-limit`, `platform-running-limit`, `provisioning-failed`,
+  `global-running-limit`, `platform-running-limit`,
   `waiting-for-device` or `no-free-physical`). Each new attempt replaces it.
 - A `lease.request` with `noWait` that a capacity check refused fails with `NO_CAPACITY`
   and `details.capacityReason` set to `device-limit`, `ram-budget`, `global-running-limit`
   or `platform-running-limit`. A refusal for another cause has no `details`.
+- A request whose new device could not be created twice fails with `PROVISION_FAILED`
+  (exit code 14 on the CLI, HTTP 500); its message is the driver's error. It never waits in
+  the list.
 - A request leaves the list as soon as it is granted, fails or is cancelled.
   The field is absent only from an older daemon.
 - On a gateway the list is the gateway's own queue. Each worker's own is on
