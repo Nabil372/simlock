@@ -47,8 +47,9 @@ and registry writers. Read-decide-commit runs under it; driver I/O never does.
    `waiting-for-device`, `provisioning-failed` or `no-free-physical`). The waiter keeps it,
    in memory only, from its latest enqueue; `waitingRequests()` lists it on a `queued`
    entry, never on a `starting` one. `NoCapacityError` carries it too. Cancelling a queued
-   virtual waiter and enqueuing after a second provisioning failure wake the queue, so the
-   new head plans again.
+   waiter (a physical one mid presence read wakes it after its claim is released) and a
+   second provisioning failure wake the queue. A head that failed two provisions
+   does not hold the virtual waiters behind it: they plan on their own.
 4. **Perform** (no lock) — provision, boot or evict through core, then plan again.
    A boot failure destroys the device and rejects `boot-timeout`; a destroy
    that fails hands the device to core's quarantine through a port leasing

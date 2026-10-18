@@ -118,6 +118,7 @@ export type AcquisitionQueue = Pick<
   | "hasPendingRequester"
   | "head"
   | "isQueued"
+  | "list"
   | "markNew"
   | "markProcessing"
   | "notifyProgress"
@@ -617,8 +618,10 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         | undefined;
       if (waiter === undefined) return "not-found";
       if (waiter.state !== "queued" && waiter.request.physical !== true) return "not-cancellable";
+      const holdsClaim = waiter.state === "processing";
       this.#reject(waiter, new RequestCancelledError(waiter.id), "cancelled");
-      if (lineOf(waiter.request) === "virtual") this.#wakeQueue();
+      // why: a waiter mid presence read holds a grant claim, and its own wake follows the release.
+      if (!holdsClaim) this.#wakeQueue();
       return "cancelled";
     });
   }
@@ -864,7 +867,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         this.#driving.delete(waiter);
         await this.#drive(waiter);
       } else {
-        this.#wakeQueue();
+        this.#wakeQueue(waiter);
       }
       return;
     }
@@ -916,7 +919,9 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     if (waiter.state === "rejected" || waiter.state === "granted" || waiter.spec === undefined) {
       return undefined;
     }
-    if (this.options.queue.head !== undefined && this.options.queue.head !== waiter) {
+    const head = this.options.queue.head as AcquisitionWaiter | undefined;
+    // why: a head that two provisions failed on holds nobody back, so the wake can plan the ones behind it.
+    if (head !== undefined && head !== waiter && head.failures < 2) {
       const reason = "behind-earlier-request";
       return waiter.options.noWait ? { kind: "no-capacity", reason } : { kind: "wait", reason };
     }
@@ -1232,9 +1237,15 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     }
   }
 
-  #wakeQueue(): void {
+  // why: `skip` is a request that just failed its second provision, and the wake plans the ones behind it.
+  #wakeQueue(skip?: AcquisitionWaiter): void {
     void this.options.decisions.run(async () => {
-      const next = this.options.queue.head as AcquisitionWaiter | undefined;
+      const next =
+        skip === undefined
+          ? (this.options.queue.head as AcquisitionWaiter | undefined)
+          : (this.options.queue.list() as readonly AcquisitionWaiter[]).find(
+              (waiter) => waiter !== skip && lineOf(waiter.request) === "virtual",
+            );
       if (next !== undefined && next.state === "queued") this.#track(this.#drive(next));
       for (const waiter of this.options.queue.pending() as readonly AcquisitionWaiter[]) {
         if (lineOf(waiter.request) === "physical") {

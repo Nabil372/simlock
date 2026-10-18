@@ -466,6 +466,37 @@ describe("createLeasing with physical devices", () => {
     expect(await outcome(next)).toMatchObject({ device: { id: device.id } });
   });
 
+  it("cancelling a queued physical request makes the one held for it plan again and list its own reason", async () => {
+    const harness = await createHarness();
+    const device = await enrollIphone(harness, "UDID-A");
+    const blocker = harness.engine.core.claims.tryClaim(device.id, "boot", "blocker");
+    expect(blocker).toBeDefined();
+    const older = harness.engine.request(physicalRequest, asking("older"));
+    void harness.engine.request(physicalRequest, asking("newer"));
+    await flush();
+    expect(harness.engine.waitingRequests()).toMatchObject([
+      { reason: "no-free-physical", requesterId: "older", stage: "queued" },
+      { reason: "behind-earlier-request", requesterId: "newer", stage: "queued" },
+    ]);
+
+    expect(await harness.engine.cancelPending("older")).toBe("cancelled");
+    await flush();
+
+    expect(await outcome(older)).toBeInstanceOf(RequestCancelledError);
+    expect(harness.engine.waitingRequests()).toMatchObject([
+      { reason: "no-free-physical", requesterId: "newer", stage: "queued" },
+    ]);
+  });
+
+  it("lists no reason for a physical request held in its presence read", async () => {
+    const { harness } = await waiterMidPresenceRead();
+
+    expect(harness.engine.waitingRequests()).toMatchObject([
+      { requesterId: "agent", stage: "starting" },
+    ]);
+    expect(harness.engine.waitingRequests()[0]).not.toHaveProperty("reason");
+  });
+
   it("releases the grant claim, leaves the device ready, keeps the waiter queued and says no-free-physical when the lease write of a physical grant throws", async () => {
     const harness = await createHarness();
     const device = await enrollIphone(harness, "UDID-A");

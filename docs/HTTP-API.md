@@ -481,10 +481,10 @@ so `"18"` matches no device on `18.4.1` and "any 18.x" is `">=18 <19"`, and on
 Android it is the API level (`"34"`). A request no enrolled device could match
 fails at once with `422 UNKNOWN_MODEL`. One that could match a device that is
 leased or being reclaimed waits, or is `503 NO_CAPACITY` with `noWait`. When a
-capacity check refused it, the error body's `details.capacityReason` names the check:
-`device-limit`, `ram-budget`, `global-running-limit` or `platform-running-limit`. A
-refusal for another cause, and the answer to a repeat of a refused request, has no
-`details`.
+worker's capacity check refused it, the error body's `details.capacityReason` names the
+check: `device-limit`, `ram-budget`, `global-running-limit` or `platform-running-limit`.
+A refusal for another cause, the answer to a repeat of a refused request, and a
+gateway's `NO_CAPACITY`, has no `details`.
 `physical` with `mode` or `imageTag`, or with `allowDownload: true`, is
 `400 BAD_REQUEST` naming the field. The lease's `device` then has no `mode`. A
 request without `physical` never gets a physical device. A physical request
