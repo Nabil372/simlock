@@ -42,14 +42,15 @@ and registry writers. Read-decide-commit runs under it; driver I/O never does.
    grant a ready fitting device → wait for one the warm pool is booting →
    boot a shut-down one → provision (while fewer than 2 failures) → evict an
    idle device (device or running limit) → wait, or `NO_CAPACITY` under `noWait`.
-   Only the head of the virtual line plans; every physical waiter plans.
+   Only the head of the virtual line plans, where the head is the first waiter that has not failed two provisions; every physical waiter plans.
    A blocked plan carries a reason (a capacity refusal, `behind-earlier-request`,
    `waiting-for-device`, `provisioning-failed` or `no-free-physical`). The waiter keeps it,
    in memory only, from its latest enqueue; `waitingRequests()` lists it on a `queued`
    entry, never on a `starting` one. `NoCapacityError` carries it too. Cancelling a queued
    waiter (a physical one mid presence read wakes it after its claim is released) and a
-   second provisioning failure wake the queue. A head that failed two provisions
-   does not hold the virtual waiters behind it: they plan on their own.
+   second provisioning failure wake the queue. A waiter that failed two provisions
+   stays queued with `provisioning-failed` and no wake drives it; it does not hold
+   the virtual waiters behind it, and the wake drives the first of them in line order.
 4. **Perform** (no lock) — provision, boot or evict through core, then plan again.
    A boot failure destroys the device and rejects `boot-timeout`; a destroy
    that fails hands the device to core's quarantine through a port leasing

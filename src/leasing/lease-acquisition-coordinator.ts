@@ -867,7 +867,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         this.#driving.delete(waiter);
         await this.#drive(waiter);
       } else {
-        this.#wakeQueue(waiter);
+        this.#wakeQueue();
       }
       return;
     }
@@ -919,9 +919,9 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     if (waiter.state === "rejected" || waiter.state === "granted" || waiter.spec === undefined) {
       return undefined;
     }
-    const head = this.options.queue.head as AcquisitionWaiter | undefined;
-    // why: a head that two provisions failed on holds nobody back, so the wake can plan the ones behind it.
-    if (head !== undefined && head !== waiter && head.failures < 2) {
+    // why: a waiter that two provisions failed on holds nobody back, so the first one that did not fail twice plans.
+    const head = this.#lineHead();
+    if (head !== undefined && head !== waiter) {
       const reason = "behind-earlier-request";
       return waiter.options.noWait ? { kind: "no-capacity", reason } : { kind: "wait", reason };
     }
@@ -1237,15 +1237,16 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     }
   }
 
-  // why: `skip` is a request that just failed its second provision, and the wake plans the ones behind it.
-  #wakeQueue(skip?: AcquisitionWaiter): void {
+  #lineHead(): AcquisitionWaiter | undefined {
+    return (this.options.queue.list() as readonly AcquisitionWaiter[]).find(
+      (waiter) => lineOf(waiter.request) === "virtual" && waiter.failures < 2,
+    );
+  }
+
+  // why: a request that failed its second provision is not driven by a wake, so the wake drives the first one behind it.
+  #wakeQueue(): void {
     void this.options.decisions.run(async () => {
-      const next =
-        skip === undefined
-          ? (this.options.queue.head as AcquisitionWaiter | undefined)
-          : (this.options.queue.list() as readonly AcquisitionWaiter[]).find(
-              (waiter) => waiter !== skip && lineOf(waiter.request) === "virtual",
-            );
+      const next = this.#lineHead();
       if (next !== undefined && next.state === "queued") this.#track(this.#drive(next));
       for (const waiter of this.options.queue.pending() as readonly AcquisitionWaiter[]) {
         if (lineOf(waiter.request) === "physical") {

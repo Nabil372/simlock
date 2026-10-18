@@ -484,7 +484,8 @@ leased or being reclaimed waits, or is `503 NO_CAPACITY` with `noWait`. When a
 worker's capacity check refused it, the error body's `details.capacityReason` names the
 check: `device-limit`, `ram-budget`, `global-running-limit` or `platform-running-limit`.
 A refusal for another cause, the answer to a repeat of a refused request, and a
-gateway's `NO_CAPACITY`, has no `details`.
+gateway's own `NO_CAPACITY` (no worker can serve the request) have no `details`.
+A gateway relays a worker's `NO_CAPACITY` with its `details` intact.
 `physical` with `mode` or `imageTag`, or with `allowDownload: true`, is
 `400 BAD_REQUEST` naming the field. The lease's `device` then has no `mode`. A
 request without `physical` never gets a physical device. A physical request
