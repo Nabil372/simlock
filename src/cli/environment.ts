@@ -1,5 +1,5 @@
 // why: nothing heavy is imported statically here -- `loadConfig`, the module registry, the
-// event-file reader and the admin client load inside the closures that use them, so building
+// event-history reader and the admin client load inside the closures that use them, so building
 // an environment costs what it always cost while loading this file costs almost nothing.
 import { join } from "node:path";
 
@@ -226,8 +226,13 @@ export function buildCliEnvironment(
       });
     },
     readEventFile: async (sinceTs) => {
-      const { EVENT_FILE_NAME, readEventFile } = await import("../bus/index.js");
-      return readEventFile(filesystem, join(dataDirectory, EVENT_FILE_NAME), { sinceTs });
+      const { openHistoryReader } = await import("../history/index.js");
+      const { NodeSqliteOpener } = await import("../ports/index.js");
+      return openHistoryReader({
+        dataDirectory,
+        filesystem,
+        sqlite: new NodeSqliteOpener(),
+      }).read({ sinceTs });
     },
     signals: ports.signals ?? process,
     stderr: ports.stderr ?? process.stderr,

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { type EventBus, type EventEnvelope, type EventHistory } from "../bus/index.js";
+import { type EventBus, type EventEnvelope } from "../bus/index.js";
+import type { EventHistoryHandle } from "../history/index.js";
 import {
   type ComponentInstaller,
   type Config,
@@ -142,7 +143,7 @@ export interface DaemonServerEngineOptions {
   readonly catalog: CatalogReader;
   readonly components: Pick<ComponentInstaller, "install" | "inProgress" | "list" | "remove">;
   readonly doctor?: Doctor;
-  readonly eventHistory: Pick<EventHistory, "replay">;
+  readonly eventHistory: Pick<EventHistoryHandle, "replay" | "status">;
   readonly leases: LeaseCommands;
   readonly hostFacts: () => HostFacts;
   readonly load?: () => StatusLoad | undefined;

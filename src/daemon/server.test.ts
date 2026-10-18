@@ -5,7 +5,8 @@ import { Socket, connect } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeDriver, testComponentWiring } from "../core/testing.js";
 
-import { EventBus, EventHistory } from "../bus/index.js";
+import { EventBus } from "../bus/index.js";
+import { ringEventHistory } from "../history/testing.js";
 import {
   CleanupReaper,
   type Config,
@@ -26,7 +27,6 @@ import {
   MemoryLogSink,
   NodeFilesystem,
   NodeIpcTransport,
-  NoopLogger,
   ScriptedProcessRunner,
   type IpcConnection,
   type Logger,
@@ -209,7 +209,7 @@ describe("DaemonServer", () => {
     [37, "cannot read config.get's capabilities"],
     [38, "cannot read agent-device's section under config.get's capabilities"],
   ])(
-    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 42, to a client on protocol %i, which %s",
+    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 43, to a client on protocol %i, which %s",
     async (version) => {
       const harness = await createHarness();
       const previous = await createClient(harness.socketPath);
@@ -219,7 +219,7 @@ describe("DaemonServer", () => {
       ).resolves.toMatchObject({
         error: {
           code: "PROTOCOL_VERSION_UNSUPPORTED",
-          details: { client: { min: version, max: version }, daemon: { min: 42, max: 42 } },
+          details: { client: { min: version, max: version }, daemon: { min: 43, max: 43 } },
         },
         ok: false,
       });
@@ -1295,7 +1295,11 @@ describe("DaemonServer startup readiness", () => {
       ok: true,
       payload: { daemon: { health: "starting", mode: "worker" } },
     });
-    expect(Object.keys((during as { payload: object }).payload).sort()).toEqual(["daemon", "host"]);
+    expect(Object.keys((during as { payload: object }).payload).sort()).toEqual([
+      "daemon",
+      "history",
+      "host",
+    ]);
 
     converge.resolve();
     await startPromise;
@@ -3309,12 +3313,7 @@ async function createHarness(
       : { driverRejections: options.driverRejections }),
     defaultRequesterId: "test-process",
     eventBus,
-    eventHistory: new EventHistory({
-      bus: eventBus,
-      filesystem: new MemoryFilesystem(),
-      logger: new NoopLogger(),
-      path: "/events.jsonl",
-    }),
+    eventHistory: ringEventHistory(eventBus),
     host:
       options.host ??
       new DaemonEndpointHost({
@@ -3687,7 +3686,6 @@ function testConfig(
     },
     log: { level: "info", rotateBytes: 5 * 1024 * 1024 },
     eventLog: {
-      rotateBytes: 5 * 1024 * 1024,
       retention: 7 * 24 * 60 * 60 * 1000,
       maxBytes: 256 * 1024 * 1024,
     },

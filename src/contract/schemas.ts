@@ -1040,7 +1040,6 @@ export const configSchema = z.object({
   // Optional: a newer gateway parses this from an older worker's `config.get`.
   eventLog: z
     .object({
-      rotateBytes: z.number(),
       retention: z.number().optional(),
       maxBytes: z.number().optional(),
     })

@@ -2,9 +2,14 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { EVENT_FILE_NAME, EventBus, EventHistory, type EventBusLogger } from "../bus/index.js";
+import { EventBus, type EventBusLogger } from "../bus/index.js";
 import { fitHostFacts, fitHostLoad } from "../contract/index.js";
 import { HostLoadSampler } from "../host-load/index.js";
+import {
+  createEventHistory,
+  type EventHistoryHandle,
+  HISTORY_PROJECTIONS,
+} from "../history/index.js";
 import {
   type Config,
   type ConfigOverrides,
@@ -67,6 +72,8 @@ import {
   type Logger,
   type LogLevel,
   NodeFilesystem,
+  filterSqliteExperimentalWarning,
+  NodeSqliteOpener,
   NodeHostInfo,
   NodeIpcTransport,
   NodeProcessRunner,
@@ -198,7 +205,6 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     config,
     dataDirectory,
     eventBus,
-    filesystem,
     logger,
   });
   // ADR 0005 §1/§2: one process, one mode. A gateway starts no drivers, validates no device
@@ -548,6 +554,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
           });
         }
       }
+      await eventHistory.stop();
     },
     // Review finding S5: waits for the concurrently-started gateway to either finish binding
     // (so `stopHttpGateway` is assigned and can actually be called) or fail to bind (nothing to
@@ -578,6 +585,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     // what let a stale "Daemon started" log/event follow "Daemon stopping" (review finding B6).
     onSocketClaimed: () => {
       socketClaimed = true;
+      startHistory(eventHistory, logger);
       moduleHost.afterSocketClaimed();
       // why: dialled here, once the socket is claimed and `#readyPromise` is set. The gateway's first
       // `status.get` never parks (it still answers `starting` during convergence), but its
@@ -669,7 +677,7 @@ interface GatewayDaemonOptions {
   readonly config: Config;
   readonly dataDirectory: string;
   readonly eventBus: EventBus;
-  readonly eventHistory: EventHistory;
+  readonly eventHistory: EventHistoryHandle;
   readonly filesystem: Filesystem;
   readonly gatewayRelay?: (relay: GatewayRelay) => void;
   readonly gatewayUplinks?: (uplinks: WebSocketUplinkListenerFactory) => void;
@@ -889,6 +897,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
       fleetCoordinator.dispose();
       gatewayOwnerRoutedFacts.dispose();
       await gatewayService.stop();
+      await eventHistory.stop();
     },
     stopAuxiliary: async () => {
       await moduleHost.beforeDrain();
@@ -897,6 +906,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
     },
     onSocketClaimed: () => {
       socketClaimed = true;
+      startHistory(eventHistory, logger);
       void startHttpFrontend().then(
         () => resolveHttpStarted?.(),
         (error: unknown) => {
@@ -1356,42 +1366,30 @@ export function emitSlimDiagnostic(eventBus: Pick<EventBus, "emit">): (fact: Sli
   };
 }
 
-/**
- * Every event the daemon emits, also in `events.jsonl` (ADR 0006). An event file that cannot be
- * opened costs the history, never the daemon: one error line, and replay answers from the ring.
- */
 function openEventHistory(options: {
   readonly clock: Clock;
   readonly config: Config;
   readonly dataDirectory: string;
   readonly eventBus: EventBus;
-  readonly filesystem: Filesystem;
   readonly logger: Logger;
-}): EventHistory {
-  const path = join(options.dataDirectory, EVENT_FILE_NAME);
-  const logger = options.logger.child("events");
-  let sink: NodeFileLogSink | undefined;
-  try {
-    const { maxBytes, retention, rotateBytes } = options.config.eventLog;
-    sink = new NodeFileLogSink({
-      clock: options.clock,
-      maxBytes: rotateBytes,
-      path,
-      retentionMs: retention,
-      totalMaxBytes: maxBytes,
-    });
-  } catch (error: unknown) {
-    logger.error("Event file could not be opened; events are kept in memory only", {
-      error: error instanceof Error ? error.message : String(error),
-      path,
-    });
-  }
-  return new EventHistory({
+}): EventHistoryHandle {
+  const { maxBytes, retention } = options.config.eventLog;
+  return createEventHistory({
     bus: options.eventBus,
-    filesystem: options.filesystem,
-    logger,
-    path,
-    ...(sink === undefined ? {} : { sink }),
+    clock: options.clock,
+    config: { maxBytes, retention },
+    dataDirectory: options.dataDirectory,
+    // why: node:sqlite writes the real disk, so the history never goes through a daemon's injected filesystem
+    filesystem: new NodeFilesystem(),
+    logger: options.logger.child("events"),
+    projections: Object.values(HISTORY_PROJECTIONS),
+    sqlite: new NodeSqliteOpener(),
+  });
+}
+
+function startHistory(history: EventHistoryHandle, logger: Logger): void {
+  void history.start().catch((error: unknown) => {
+    logger.error("The event history could not start", { message: errorMessage(error) });
   });
 }
 
@@ -1440,6 +1438,7 @@ function createFatalLogger(): Logger {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  filterSqliteExperimentalWarning();
   void startDaemon().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? error.stack : undefined;

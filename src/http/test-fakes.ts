@@ -82,7 +82,6 @@ export function testConfig(
     },
     log: { level: "info", rotateBytes: 5 * 1024 * 1024 },
     eventLog: {
-      rotateBytes: 5_242_880,
       retention: 604_800_000,
       maxBytes: 268_435_456,
     },

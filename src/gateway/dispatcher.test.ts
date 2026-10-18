@@ -1,16 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { EventBus, type EventEnvelope, EventHistory } from "../bus/index.js";
-import { fixedEventHistory } from "../history/testing.js";
+import { EventBus, type EventEnvelope } from "../bus/index.js";
+import type { EventHistoryHandle } from "../history/index.js";
+import { fixedEventHistory, ringEventHistory } from "../history/testing.js";
 import { OPERATIONS, type OperationName } from "../contract/index.js";
 import { DispatchError, runDispatch, type DispatchSession } from "../daemon/dispatch.js";
-import {
-  FakeClock,
-  JsonLinesLogger,
-  MemoryFilesystem,
-  MemoryLogSink,
-  NoopLogger,
-} from "../ports/index.js";
+import { FakeClock, JsonLinesLogger, MemoryLogSink } from "../ports/index.js";
 import { GatewayDispatcher, type GatewayTokenStore } from "./dispatcher.js";
 import { MemoryDrainStore } from "./drain-store.js";
 import { FleetLeaseCoordinator } from "./fleet-coordinator.js";
@@ -132,7 +127,7 @@ class FakeDirectory implements WorkerDirectory {
 
 function harness(
   options: {
-    readonly eventHistory?: Pick<EventHistory, "replay">;
+    readonly eventHistory?: Pick<EventHistoryHandle, "replay" | "status">;
     /** The gateway's `http` block; enabled on 127.0.0.1:4700 by default. */
     readonly http?: (typeof gatewayConfig)["http"];
     /** The gateway's own health; `running` by default. */
@@ -185,14 +180,7 @@ function harness(
     config: options.http === undefined ? gatewayConfig : { ...gatewayConfig, http: options.http },
     coordinator,
     directory,
-    eventHistory:
-      options.eventHistory ??
-      new EventHistory({
-        bus: eventBus,
-        filesystem: new MemoryFilesystem(),
-        logger: new NoopLogger(),
-        path: "/events.jsonl",
-      }),
+    eventHistory: options.eventHistory ?? ringEventHistory(eventBus),
     health: () => options.health ?? "running",
     host: GATEWAY_HOST,
     ...(options.load === undefined ? {} : { load: options.load }),
@@ -323,7 +311,7 @@ describe("GatewayDispatcher", () => {
     expect(status.workers?.find((worker) => worker.id === "wrk_2")).not.toHaveProperty("warmPool");
   });
 
-  it("status.get on a gateway whose health is starting returns daemon and host and no other field", async () => {
+  it("status.get on a gateway whose health is starting returns daemon, history and host and no other field", async () => {
     const { dispatcher, workers } = harness({ health: "starting" });
     workers.connected("wrk_1", "mac-mini-1", "0.3.0");
     workers.refresh("wrk_1", {
@@ -336,7 +324,7 @@ describe("GatewayDispatcher", () => {
 
     const status = await dispatcher.dispatch("status.get", {}, session());
 
-    expect(Object.keys(status).sort()).toEqual(["daemon", "host"]);
+    expect(Object.keys(status).sort()).toEqual(["daemon", "history", "host"]);
     expect(status.daemon).toEqual({
       consoleUrl: "http://127.0.0.1:4700/",
       health: "starting",
@@ -745,6 +733,7 @@ describe("GatewayDispatcher", () => {
           asked.push(input);
           return fromHistory;
         },
+        status: () => ({ opened: true, writing: true }),
       },
     });
 

@@ -1,6 +1,7 @@
 import { EventBus, type EventEnvelope } from "../bus/index.js";
 import {
   FakeClock,
+  MemoryFilesystem,
   NodeFilesystem,
   NodeSqliteOpener,
   NoopLogger,
@@ -101,7 +102,8 @@ export async function seedHistory(
   timestamps: readonly number[],
 ): Promise<void> {
   const clock = new FakeClock(0);
-  const bus = new EventBus(clock);
+  let nextId = 0;
+  const bus = new EventBus(clock, 1_000, undefined, { generate: () => String((nextId += 1)) });
   const history = createEventHistory({
     bus,
     clock,
@@ -114,13 +116,21 @@ export async function seedHistory(
   });
   await history.start();
   for (const [index, timestamp] of timestamps.entries()) {
-    bus.republish({
-      event: "daemon.stopping",
-      id: `evt_${index + 1}`,
-      module: "daemon",
-      payload: { reason: `r${index + 1}` },
-      timestamp,
-    });
+    clock.advance(timestamp - clock.now());
+    bus.emit("daemon.stopping", { reason: `r${index + 1}` }, "daemon");
   }
   await history.stop();
+}
+
+export function ringEventHistory(bus: EventBus): EventHistoryHandle {
+  return createEventHistory({
+    bus,
+    clock: new FakeClock(0),
+    config: { maxBytes: Number.MAX_SAFE_INTEGER, retention: Number.MAX_SAFE_INTEGER },
+    dataDirectory: "/unused",
+    filesystem: new MemoryFilesystem(),
+    logger: new NoopLogger(),
+    projections: [],
+    sqlite: new NodeSqliteOpener(),
+  });
 }

@@ -24,6 +24,7 @@ import { pruneHistory, totalEventBytes } from "./prune.js";
 import { setAsideDamagedHistory } from "./set-aside.js";
 
 export { HISTORY_DB_NAME } from "./names.js";
+export { HISTORY_PROJECTIONS } from "./projections/index.js";
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 
@@ -76,13 +77,17 @@ class EventHistory implements EventHistoryHandle {
   #readable = false;
   #setAsideAt: number | undefined;
   #started = false;
+  readonly #seenBeforeStart = new Set<string>();
   #stopped = false;
   #timer: ReturnType<Clock["setTimer"]> | undefined;
 
   constructor(options: EventHistoryOptions) {
     this.#options = options;
     this.#path = join(options.dataDirectory, HISTORY_DB_NAME);
-    options.bus.subscribeAll((envelope) => this.#write(envelope));
+    options.bus.subscribeAll((envelope) => {
+      if (this.#database === undefined && !this.#stopped) this.#seenBeforeStart.add(envelope.id);
+      this.#write(envelope);
+    });
   }
 
   status(): EventHistoryStatus {
@@ -135,15 +140,19 @@ class EventHistory implements EventHistoryHandle {
     this.#opened = true;
     this.#writing = true;
     this.#readable = true;
-    if (this.#setAsideAt === undefined) {
-      for (const envelope of this.#options.bus.replay()) this.#write(envelope);
+    for (const envelope of this.#options.bus.replay()) {
+      if (this.#setAsideAt === undefined || this.#seenBeforeStart.has(envelope.id)) {
+        this.#write(envelope);
+      }
     }
+    this.#seenBeforeStart.clear();
     this.#prune();
     this.#arm();
   }
 
   async stop(): Promise<void> {
     this.#stopped = true;
+    this.#seenBeforeStart.clear();
     if (this.#timer !== undefined) this.#options.clock.cancel(this.#timer);
     this.#timer = undefined;
     const database = this.#database;

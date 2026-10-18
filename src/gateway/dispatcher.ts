@@ -33,7 +33,7 @@
  */
 import type { z } from "zod";
 
-import type { EventHistory } from "../bus/index.js";
+import type { EventHistoryHandle } from "../history/index.js";
 import {
   consoleUrlField,
   OPERATIONS,
@@ -97,7 +97,7 @@ export interface GatewayDispatcherOptions {
   /** The gateway's own config -- what `config.get` returns (ADR 0005 §34). */
   readonly config: GatewayConfig;
   /** Answers `events.replay`: the ring, or the event file for a `sinceTs`. */
-  readonly eventHistory: Pick<EventHistory, "replay">;
+  readonly eventHistory: Pick<EventHistoryHandle, "replay" | "status">;
   readonly workers: WorkerRegistry;
   /** Each worker's live link, for `worker.install-component` (ADR 0010 §7). `GatewayService`
    * satisfies it. */
@@ -238,9 +238,11 @@ export class GatewayDispatcher {
     const consoleUrl = consoleUrlField(this.options.config.http);
     const load = this.options.load?.();
     const loadField = load === undefined ? {} : { load };
+    const history = this.options.eventHistory.status();
     if (this.options.health() === "starting") {
       return {
         daemon: { health: "starting", mode: "gateway", ...consoleUrl },
+        history,
         host: this.options.host,
         ...loadField,
       };
@@ -254,7 +256,7 @@ export class GatewayDispatcher {
       waiting: [...this.options.coordinator.waitingRequests()],
       leaseIndex: this.options.leaseIndex,
     });
-    const answer = { ...status, daemon: { ...status.daemon, ...consoleUrl } };
+    const answer = { ...status, daemon: { ...status.daemon, ...consoleUrl }, history };
     return session.role === "agent" ? withoutQuarantineMessages(answer) : answer;
   };
 

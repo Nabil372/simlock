@@ -560,10 +560,6 @@ export class EventBus {
   }
 }
 
-export {
-  EVENT_FILE_NAME,
-  EventHistory,
-  eventKey,
-  readEventFile,
-  readEventHistory,
-} from "./event-file.js";
+export function eventKey(event: { readonly id: string }): string {
+  return event.id;
+}

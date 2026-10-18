@@ -7,8 +7,8 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { testComponentWiring } from "../core/testing.js";
 
-import { EventBus, EventHistory } from "../bus/index.js";
-import { seedHistory } from "../history/testing.js";
+import { EventBus } from "../bus/index.js";
+import { ringEventHistory, seedHistory } from "../history/testing.js";
 import { CleanupReaper, type Config, Registry } from "../core/index.js";
 import { FakeDriver } from "../core/testing.js";
 import {
@@ -20,7 +20,6 @@ import {
   MemoryIpcTransport,
   NodeFilesystem,
   NodeIpcTransport,
-  NoopLogger,
   type Filesystem,
   type IdGenerator,
 } from "../ports/index.js";
@@ -6465,12 +6464,7 @@ async function startTestDaemon(): Promise<{ socketPath: string; daemon: DaemonSe
     config,
     defaultRequesterId: "test-process",
     eventBus,
-    eventHistory: new EventHistory({
-      bus: eventBus,
-      filesystem: new MemoryFilesystem(),
-      logger: new NoopLogger(),
-      path: "/events.jsonl",
-    }),
+    eventHistory: ringEventHistory(eventBus),
     host: new DaemonEndpointHost({
       connector: new NodeIpcTransport(),
       endpoint: socketPath,
@@ -6590,12 +6584,7 @@ async function startInMemoryDaemon(options: {
     config,
     defaultRequesterId: "test-process",
     eventBus,
-    eventHistory: new EventHistory({
-      bus: eventBus,
-      filesystem: new MemoryFilesystem(),
-      logger: new NoopLogger(),
-      path: "/events.jsonl",
-    }),
+    eventHistory: ringEventHistory(eventBus),
     host: new DaemonEndpointHost({
       connector: ipcTransport,
       endpoint: socketPath,
@@ -6669,7 +6658,6 @@ function testConfig(): Config {
     },
     log: { level: "info", rotateBytes: 5 * 1024 * 1024 },
     eventLog: {
-      rotateBytes: 5 * 1024 * 1024,
       retention: 7 * 24 * 60 * 60 * 1000,
       maxBytes: 256 * 1024 * 1024,
     },

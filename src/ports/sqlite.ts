@@ -34,3 +34,17 @@ export class NodeSqliteOpener implements SqliteOpener {
     return new engine.DatabaseSync(path, { readOnly: options.readOnly });
   }
 }
+
+const SQLITE_WARNING_PREFIX = "SQLite is an experimental feature";
+
+export function filterSqliteExperimentalWarning(): void {
+  const emit = process.emitWarning.bind(process);
+  process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
+    const first = rest[0];
+    const type = typeof first === "string" ? first : (first as { type?: string } | undefined)?.type;
+    const name = typeof warning === "string" ? type : (type ?? warning.name);
+    const message = typeof warning === "string" ? warning : warning.message;
+    if (name === "ExperimentalWarning" && message.startsWith(SQLITE_WARNING_PREFIX)) return;
+    (emit as (...args: unknown[]) => void)(warning, ...rest);
+  }) as typeof process.emitWarning;
+}

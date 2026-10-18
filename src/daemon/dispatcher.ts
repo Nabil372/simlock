@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import type { EventBus, EventHistory } from "../bus/index.js";
+import type { EventBus } from "../bus/index.js";
+import type { EventHistoryHandle } from "../history/index.js";
 import {
   buildCapacityFigures,
   type CleanupReaper,
@@ -131,7 +132,7 @@ export interface DispatcherOptions {
   readonly components: Pick<ComponentInstaller, "install" | "inProgress" | "list" | "remove">;
   readonly config: Config;
   readonly doctor?: Doctor;
-  readonly eventHistory: Pick<EventHistory, "replay">;
+  readonly eventHistory: Pick<EventHistoryHandle, "replay" | "status">;
   readonly deviceModes: DeviceModeReader;
   readonly leases: LeaseCommands;
   readonly logger?: Logger;
@@ -366,7 +367,8 @@ export class Dispatcher {
     const loadField = load === undefined ? {} : { load };
     // why: while starting, the registry has not been checked against the machine, so what it holds
     // is a claim nobody has looked at; the answer is the daemon, its host and the load reading.
-    if (daemon.health === "starting") return { daemon, host, ...loadField };
+    const history = this.options.eventHistory.status();
+    if (daemon.health === "starting") return { daemon, history, host, ...loadField };
     const capabilities = await this.#readCapabilities();
     const snapshot = this.options.registry.snapshot;
     const answer = {
@@ -374,6 +376,7 @@ export class Dispatcher {
       capacity: buildCapacityFigures(snapshot.virtualDevices, this.options.capacity),
       devices: snapshot.devices.map((device) => this.#decorateDevice(device)),
       daemon,
+      history,
       host,
       ...loadField,
       installs: [...this.options.components.inProgress()],

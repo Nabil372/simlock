@@ -135,6 +135,26 @@ function loadLines(status: StatusGetOutput): string[] {
     : [formatLoadLine(status.load, Math.ceil(status.load.ageMs / 1000))];
 }
 
+function historyLines(history: StatusGetOutput["history"]): string[] {
+  if (history === undefined) return [];
+  const lines: string[] = [];
+  if (!history.writing) {
+    lines.push("History: the event history is not being written; see daemon.log.");
+  }
+  if (history.setAsideAt !== undefined) {
+    lines.push(
+      `History: the event history was damaged and set aside at ${formatLocalMinute(history.setAsideAt)}; a fresh one was started.`,
+    );
+  }
+  return lines;
+}
+
+function formatLocalMinute(epochMs: number): string {
+  const at = new Date(epochMs);
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
 export function consoleLines(daemon: StatusGetOutput["daemon"]): string[] {
   return daemon.consoleUrl === undefined ? [] : [`Console: ${daemon.consoleUrl}`];
 }
@@ -153,6 +173,7 @@ export function formatStatus(status: StatusGetOutput, now: number): string {
       ...consoleLines(daemon),
       `Host: ${formatHost(host)}`,
       ...loadLines(status),
+      ...historyLines(status.history),
       "Devices, leases and capacity appear once startup finishes.",
     ].join("\n");
   }
@@ -199,6 +220,7 @@ export function formatStatus(status: StatusGetOutput, now: number): string {
     ...consoleLines(daemon),
     `Host: ${formatHost(host)}`,
     ...loadLines(status),
+    ...historyLines(status.history),
     globalLine,
     ...capacityLines,
     ...ramLines,

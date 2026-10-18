@@ -48,6 +48,6 @@ describe("helloRequestSchema", () => {
 
 describe("PROTOCOL_VERSION_RANGE", () => {
   it("is one above the base branch's, for a waiting request's per-worker reasons on a gateway", () => {
-    expect(PROTOCOL_VERSION_RANGE).toEqual({ max: 42, min: 42 });
+    expect(PROTOCOL_VERSION_RANGE).toEqual({ max: 43, min: 43 });
   });
 });

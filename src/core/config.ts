@@ -195,14 +195,7 @@ export interface Config {
   readonly diskPressure: { readonly freeBytesThreshold: number };
   readonly eventBuffer: { readonly capacity: number };
   readonly log: { readonly level: LogLevel; readonly rotateBytes: number };
-  /**
-   * The event file (`events.jsonl`): `rotateBytes` is one generation's size before it rotates,
-   * `retention` how long (milliseconds) a generation is kept after its newest line, and
-   * `maxBytes` the total size of every generation, the backstop when events arrive faster than
-   * `retention` ages them out.
-   */
   readonly eventLog: {
-    readonly rotateBytes: number;
     readonly retention: number;
     readonly maxBytes: number;
   };
@@ -457,13 +450,11 @@ function validateLeaseTtls(config: Config): void {
   }
 }
 
-/**
- * Cross-field check: the size cap has to hold the current file and at least one full rotated
- * generation, or the sweep would delete the history the moment it rotates.
- */
+const MIN_EVENT_LOG_MAX_BYTES = 16 * 1024 * 1024;
+
 function validateEventLogBounds(config: Config): void {
-  if (config.eventLog.maxBytes < 2 * config.eventLog.rotateBytes) {
-    throw invalidValue("eventLog.maxBytes", "at least twice eventLog.rotateBytes");
+  if (config.eventLog.maxBytes < MIN_EVENT_LOG_MAX_BYTES) {
+    throw invalidValue("eventLog.maxBytes", "at least 16 MiB");
   }
 }
 
@@ -754,7 +745,6 @@ function defaultConfig(
     eventBuffer: { capacity: 1_000 },
     log: { level: "info", rotateBytes: 5 * 1024 * 1024 },
     eventLog: {
-      rotateBytes: 5 * 1024 * 1024,
       retention: 7 * 24 * 60 * 60 * 1000,
       maxBytes: 256 * 1024 * 1024,
     },
@@ -908,7 +898,6 @@ function configValidators(
     eventBuffer: objectValidator({ capacity: positiveInteger }),
     log: objectValidator({ level: stringUnion(LOG_LEVELS), rotateBytes: positiveInteger }),
     eventLog: objectValidator({
-      rotateBytes: positiveInteger,
       retention: positiveInteger,
       maxBytes: positiveInteger,
     }),

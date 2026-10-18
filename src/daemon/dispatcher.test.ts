@@ -6,8 +6,9 @@ import {
   type FakeDriverOptions,
 } from "../core/testing.js";
 
-import { EventBus, type EventEnvelope, EventHistory } from "../bus/index.js";
-import { fixedEventHistory } from "../history/testing.js";
+import { EventBus, type EventEnvelope } from "../bus/index.js";
+import type { EventHistoryHandle } from "../history/index.js";
+import { fixedEventHistory, ringEventHistory } from "../history/testing.js";
 import {
   CleanupReaper,
   ComponentInstaller,
@@ -40,7 +41,6 @@ import {
   FakeSystemStats,
   MemoryFilesystem,
   NodeProcessRunner,
-  NoopLogger,
   ScriptedProcessRunner,
   type ProcessRunner,
 } from "../ports/index.js";
@@ -95,13 +95,9 @@ function stallOptions(
 
 function resolveEventHistoryOverride(
   eventBus: EventBus,
-  filesystem: MemoryFilesystem,
-  override: Pick<EventHistory, "replay"> | undefined,
-): Pick<EventHistory, "replay"> {
-  return (
-    override ??
-    new EventHistory({ bus: eventBus, filesystem, logger: new NoopLogger(), path: "/events.jsonl" })
-  );
+  override: Pick<EventHistoryHandle, "replay" | "status"> | undefined,
+): Pick<EventHistoryHandle, "replay" | "status"> {
+  return override ?? ringEventHistory(eventBus);
 }
 
 /** The fake driver's `simlock <tool>` wrapper, when a test asks for one; nothing otherwise. Pulled
@@ -200,7 +196,7 @@ async function buildDispatcher(
     readonly passthroughOverride?: PassthroughResolver;
     readonly execEnv?: NodeJS.ProcessEnv;
     /** Stands in for the event history, so `events.replay` can be checked against it. */
-    readonly eventHistory?: Pick<EventHistory, "replay">;
+    readonly eventHistory?: Pick<EventHistoryHandle, "replay" | "status">;
     /** `status.get`'s host block; a fixed machine with no tools by default. */
     readonly hostFacts?: () => HostFacts;
     /** Replaces the capacity block, for a test about one strategy's options. */
@@ -329,7 +325,7 @@ async function buildDispatcher(
     config,
     doctor,
     eventBus,
-    eventHistory: resolveEventHistoryOverride(eventBus, filesystem, overrides.eventHistory),
+    eventHistory: resolveEventHistoryOverride(eventBus, overrides.eventHistory),
     health: () => overrides.health ?? "running",
     hostFacts: overrides.hostFacts ?? (() => ({ ...HOST_SYSTEM, tools: [] })),
     instanceId: "instance-1",
@@ -1252,6 +1248,7 @@ describe("Dispatcher: events.replay", () => {
           asked.push(input);
           return fromHistory;
         },
+        status: () => ({ opened: true, writing: true }),
       },
     });
 
@@ -3744,7 +3741,6 @@ function testConfig(
     capacity,
     log: { level: "info", rotateBytes: 5 * 1024 * 1024 },
     eventLog: {
-      rotateBytes: 5 * 1024 * 1024,
       retention: 7 * 24 * 60 * 60 * 1000,
       maxBytes: 256 * 1024 * 1024,
     },
@@ -4072,7 +4068,7 @@ describe("Dispatcher: component.remove", () => {
 });
 
 describe("Dispatcher: status.get while the daemon is starting", () => {
-  it("status.get on a worker whose health is starting returns daemon and host and no other field", async () => {
+  it("status.get on a worker whose health is starting returns daemon, history and host and no other field", async () => {
     const { dispatcher, registry } = await buildDispatcher({ health: "starting" });
     await registry.registerDevice({
       driverData: {},
@@ -4083,13 +4079,13 @@ describe("Dispatcher: status.get while the daemon is starting", () => {
 
     const status = await dispatcher.dispatch("status.get", {}, session());
 
-    expect(Object.keys(status).sort()).toEqual(["daemon", "host"]);
+    expect(Object.keys(status).sort()).toEqual(["daemon", "history", "host"]);
     expect(status.daemon).toEqual({ health: "starting", mode: "worker" });
     expect(status.host).toEqual({ ...HOST_SYSTEM, tools: [] });
   });
 
   it.each(["running", "failed"] as const)(
-    "status.get on a %s daemon returns every field it returns today",
+    "status.get on a %s daemon returns every field it returns today, and the history",
     async (health) => {
       const { dispatcher, registry } = await buildDispatcher({ health });
       await registry.registerDevice({
@@ -4105,6 +4101,7 @@ describe("Dispatcher: status.get while the daemon is starting", () => {
         "capacity",
         "daemon",
         "devices",
+        "history",
         "host",
         "installs",
         "leases",
