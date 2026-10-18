@@ -39,6 +39,26 @@ async function run(
   }
 }
 
+type WaitingReasonWord = NonNullable<WaitingRequestEntry["reason"]>;
+
+const WAITING_REASON_TEXT: Readonly<Record<WaitingReasonWord, (platform: string) => string>> = {
+  "behind-earlier-request": () => "Behind an earlier request",
+  "device-limit": () => "Full: device limit",
+  "global-running-limit": () => "Full: running limit",
+  "no-free-physical": () => "Every matching device is leased or absent",
+  "platform-running-limit": (platform) =>
+    `Full: running limit for ${platform === "ios" ? "iOS" : "Android"}`,
+  "provisioning-failed": () => "Creating a device failed twice",
+  "ram-budget": () => "Full: RAM budget",
+  "waiting-for-device": () => "A matching device is starting",
+};
+
+function waitingReasonText(request: WaitingRequestEntry): string | undefined {
+  if (request.reason === undefined) return undefined;
+  const text = WAITING_REASON_TEXT[request.reason](request.spec.platform);
+  return `${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+}
+
 function formatWaitingRequests(requests: readonly WaitingRequestEntry[], now: number): string {
   if (requests.length === 0) return "No requests are waiting.";
   return requests
@@ -60,7 +80,8 @@ function formatWaitingRequests(requests: readonly WaitingRequestEntry[], now: nu
           ? request.stage
           : `${request.stage} at ${String(request.queuePosition)}`;
       const waited = Math.max(0, Math.round((now - request.createdAt) / 1000));
-      return `Request ${request.id}: ${request.requesterId}${where}, ${device}, ${stage}, waiting ${String(waited)}s`;
+      const why = waitingReasonText(request);
+      return `Request ${request.id}: ${request.requesterId}${where}, ${device}, ${stage}, waiting ${String(waited)}s${why === undefined ? "" : ` — ${why}`}`;
     })
     .join("\n");
 }

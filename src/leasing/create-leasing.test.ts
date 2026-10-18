@@ -4492,6 +4492,38 @@ describe("createLeasing: a waiting request says why it is not placed (#636)", ()
     ]);
   });
 
+  it("does not plan the twice-failed request again on the wake that follows: it stays queued with provisioning-failed until the next kick", async () => {
+    const clock = new FakeClock(1_000);
+    const driver = new FakeDriver({
+      availableOsVersions: ["26.5"],
+      clock,
+      latencyMs: { provision: 50 },
+      platform: "ios",
+    });
+    driver.failOn("provision", 1, new DriverCrashError("simulator exited"));
+    driver.failOn("provision", 2, new DriverCrashError("simulator exited again"));
+    const harness = await createHarness({ driver });
+    void harness.engine.request(request, asking("failing"));
+    await flush();
+    clock.advance(50);
+    await flush();
+    void harness.engine.request(request, asking("meanwhile"));
+    await flush();
+    clock.advance(50);
+    await flush();
+    const provisions = () => driver.calls.filter((call) => call.operation === "provision").length;
+    const before = provisions();
+
+    await flush();
+
+    expect(listing(harness)).toContainEqual({
+      reason: "provisioning-failed",
+      requesterId: "failing",
+      stage: "queued",
+    });
+    expect(provisions()).toBe(before);
+  });
+
   it("lists a request that waits for a device the warm pool is booting as waiting-for-device", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({

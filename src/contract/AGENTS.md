@@ -55,7 +55,7 @@ Three identities:
 
 ## Protocol version
 
-- Now `{ min: 40, max: 40 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
+- Now `{ min: 41, max: 41 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
 - Every change to a contract shape bumps it by one in the same PR. Move `min` too, unless
   a compatibility path stays side by side.
 - `hello` picks the highest overlap. None → `PROTOCOL_VERSION_UNSUPPORTED` with both ranges.
@@ -69,7 +69,9 @@ Three identities:
 - `fromWireError` wraps an unknown code as `UNKNOWN_DAEMON_ERROR`. That code and `CANCELLED`
   are built client side only.
 - `CODES_WITH_DECLARED_DETAILS`: codes whose `details` are contract. The compiler keeps it
-  in step with `ErrorDetailsMap`.
+  in step with `ErrorDetailsMap`. `NO_CAPACITY` declares `capacityReason` (one of the four
+  capacity refusals), set by the worker dispatcher only when a capacity check refused.
+- `waitingRequestSchema.reason` is allowed on a `queued` entry only.
 
 ## Pushes
 

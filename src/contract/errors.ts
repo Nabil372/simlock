@@ -34,7 +34,13 @@ export interface ErrorDetailsMap {
   DAEMON_STARTUP_FAILED: Record<string, never>;
   DAEMON_CONNECTION_LOST: Record<string, never>;
 
-  NO_CAPACITY: Record<string, never>;
+  NO_CAPACITY: {
+    readonly capacityReason?:
+      | "device-limit"
+      | "ram-budget"
+      | "global-running-limit"
+      | "platform-running-limit";
+  };
   QUEUE_TIMEOUT: { readonly requestId: string };
   REQUESTER_ALREADY_LEASED: { readonly requesterId: string; readonly existingLeaseId?: string };
   /** `lease.request` repeated an `idempotencyKey` its requester already used for a different
@@ -148,6 +154,7 @@ type CodeWithDeclaredDetails = {
 const CODES_WITH_DECLARED_DETAILS_BY_CODE: Record<CodeWithDeclaredDetails, true> = {
   PROTOCOL_VERSION_UNSUPPORTED: true,
   QUEUE_TIMEOUT: true,
+  NO_CAPACITY: true,
   REQUESTER_ALREADY_LEASED: true,
   LEASE_ID_TAKEN: true,
   NO_DRIVER: true,

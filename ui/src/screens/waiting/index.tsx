@@ -135,6 +135,7 @@ function WaitingInspector({ row }: { readonly row: WaitingRow }) {
           { label: "Request", value: <Id>{row.id}</Id> },
           { label: "Created", value: row.created },
           { label: "Queue", value: <QueueValue queue={row.queue} /> },
+          ...(row.why === undefined ? [] : [{ label: "Why", value: row.why }]),
         ]}
       />
     </Inspector>

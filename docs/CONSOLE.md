@@ -311,6 +311,7 @@ Select a request to see it on the right:
 | Stage | `queued` or `starting` |
 | Device | The platform and the model it asked for, or the class for a request that named a class, or only the platform for one that named neither; and the runtime, mode and image tag when it named them |
 | Queue | The worker whose own queue it waits in, or the gateway's queue |
+| Why | Why the daemon's latest attempt to place a `queued` request stopped, for example "Full: running limit for iOS" or "Behind an earlier request". Absent while `starting`, and for a gateway's own requests |
 
 On a gateway the list has the gateway's own queue and, for each connected
 worker, the requests its own agents sent to it directly. A request the

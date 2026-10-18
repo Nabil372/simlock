@@ -620,7 +620,7 @@ queue, oldest first:
 ```ts
 const { waiting = [] } = await client.getStatus();
 // [{ id: "req_7", requesterId: "agent-b", spec: { platform: "ios", model: "iPhone 16" },
-//    createdAt: 1790864071200, stage: "queued", queuePosition: 1 }]
+//    createdAt: 1790864071200, stage: "queued", queuePosition: 1, reason: "platform-running-limit" }]
 ```
 
 - `stage` is `queued` while the request holds a place in the queue, with
@@ -630,6 +630,13 @@ const { waiting = [] } = await client.getStatus();
   working on it: placing it as it arrives, or finding, creating, booting or
   downloading a device for it. `spec` has only the fields the
   request named.
+- `reason` is set only on a `queued` entry that the daemon has tried to place: why its
+  latest attempt stopped (`behind-earlier-request`, `device-limit`, `ram-budget`,
+  `global-running-limit`, `platform-running-limit`, `provisioning-failed`,
+  `waiting-for-device` or `no-free-physical`). Each new attempt replaces it.
+- A `lease.request` with `noWait` that a capacity check refused fails with `NO_CAPACITY`
+  and `details.capacityReason` set to `device-limit`, `ram-budget`, `global-running-limit`
+  or `platform-running-limit`. A refusal for another cause has no `details`.
 - A request leaves the list as soon as it is granted, fails or is cancelled.
   The field is absent only from an older daemon.
 - On a gateway the list is the gateway's own queue. Each worker's own is on

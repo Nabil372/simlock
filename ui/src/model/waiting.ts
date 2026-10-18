@@ -60,11 +60,34 @@ export interface WaitingRow {
   readonly physicalQueue: boolean;
   readonly created: string;
   readonly queue: WaitingQueue;
+  readonly why?: string;
 }
 
 export interface WaitingTable {
   readonly meta: string;
   readonly rows: readonly WaitingRow[];
+}
+
+const WHY_TEXT: Readonly<
+  Record<NonNullable<WaitingRequest["reason"]>, (platform: string) => string>
+> = {
+  "behind-earlier-request": () => "Behind an earlier request",
+  "device-limit": () => "Full: device limit",
+  "global-running-limit": () => "Full: running limit",
+  "no-free-physical": () => "Every matching device is leased or absent",
+  "platform-running-limit": (platform) => `Full: running limit for ${platform}`,
+  "provisioning-failed": () => "Creating a device failed twice",
+  "ram-budget": () => "Full: RAM budget",
+  "waiting-for-device": () => "A matching device is starting",
+};
+
+// why: a daemon newer than this console may send a reason it has no text for; the word shows as it is, as an unknown stage does.
+function whyOf(request: WaitingRequest): string | undefined {
+  if (request.reason === undefined) return undefined;
+  const text: ((platform: string) => string) | undefined = (
+    WHY_TEXT as Readonly<Record<string, (platform: string) => string>>
+  )[request.reason];
+  return text === undefined ? request.reason : text(platformName(request.spec.platform));
 }
 
 function queueOf(request: WaitingRequest, workers: readonly WorkerView[]): WaitingQueue {
@@ -104,6 +127,7 @@ export function waitingTable(
   const rows = requests.map((request): WaitingRow => {
     const position = request.queuePosition;
     const inQueue = sizes.get(queueKey(request, workers)) ?? 0;
+    const why = whyOf(request);
     return {
       created: createdAtOf(request.createdAt),
       device: requestedDevice(request.spec),
@@ -120,6 +144,7 @@ export function waitingTable(
       stage: waitingStageStatus(request.stage),
       to: itemPath("/waiting", request.id),
       waited: formatDuration(now - request.createdAt),
+      ...(why === undefined ? {} : { why }),
     };
   });
   const oldest = Math.min(...requests.map((request) => request.createdAt));

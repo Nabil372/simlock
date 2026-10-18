@@ -1444,7 +1444,12 @@ describe("GatewayDispatcher: waiting requests", () => {
   const SPEC = { model: "iPhone 17", platform: "ios" as const };
 
   /** A request a worker lists in its own `status.get`'s `waiting`. */
-  function onWorker(id: string, requesterId: string, queuePosition?: number, reason?: string) {
+  function onWorker(
+    id: string,
+    requesterId: string,
+    queuePosition?: number,
+    reason?: "platform-running-limit",
+  ) {
     return {
       createdAt: 500,
       id,

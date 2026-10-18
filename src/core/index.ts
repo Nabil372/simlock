@@ -31,6 +31,7 @@ export {
 export {
   buildCapacityFigures,
   CapacityCoordinator,
+  type CapacityRefusalReason,
   capacityDevice,
   capacityDevices,
   type CapacityReservation,

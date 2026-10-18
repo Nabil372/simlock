@@ -26,7 +26,6 @@ import {
   type PassthroughResolver,
   toDriverDevice,
 } from "../core/index.js";
-import { NoCapacityError } from "../leasing/index.js";
 import {
   OPERATIONS,
   statusDeviceSchema,
@@ -2147,6 +2146,7 @@ describe("Dispatcher: list.get requests and status.get waiting", () => {
         createdAt: firstAt,
         id: expect.any(String),
         queuePosition: 1,
+        reason: "device-limit",
         requesterId: "agent-a",
         spec: { ...IOS_REQUEST, mode: "full" },
         stage: "queued",
@@ -2155,6 +2155,7 @@ describe("Dispatcher: list.get requests and status.get waiting", () => {
         createdAt: firstAt + 5_000,
         id: expect.any(String),
         queuePosition: 2,
+        reason: "behind-earlier-request",
         requesterId: "agent-b",
         spec: IOS_REQUEST,
         stage: "queued",
@@ -2800,7 +2801,7 @@ describe("Dispatcher: status.get RAM budget", () => {
       expect(fullStatus.capacity?.ios.atRamBudget).toBe(true);
       await expect(
         full.dispatcher.dispatch("lease.request", { ...ios, noWait: true }, session()),
-      ).rejects.toBeInstanceOf(NoCapacityError);
+      ).rejects.toMatchObject({ code: "NO_CAPACITY" });
     });
 
     it("is false under the fixed strategy, which keeps no budget", async () => {

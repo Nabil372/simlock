@@ -371,24 +371,45 @@ export const leaseRequestRecordSchema = z.object({
   failure: z.object({ code: z.string(), message: z.string() }).optional(),
 });
 
-/**
- * A request still waiting for a device (`list.get` with `requests`, `status.get`'s `waiting`).
- * `stage` is `queued` while the request holds a place in the queue, with that place in
- * `queuePosition`, counted from 1 the way `lease.queued` counts it; `starting` while the daemon is
- * working on it: placing it as it arrives, or finding, making, booting or downloading a device
- * for it. `workerId` names the worker whose own queue
- * the request waits in; only a gateway sets it. The request's idempotency key and owner are
- * never part of it: a key lets its holder replay the request, and neither is the operator's.
- */
-export const waitingRequestSchema = z.object({
+const waitingReasonSchema = z.enum([
+  "behind-earlier-request",
+  "device-limit",
+  "ram-budget",
+  "global-running-limit",
+  "platform-running-limit",
+  "provisioning-failed",
+  "waiting-for-device",
+  "no-free-physical",
+]);
+
+const waitingRequestShape = z.object({
   id: z.string(),
   requesterId: z.string(),
   spec: requestedDeviceSchema,
   createdAt: z.number(),
   stage: z.enum(["queued", "starting"]),
   queuePosition: z.number().int().positive().optional(),
+  reason: waitingReasonSchema.optional(),
   workerId: z.string().optional(),
 });
+
+/**
+ * A request still waiting for a device (`list.get` with `requests`, `status.get`'s `waiting`).
+ * `stage` is `queued` while the request holds a place in the queue, with that place in
+ * `queuePosition`, counted from 1 the way `lease.queued` counts it; `starting` while the daemon is
+ * working on it: placing it as it arrives, or finding, making, booting or downloading a device
+ * for it. `reason` says why a `queued` request is not placed yet, from its latest attempt.
+ * `workerId` names the worker whose own queue the request waits in; only a gateway sets it. The request's idempotency key and owner are
+ * never part of it: a key lets its holder replay the request, and neither is the operator's.
+ */
+export const waitingRequestSchema = Object.assign(
+  waitingRequestShape.refine(
+    (request) => request.reason === undefined || request.stage === "queued",
+    { message: "a starting request has no reason", path: ["reason"] },
+  ),
+  // why: the refinement hides the object's `shape`, which a reader of the field list still needs.
+  { shape: waitingRequestShape.shape },
+);
 
 /**
  * The scoped command `simlock simctl` / `simlock adb` runs on the caller's behalf. The command

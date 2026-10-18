@@ -3,6 +3,7 @@ import {
   capacityDevices,
   plannedCapacityDevice,
   type CapacityCoordinator,
+  type CapacityRefusalReason,
   type CapacityReservation,
   type DeviceOperationClaim,
   type DeviceOperationClaims,
@@ -50,6 +51,29 @@ export interface PhysicalPlanInput {
   readonly heldByOlder: (device: PhysicalDevice) => boolean;
 }
 
+export type WaitingReason =
+  | CapacityRefusalReason
+  | "behind-earlier-request"
+  | "provisioning-failed"
+  | "waiting-for-device"
+  | "no-free-physical";
+
+// why: keyed by core's list, so the compiler fails when a capacity refusal has no waiting reason.
+const CAPACITY_WAITING_REASON: Record<CapacityRefusalReason, WaitingReason> = {
+  "device-limit": "device-limit",
+  "global-running-limit": "global-running-limit",
+  "platform-running-limit": "platform-running-limit",
+  "ram-budget": "ram-budget",
+};
+
+export function capacityReasonOf(
+  reason: WaitingReason | undefined,
+): CapacityRefusalReason | undefined {
+  return reason !== undefined && Object.hasOwn(CAPACITY_WAITING_REASON, reason)
+    ? (reason as CapacityRefusalReason)
+    : undefined;
+}
+
 export type AcquisitionPlan =
   | { readonly kind: "grant-ready"; readonly device: DeviceRecord }
   | {
@@ -68,14 +92,16 @@ export type AcquisitionPlan =
       readonly kind: "evict-running";
       readonly claim: DeviceOperationClaim;
       readonly device: VirtualDevice;
+      readonly reason: WaitingReason;
     }
   | {
       readonly kind: "evict-managed";
       readonly claim: DeviceOperationClaim;
       readonly device: VirtualDevice;
+      readonly reason: WaitingReason;
     }
-  | { readonly kind: "wait" }
-  | { readonly kind: "no-capacity" };
+  | { readonly kind: "wait"; readonly reason: WaitingReason }
+  | { readonly kind: "no-capacity"; readonly reason: WaitingReason };
 
 /**
  * Read-only acquisition policy with short-lived, explicit capacity and device
@@ -112,7 +138,7 @@ export class AcquisitionPlanner {
       !input.noWait &&
       snapshot.virtualDevices.some((device) => this.#isOnItsWay(device, serves))
     ) {
-      return { kind: "wait" };
+      return { kind: "wait", reason: "waiting-for-device" };
     }
 
     // A spent fresh device sits `shutdown` until its delete; `mayBeGranted` keeps it from being booted again.
@@ -126,14 +152,19 @@ export class AcquisitionPlanner {
 
   // fallow-ignore-next-line unused-class-member -- called through LeaseAcquisitionCoordinator's `AcquisitionPlannerPort`.
   planPhysical(input: PhysicalPlanInput): AcquisitionPlan {
+    let heldForOlder = false;
     for (const device of input.snapshot.devices) {
       if (!device.physical || device.state !== "ready") continue;
       if (input.absent.has(device.id)) continue;
-      if (!fitsPhysical(device, input.request) || input.heldByOlder(device)) continue;
+      if (!fitsPhysical(device, input.request)) continue;
+      if (input.heldByOlder(device)) {
+        heldForOlder = true;
+        continue;
+      }
       const claim = this.claims.tryClaim(device.id, "grant", input.owner);
       if (claim !== undefined) return { claim, device, kind: "grant-physical" };
     }
-    return blocked(input.noWait);
+    return blocked(input.noWait, heldForOlder ? "behind-earlier-request" : "no-free-physical");
   }
 
   #isOnItsWay(device: VirtualDevice, serves: (device: DeviceRecord) => boolean): boolean {
@@ -150,15 +181,16 @@ export class AcquisitionPlanner {
     );
     if (!running.ok) {
       const victim = this.#runningVictim(input.snapshot, running.reason, input.spec.platform);
+      const reason = CAPACITY_WAITING_REASON[running.reason];
       return victim === undefined
-        ? blocked(input.noWait)
-        : this.#claimEviction(victim, input.noWait);
+        ? blocked(input.noWait, reason)
+        : this.#claimEviction(victim, input.noWait, reason);
     }
 
     const claim = this.claims.tryClaim(device.id, "boot", input.owner);
     if (claim === undefined) {
       running.reservation.release();
-      return blocked(input.noWait);
+      return blocked(input.noWait, "waiting-for-device");
     }
     return { capacityReservation: running.reservation, claim, device, kind: "boot-shutdown" };
   }
@@ -171,34 +203,45 @@ export class AcquisitionPlanner {
     if (reservation.ok) {
       if (input.failures < 2) return { kind: "provision", reservation: reservation.reservation };
       reservation.reservation.release();
-      return blocked(input.noWait);
+      return blocked(input.noWait, "provisioning-failed");
     }
 
+    const reason = CAPACITY_WAITING_REASON[reservation.reason];
     if (reservation.reason === "device-limit") {
       const victim = selectManagedVictim(
         this.#eligibleEvictionDevices(input.snapshot),
         input.spec.platform,
       );
-      if (victim !== undefined) return this.#claimManagedEviction(victim, input.noWait);
+      if (victim !== undefined) return this.#claimManagedEviction(victim, input.noWait, reason);
     }
 
     const victim = this.#runningVictim(input.snapshot, reservation.reason, input.spec.platform);
-    return victim === undefined ? blocked(input.noWait) : this.#claimEviction(victim, input.noWait);
+    return victim === undefined
+      ? blocked(input.noWait, reason)
+      : this.#claimEviction(victim, input.noWait, reason);
   }
 
-  #claimManagedEviction(device: VirtualDevice, noWait: boolean): AcquisitionPlan {
+  #claimManagedEviction(
+    device: VirtualDevice,
+    noWait: boolean,
+    reason: WaitingReason,
+  ): AcquisitionPlan {
     const claim = this.claims.tryClaim(device.id, "eviction");
-    return claim === undefined ? blocked(noWait) : { claim, device, kind: "evict-managed" };
+    return claim === undefined
+      ? blocked(noWait, reason)
+      : { claim, device, kind: "evict-managed", reason };
   }
 
-  #claimEviction(device: VirtualDevice, noWait: boolean): AcquisitionPlan {
+  #claimEviction(device: VirtualDevice, noWait: boolean, reason: WaitingReason): AcquisitionPlan {
     const claim = this.claims.tryClaim(device.id, "eviction");
-    return claim === undefined ? blocked(noWait) : { claim, device, kind: "evict-running" };
+    return claim === undefined
+      ? blocked(noWait, reason)
+      : { claim, device, kind: "evict-running", reason };
   }
 
   #runningVictim(
     snapshot: AcquisitionPlannerSnapshot,
-    reason: "device-limit" | "ram-budget" | "global-running-limit" | "platform-running-limit",
+    reason: CapacityRefusalReason,
     platform: Platform,
   ): VirtualDevice | undefined {
     if (reason !== "global-running-limit" && reason !== "platform-running-limit") return undefined;
@@ -219,6 +262,6 @@ export class AcquisitionPlanner {
   }
 }
 
-function blocked(noWait: boolean): AcquisitionPlan {
-  return noWait ? { kind: "no-capacity" } : { kind: "wait" };
+function blocked(noWait: boolean, reason: WaitingReason): AcquisitionPlan {
+  return noWait ? { kind: "no-capacity", reason } : { kind: "wait", reason };
 }

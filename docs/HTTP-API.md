@@ -480,7 +480,11 @@ platform by `device` (ignoring letter case), `class` and `os`; `os` is exact,
 so `"18"` matches no device on `18.4.1` and "any 18.x" is `">=18 <19"`, and on
 Android it is the API level (`"34"`). A request no enrolled device could match
 fails at once with `422 UNKNOWN_MODEL`. One that could match a device that is
-leased or being reclaimed waits, or is `503 NO_CAPACITY` with `noWait`.
+leased or being reclaimed waits, or is `503 NO_CAPACITY` with `noWait`. When a
+capacity check refused it, the error body's `details.capacityReason` names the check:
+`device-limit`, `ram-budget`, `global-running-limit` or `platform-running-limit`. A
+refusal for another cause, and the answer to a repeat of a refused request, has no
+`details`.
 `physical` with `mode` or `imageTag`, or with `allowDownload: true`, is
 `400 BAD_REQUEST` naming the field. The lease's `device` then has no `mode`. A
 request without `physical` never gets a physical device. A physical request
@@ -1546,7 +1550,8 @@ Every request still waiting for a device, oldest first, whoever sent it. An
 { "requests": [
   { "id": "req_7", "requesterId": "agent-b",
     "spec": { "platform": "ios", "model": "iPhone 16", "osVersion": "18.4", "mode": "slim" },
-    "createdAt": 1790864071200, "stage": "queued", "queuePosition": 1 },
+    "createdAt": 1790864071200, "stage": "queued", "queuePosition": 1,
+    "reason": "platform-running-limit" },
   { "id": "req_9", "requesterId": "local-agent",
     "spec": { "platform": "android", "model": "Pixel 8" },
     "createdAt": 1790864075000, "stage": "starting", "workerId": "3f81a2c4" }
@@ -1565,6 +1570,11 @@ Every request still waiting for a device, oldest first, whoever sent it. An
   line, simulator and emulator requests or physical requests, counting from 1,
   the requests ahead of it in that line that are already starting included. It
   is the request's place now, not the one its `queued` progress first reported.
+- `reason` is set only while `queued`, and only once the daemon has tried to place the
+  request: why its latest attempt stopped. One of `behind-earlier-request`, `device-limit`,
+  `ram-budget`, `global-running-limit`, `platform-running-limit`, `provisioning-failed`,
+  `waiting-for-device` or `no-free-physical`. It is replaced by each new attempt, and a
+  `starting` request has none. On a gateway, a worker's own entries keep theirs.
 - A request leaves the list as soon as it is granted, fails or is cancelled.
   The request's idempotency key and owner are never listed.
 

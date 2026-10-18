@@ -1574,7 +1574,8 @@ configuration, and a gateway runs no reaper.
 rather than JSON:
 
 ```
-Request req_7: agent-b, ios iPhone 16 18.4 mode slim, queued at 2, waiting 12s
+Request req_7: agent-b, ios iPhone 16 18.4 mode slim, queued at 2, waiting 12s — full: running limit for iOS
+Request req_8: agent-c, ios iPhone 16, queued at 3, waiting 8s — behind an earlier request
 Request req_9: local-agent on 2b026432-7743-4a08-98fc-ce494d11866f, ios iPhone 16, starting, waiting 3s
 ```
 
@@ -1586,7 +1587,14 @@ of it that are already starting included. It counts within the request's own
 line: a physical request, which the line marks `physical`, waits apart from
 simulator and emulator requests. `starting` means the daemon is working
 on it: placing it as it arrives, or finding, creating, booting or downloading
-a device for it. With nothing waiting it prints
+a device for it. A `queued` line ends with ` — ` and the reason the daemon's
+latest attempt to place the request stopped, when it has one: `behind an
+earlier request`, `full: device limit`, `full: RAM budget`, `full: running
+limit`, `full: running limit for iOS` (or `Android`), `creating a device
+failed twice`, `a matching device is starting`, or `every matching device is
+leased or absent`. The reason is the daemon's latest attempt, so it can change
+while the request waits; a `starting` line has none. On a gateway, a worker's
+own queued entries keep their reason. With nothing waiting it prints
 `No requests are waiting.` A granted, failed or cancelled request is not
 listed.
 
