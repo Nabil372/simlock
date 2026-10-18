@@ -28,7 +28,12 @@ async function run(
   try {
     if (values.requests) {
       const requests = waitingRequestSchema.array().parse(await client.list({ kind: "requests" }));
-      environment.stdout.write(`${formatWaitingRequests(requests, environment.clock.now())}\n`);
+      const names = requests.some((request) => request.workers !== undefined)
+        ? new Map((await client.listWorkers()).workers.map((worker) => [worker.id, worker.label]))
+        : new Map<string, string | undefined>();
+      environment.stdout.write(
+        `${formatWaitingRequests(requests, environment.clock.now(), names)}\n`,
+      );
       return 0;
     }
     const kind = values.leases ? "leases" : values.rules ? "rules" : "devices";
@@ -52,13 +57,55 @@ const WAITING_REASON_TEXT: Readonly<Record<WaitingReasonWord, (platform: string)
   "waiting-for-device": () => "A matching device is starting",
 };
 
-function waitingReasonText(request: WaitingRequestEntry): string | undefined {
-  if (request.reason === undefined) return undefined;
-  const text = WAITING_REASON_TEXT[request.reason](request.spec.platform);
+type GatewayWaitingReason = NonNullable<WaitingRequestEntry["workers"]>[number]["reason"];
+
+const GATEWAY_REASON_TEXT: Readonly<
+  Record<Exclude<GatewayWaitingReason, "full">, (platform: string) => string>
+> = {
+  busy: () => "Busy with its own queue",
+  "capability-missing": () => "Missing capability",
+  disconnected: () => "Not connected",
+  drained: () => "Drained",
+  incompatible: () => "Protocol mismatch",
+  "no-driver": (platform) => `No ${platform === "ios" ? "iOS" : "Android"} support`,
+  "no-free-physical": () => WAITING_REASON_TEXT["no-free-physical"](""),
+  "not-chosen": () => "Not chosen this time",
+  "not-ready": () => "Not ready yet",
+  "runtime-missing": () => "OS not installed",
+  unhealthy: () => "Not running",
+  "unknown-model": () => "Model not offered",
+};
+
+function lowerFirst(text: string): string {
   return `${text.charAt(0).toLowerCase()}${text.slice(1)}`;
 }
 
-function formatWaitingRequests(requests: readonly WaitingRequestEntry[], now: number): string {
+function waitingReasonText(request: WaitingRequestEntry): string | undefined {
+  if (request.reason === undefined) return undefined;
+  return lowerFirst(WAITING_REASON_TEXT[request.reason](request.spec.platform));
+}
+
+function workerReasonLines(
+  request: WaitingRequestEntry,
+  names: ReadonlyMap<string, string | undefined>,
+): string[] {
+  return (request.workers ?? []).map((worker) => {
+    const { platform } = request.spec;
+    const text =
+      worker.reason !== "full"
+        ? GATEWAY_REASON_TEXT[worker.reason](platform)
+        : worker.capacityReason === undefined
+          ? "Full"
+          : WAITING_REASON_TEXT[worker.capacityReason](platform);
+    return `  ${names.get(worker.workerId) ?? worker.workerId}: ${lowerFirst(text)}`;
+  });
+}
+
+function formatWaitingRequests(
+  requests: readonly WaitingRequestEntry[],
+  now: number,
+  names: ReadonlyMap<string, string | undefined>,
+): string {
   if (requests.length === 0) return "No requests are waiting.";
   return requests
     .map((request) => {
@@ -80,7 +127,8 @@ function formatWaitingRequests(requests: readonly WaitingRequestEntry[], now: nu
           : `${request.stage} at ${String(request.queuePosition)}`;
       const waited = Math.max(0, Math.round((now - request.createdAt) / 1000));
       const why = waitingReasonText(request);
-      return `Request ${request.id}: ${request.requesterId}${where}, ${device}, ${stage}, waiting ${String(waited)}s${why === undefined ? "" : ` — ${why}`}`;
+      const line = `Request ${request.id}: ${request.requesterId}${where}, ${device}, ${stage}, waiting ${String(waited)}s${why === undefined ? "" : ` — ${why}`}`;
+      return [line, ...workerReasonLines(request, names)].join("\n");
     })
     .join("\n");
 }
