@@ -3489,31 +3489,13 @@ describe("Registry: quarantineCause", () => {
       const entered = await registry.enterQuarantine("dev_virtual", 5_000, cause);
       expect(entered.quarantineCause, cause.kind).toEqual(cause);
 
-      const reloaded = await stateFileReload(registry);
+      const reloaded = await load();
       expect(reloaded.snapshot.devices[0], cause.kind).toMatchObject({
         quarantineCause: cause,
         state: "quarantined",
       });
     }
   });
-
-  // why: enterQuarantine wrote through the registry's own filesystem, so reload through it.
-  async function stateFileReload(registry: Registry): Promise<Registry> {
-    const clock = new FakeClock(1_000);
-    const filesystem = new MemoryFilesystem();
-    await filesystem.mkdirp("/home/agent/.simlock");
-    await filesystem.writeFileAtomic(
-      statePath,
-      JSON.stringify({ devices: registry.snapshot.devices, leases: [] }),
-    );
-    return Registry.load({
-      clock,
-      eventBus: new EventBus(clock),
-      filesystem,
-      idGenerator: { generate: () => "new" },
-      statePath,
-    });
-  }
 
   it("a quarantined record with a cause from an earlier entry loads as is, and a record with no cause loads with none", async () => {
     const withCause = await stateFile({ devices: [quarantinedVirtual(purgeCause)] });
@@ -3534,9 +3516,10 @@ describe("Registry: quarantineCause", () => {
         });
 
         const registry = await load();
+        const why = `${state} ${JSON.stringify(cause)}`;
+        expect(registry.snapshot.devices[0], `loaded ${why}`).not.toHaveProperty("quarantineCause");
         await registry.markForeignStateDetected("dev_virtual", 5);
 
-        const why = `${state} ${JSON.stringify(cause)}`;
         expect(registry.snapshot.devices[0], why).toMatchObject({ state });
         expect(registry.snapshot.devices[0], why).not.toHaveProperty("quarantineCause");
         expect((await written()).devices?.[0], why).not.toHaveProperty("quarantineCause");
@@ -3547,6 +3530,7 @@ describe("Registry: quarantineCause", () => {
       physicalDevices: [{ ...physicalRecord, quarantineCause: purgeCause, state: "ready" }],
     });
     const registry = await physical.load();
+    expect(registry.snapshot.devices[0]).not.toHaveProperty("quarantineCause");
     await registry.markForeignStateDetected("dev_physical", 5);
     expect(registry.snapshot.devices[0]).not.toHaveProperty("quarantineCause");
     expect((await physical.written()).physicalDevices?.[0]).not.toHaveProperty("quarantineCause");
