@@ -113,6 +113,16 @@ const CANNOT_SERVE_REASONS: Readonly<Record<string, WorkerReason["reason"]>> = {
   UNKNOWN_MODEL: "unknown-model",
 };
 
+// why: a filter that no later state of the worker lifts; any other reason holds a worker back only for now.
+const PERMANENT_FILTERS: ReadonlySet<WorkerReason["reason"]> = new Set([
+  "capability-missing",
+  "drained",
+  "incompatible",
+  "no-driver",
+  "runtime-missing",
+  "unknown-model",
+]);
+
 const CANNOT_SERVE_CODES: ReadonlySet<string> = new Set([
   "UNKNOWN_MODEL",
   "RUNTIME_MISSING",
@@ -848,7 +858,7 @@ export class FleetLeaseCoordinator {
     return capacityReason === undefined ? { reason: "full" } : { capacityReason, reason: "full" };
   }
 
-  // why: a second failed provision walks on like a cannot-serve code, and only when every worker that could take the request failed so does it end with the last answer; a worker full in its view could take it later, so it keeps the request queued.
+  // why: a second failed provision walks on like a cannot-serve code, and only when every worker that could take the request failed so does it end with the last answer; a worker held back only for now (full, busy, not ready, unhealthy) could take it later, so it keeps the request queued.
   #rejectIfEveryWorkerFailedProvisioning(
     waiter: FleetWaiter,
     request: RoutableRequest,
@@ -858,7 +868,7 @@ export class FleetLeaseCoordinator {
     if (refusals === undefined) return;
     const open = this.options.routing
       .explain(request, views)
-      .filter((entry) => entry.filter === undefined || entry.filter.reason === "full")
+      .filter((entry) => entry.filter === undefined || !PERMANENT_FILTERS.has(entry.filter.reason))
       .map((entry) => entry.workerId);
     const failed = [...refusals]
       .filter(([workerId]) => open.includes(workerId))

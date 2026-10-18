@@ -138,6 +138,7 @@ function connectWorker(
     readonly platform?: "ios" | "android";
     readonly capacity?: ReturnType<typeof statusFixture>["capacity"];
     readonly devices?: ReturnType<typeof deviceFixture>[];
+    readonly queueDepth?: number;
   } = {},
 ): void {
   workers.connected(workerId, overrides.label, "0.3.0");
@@ -154,7 +155,7 @@ function connectWorker(
     downloads: { policy: "on-request" },
     health: "running",
     leases: [],
-    queueDepth: 0,
+    queueDepth: overrides.queueDepth ?? 0,
   });
 }
 
@@ -4984,12 +4985,26 @@ describe("FleetLeaseCoordinator lists why each worker cannot take a waiting requ
         id === "wrk_b" ? { capacity: saturatedIos() } : {},
       );
       clients["wrk_a"]?.requestLeaseQueue.push(provisionFailed("worker a: boom"));
+      const untouched = noCapacity();
+      clients["wrk_b"]?.requestLeaseQueue.push(untouched);
 
       const { state } = await ask(coordinator);
 
       expect(state.state).toBe("pending");
       expect(coordinator.waitingRequests()).toEqual([expect.objectContaining({ stage: "queued" })]);
-      expect(clients["wrk_b"]?.requestLeaseQueue).toEqual([]);
+      expect(clients["wrk_b"]?.requestLeaseQueue).toEqual([untouched]);
+    });
+
+    it("leaves the request queued when the other worker is busy with a queue of its own", async () => {
+      const { clients, coordinator } = fleet(["wrk_a", "wrk_b"], (id) =>
+        id === "wrk_b" ? { queueDepth: 1 } : {},
+      );
+      clients["wrk_a"]?.requestLeaseQueue.push(provisionFailed("worker a: boom"));
+
+      const { state } = await ask(coordinator);
+
+      expect(state.state).toBe("pending");
+      expect(coordinator.waitingRequests()).toEqual([expect.objectContaining({ stage: "queued" })]);
     });
 
     it("leaves the request queued when the worker that is only full refused first and the one asked after a view change failed to provision", async () => {
