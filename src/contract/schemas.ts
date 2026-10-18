@@ -434,10 +434,24 @@ const waitingRequestShape = z.object({
  * never part of it: a key lets its holder replay the request, and neither is the operator's.
  */
 export const waitingRequestSchema = Object.assign(
-  waitingRequestShape.refine(
-    (request) => request.reason === undefined || request.stage === "queued",
-    { message: "a starting request has no reason", path: ["reason"] },
-  ),
+  waitingRequestShape
+    .refine((request) => request.reason === undefined || request.stage === "queued", {
+      message: "a starting request has no reason",
+      path: ["reason"],
+    })
+    .refine(
+      (request) =>
+        (request.workers ?? []).every(
+          (entry) => entry.capacityReason === undefined || entry.reason === "full",
+        ),
+      { message: "a capacity reason belongs to full", path: ["workers"] },
+    )
+    .refine(
+      (request) =>
+        new Set((request.workers ?? []).map((entry) => entry.workerId)).size ===
+        (request.workers ?? []).length,
+      { message: "a worker is listed once", path: ["workers"] },
+    ),
   // why: the refinement hides the object's `shape`, which a reader of the field list still needs.
   { shape: waitingRequestShape.shape },
 );
