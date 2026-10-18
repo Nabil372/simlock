@@ -77,7 +77,7 @@ Flows: [device selection](../../docs/internal/flows/device-selection.md), [devic
 6. Answers before any progress: `NO_CAPACITY` → remember refusal, refresh view, re-queue
    (`noWait`: one more walk). `UNKNOWN_MODEL`, `RUNTIME_MISSING`, `NO_DRIVER`, `CAPABILITY_MISSING`
    → exclude that worker for this request, refresh its catalog, walk again. `PROVISION_FAILED` →
-   a refusal; every worker that could take it (one only full could, later) failed so → reject
+   a refusal; every worker that could take it failed so (one that is full, busy, not ready or unhealthy could, later) → reject
    with the last. After a progress push it is relayed as a failure after progress. Anything else,
    or a failure after progress → `lease.rejected` `worker-failed`.
 7. Grant: a lease id unlike the forwarded `leaseId` → release it on the worker, retry. Gateway

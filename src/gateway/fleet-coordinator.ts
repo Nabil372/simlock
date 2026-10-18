@@ -113,14 +113,12 @@ const CANNOT_SERVE_REASONS: Readonly<Record<string, WorkerReason["reason"]>> = {
   UNKNOWN_MODEL: "unknown-model",
 };
 
-// why: filters set by what the worker is or how an operator set it up (drain, capabilities, drivers, runtimes, models), not by lease traffic; waiting for lease activity does not lift them. Any other reason holds a worker back only for now.
-const PERMANENT_FILTERS: ReadonlySet<WorkerReason["reason"]> = new Set([
-  "capability-missing",
-  "drained",
-  "incompatible",
-  "no-driver",
-  "runtime-missing",
-  "unknown-model",
+// why: the filters that hold a worker back only for now (it is full, busy, not ready or unhealthy), so it could take the request later; any other reason (drained, disconnected, a missing driver, runtime, model or capability) means it will not take it by waiting.
+const COULD_TAKE_LATER: ReadonlySet<WorkerReason["reason"]> = new Set([
+  "busy",
+  "full",
+  "not-ready",
+  "unhealthy",
 ]);
 
 const CANNOT_SERVE_CODES: ReadonlySet<string> = new Set([
@@ -868,7 +866,7 @@ export class FleetLeaseCoordinator {
     if (refusals === undefined) return;
     const open = this.options.routing
       .explain(request, views)
-      .filter((entry) => entry.filter === undefined || !PERMANENT_FILTERS.has(entry.filter.reason))
+      .filter((entry) => entry.filter === undefined || COULD_TAKE_LATER.has(entry.filter.reason))
       .map((entry) => entry.workerId);
     const failed = [...refusals]
       .filter(([workerId]) => open.includes(workerId))

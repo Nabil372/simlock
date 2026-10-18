@@ -952,7 +952,7 @@ catalog has not arrived, is neither.
 | A known worker could serve it, but none that takes requests can | `NO_CAPACITY` (exit 11) at once |
 | The request requires capabilities (programmatic client only), and no connected worker that could serve it has all of them available | `CAPABILITY_MISSING` (exit 12) at once; `capabilities` names the required ones |
 | A worker that takes requests can serve it but is busy | Waits in the queue; `NO_CAPACITY` only with `--no-wait` |
-| A worker fails to create a device for it twice (`PROVISION_FAILED`), before it reported any progress | The gateway asks the next worker; when every worker that could take it has failed so, the request fails with `PROVISION_FAILED` (exit 1) and the last worker's message, and a request that was waiting is rejected the same way. A worker that is only full keeps it waiting. After the worker reported progress, `PROVISION_FAILED` reaches you as it is and the next worker is not asked |
+| A worker fails to create a device for it twice (`PROVISION_FAILED`), before it reported any progress | The gateway asks the next worker; when every worker that could take it has failed so, the request fails with `PROVISION_FAILED` (exit 1) and the last worker's message, and a request that was waiting is rejected the same way. A worker that is only full, busy, not ready or unhealthy keeps it waiting. After the worker reported progress, `PROVISION_FAILED` reaches you as it is and the next worker is not asked |
 
 "At once" holds with and without `--no-wait` and `--timeout`, and the same
 requester can ask again right away. The table also applies to a request that is

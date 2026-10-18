@@ -4969,6 +4969,17 @@ describe("FleetLeaseCoordinator lists why each worker cannot take a waiting requ
       ]);
     });
 
+    it("rejects the request when the other worker is disconnected, which cannot take it", async () => {
+      const { clients, coordinator, workers } = fleet(["wrk_a", "wrk_b"]);
+      workers.disconnected("wrk_b");
+      clients["wrk_a"]?.requestLeaseQueue.push(provisionFailed("worker a: boom"));
+
+      const { ended, state } = await ask(coordinator);
+
+      expect(state.state).toBe("rejected");
+      expect(await ended).toMatchObject({ code: "PROVISION_FAILED", message: "worker a: boom" });
+    });
+
     it("rejects the request when the other worker is drained, which cannot take it", async () => {
       const { clients, coordinator, workers } = fleet(["wrk_a", "wrk_b"]);
       await workers.setDrained("wrk_b", true);
