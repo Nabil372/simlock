@@ -1,5 +1,5 @@
 import { readdirSync } from "node:fs";
-import { mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -132,6 +132,55 @@ async function tempDir(): Promise<string> {
 }
 
 describe("NodeFileLogSink", () => {
+  it("creates every file it holds owner-only, the current file and every rotated generation alike", async () => {
+    // why: #685: `daemon.log` and `events.jsonl` are both sinks of this class, and a rotated
+    // generation is a file this class creates too (`openSync(path, "a")` after each
+    // rename). A restrictive umask in the test environment would mask what the code
+    // actually asks for, so pin the one every real host starts from.
+    const previousUmask = process.umask(0o022);
+    try {
+      const directory = await tempDir();
+      // why: one sink at the daemon's `daemon.log` shape (single generation), one at the
+      // `events.jsonl` shape (numbered generations under retention) — the two shapes the
+      // daemon actually opens.
+      const paths = {
+        daemonLog: join(directory, "daemon.log"),
+        events: join(directory, "events.jsonl"),
+      };
+      // why: the second write passes the 12-byte cap — that rotation is part of what this asserts.
+      const logSink = new NodeFileLogSink({ maxBytes: 12, path: paths.daemonLog });
+      logSink.write("first");
+      logSink.write("second");
+      logSink.close();
+      const eventSink = new NodeFileLogSink({
+        clock: new FakeClock(1_000),
+        maxBytes: 12,
+        path: paths.events,
+        retentionMs: 1,
+        totalMaxBytes: 1_000,
+      });
+      // why: the second write rotates this sink too, and the rotated generation is a file
+      // this class creates — its mode is part of the claim.
+      eventSink.write('{"timestamp":1000}');
+      eventSink.write('{"timestamp":1000}');
+      eventSink.close();
+
+      expect({
+        daemonLog: (await stat(paths.daemonLog)).mode & 0o777,
+        daemonLogRotated: (await stat(`${paths.daemonLog}.1`)).mode & 0o777,
+        events: (await stat(paths.events)).mode & 0o777,
+        eventsRotated: (await stat(`${paths.events}.1`)).mode & 0o777,
+      }).toEqual({
+        daemonLog: 0o600,
+        daemonLogRotated: 0o600,
+        events: 0o600,
+        eventsRotated: 0o600,
+      });
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
   it("appends one line per write to the target file", async () => {
     const directory = await tempDir();
     const path = join(directory, "daemon.log");
