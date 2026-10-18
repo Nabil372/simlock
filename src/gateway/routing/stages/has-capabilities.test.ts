@@ -49,17 +49,19 @@ describe("has-capabilities", () => {
       { name: "x-other", state: "off" },
     ]);
 
-    expect(hasCapabilities.keeps(available, REQUIRES_AGENT_DEVICE)).toBe(true);
+    expect(hasCapabilities.check(available, REQUIRES_AGENT_DEVICE)).toBeUndefined();
     for (const lacking of [unavailable, off, absent, unread]) {
-      expect(hasCapabilities.keeps(lacking, REQUIRES_AGENT_DEVICE)).toBe(false);
+      expect(hasCapabilities.check(lacking, REQUIRES_AGENT_DEVICE)).toBeDefined();
     }
-    expect(hasCapabilities.keeps(partly, { ...REQUEST, requires: ["agent-device"] })).toBe(true);
     expect(
-      hasCapabilities.keeps(partly, { ...REQUEST, requires: ["agent-device", "x-other"] }),
-    ).toBe(false);
+      hasCapabilities.check(partly, { ...REQUEST, requires: ["agent-device"] }),
+    ).toBeUndefined();
+    expect(
+      hasCapabilities.check(partly, { ...REQUEST, requires: ["agent-device", "x-other"] }),
+    ).toBeDefined();
     for (const worker of [available, unavailable, off, absent, unread]) {
-      expect(hasCapabilities.keeps(worker, { ...REQUEST, requires: [] })).toBe(true);
-      expect(hasCapabilities.keeps(worker, REQUEST)).toBe(true);
+      expect(hasCapabilities.check(worker, { ...REQUEST, requires: [] })).toBeUndefined();
+      expect(hasCapabilities.check(worker, REQUEST)).toBeUndefined();
     }
     expect(hasCapabilities.appliesToPhysical).toBe(true);
   });

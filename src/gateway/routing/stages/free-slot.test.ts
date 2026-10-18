@@ -21,8 +21,8 @@ function view(capacity: WorkerView["capacity"]): WorkerView {
 
 describe("free-slot", () => {
   it("keeps a worker with a free slot for the platform and overall, and drops one whose capacity has not been read", () => {
-    expect(freeSlot.keeps(view(statusFixture().capacity), REQUEST)).toBe(true);
-    expect(freeSlot.keeps(view(undefined), REQUEST)).toBe(false);
+    expect(freeSlot.check(view(statusFixture().capacity), REQUEST)).toBeUndefined();
+    expect(freeSlot.check(view(undefined), REQUEST)).toBeDefined();
   });
 });
 

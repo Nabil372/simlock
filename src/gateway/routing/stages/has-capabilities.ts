@@ -1,11 +1,10 @@
 import type { FilterStage } from "../pipeline.js";
 
 export const hasCapabilities: FilterStage = {
-  keeps(worker, request) {
-    return listsAllAvailable(worker.capabilities, request.requires);
-  },
-  check() {
-    return undefined;
+  check(worker, request) {
+    return listsAllAvailable(worker.capabilities, request.requires)
+      ? undefined
+      : { reason: "capability-missing" };
   },
   appliesToPhysical: true,
   kind: "filter",

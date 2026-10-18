@@ -36,8 +36,8 @@ describe("idle-queue", () => {
       queueDepth: 1,
     });
 
-    expect(idleQueue.keeps(onlyPhysicalWaiters, VIRTUAL)).toBe(true);
-    expect(idleQueue.keeps(virtualWaiters, VIRTUAL)).toBe(false);
+    expect(idleQueue.check(onlyPhysicalWaiters, VIRTUAL)).toBeUndefined();
+    expect(idleQueue.check(virtualWaiters, VIRTUAL)).toBeDefined();
     expect(policy.select(VIRTUAL, [virtualWaiters])).toBeUndefined();
 
     expect(policy.select(PHYSICAL, [virtualWaiters])).toMatchObject({ workerId: "wrk_a" });

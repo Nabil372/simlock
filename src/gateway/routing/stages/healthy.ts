@@ -4,11 +4,8 @@ import type { FilterStage } from "../pipeline.js";
  * its health is not known to be healthy. A worker dropped here is busy, not unable: its requests
  * wait. */
 export const healthy: FilterStage = {
-  keeps(worker) {
-    return worker.health === "running";
-  },
-  check() {
-    return undefined;
+  check(worker) {
+    return worker.health === "running" ? undefined : { reason: "unhealthy" };
   },
   appliesToPhysical: true,
   kind: "filter",

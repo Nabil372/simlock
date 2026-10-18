@@ -41,7 +41,6 @@ function only(...ids: string[]): FilterStage {
   return {
     appliesToPhysical: true,
     check: (worker) => (ids.includes(worker.id) ? undefined : { reason: "busy" }),
-    keeps: (worker) => ids.includes(worker.id),
     kind: "filter",
   };
 }
@@ -49,7 +48,6 @@ function dropping(drops: Record<string, WorkerReason>): FilterStage {
   return {
     appliesToPhysical: true,
     check: (worker) => drops[worker.id],
-    keeps: (worker) => drops[worker.id] === undefined,
     kind: "filter",
   };
 }
@@ -179,10 +177,9 @@ describe("routing pipeline", () => {
     const calls: string[] = [];
     const skippedFilter = {
       appliesToPhysical: false,
-      check: () => undefined,
-      keeps: () => {
+      check: () => {
         calls.push("skipped-filter");
-        return true;
+        return undefined;
       },
       kind: "filter",
     } as FilterStage;
