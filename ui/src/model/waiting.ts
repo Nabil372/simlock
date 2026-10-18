@@ -90,6 +90,54 @@ function whyOf(request: WaitingRequest): string | undefined {
   return text === undefined ? request.reason : text(platformName(request.spec.platform));
 }
 
+type GatewayReason = NonNullable<WaitingRequest["workers"]>[number]["reason"];
+
+const WORKER_WHY_TEXT: Readonly<
+  Record<Exclude<GatewayReason, "full">, (platform: string) => string>
+> = {
+  busy: () => "Busy with its own queue",
+  "capability-missing": () => "Missing capability",
+  disconnected: () => "Not connected",
+  drained: () => "Drained",
+  incompatible: () => "Protocol mismatch",
+  "no-driver": (platform) => `No ${platform} support`,
+  "no-free-physical": () => WHY_TEXT["no-free-physical"](""),
+  "not-chosen": () => "Not chosen this time",
+  "not-ready": () => "Not ready yet",
+  "runtime-missing": () => "OS not installed",
+  unhealthy: () => "Not running",
+  "unknown-model": () => "Model not offered",
+};
+
+// why: a daemon newer than this console may send a worker reason it has no text for; the word shows as it is.
+function workerWhyText(
+  entry: NonNullable<WaitingRequest["workers"]>[number],
+  platform: string,
+): string {
+  if (entry.reason === "full") {
+    return entry.capacityReason === undefined ? "Full" : WHY_TEXT[entry.capacityReason](platform);
+  }
+  const text: ((platform: string) => string) | undefined = (
+    WORKER_WHY_TEXT as Readonly<Record<string, (platform: string) => string>>
+  )[entry.reason];
+  return text === undefined ? entry.reason : text(platform);
+}
+
+function workersOf(
+  request: WaitingRequest,
+  entries: NonNullable<WaitingRequest["workers"]>,
+  workers: readonly WorkerView[],
+): NonNullable<WaitingRow["workers"]> {
+  const platform = platformName(request.spec.platform);
+  return entries.map((entry) => {
+    const known = workers.find((worker) => worker.id === entry.workerId);
+    return {
+      name: known === undefined ? entry.workerId : workerName(known),
+      text: workerWhyText(entry, platform),
+    };
+  });
+}
+
 function queueOf(request: WaitingRequest, workers: readonly WorkerView[]): WaitingQueue {
   const worker = waitingOn(request, workers);
   if (worker !== undefined) {
@@ -145,6 +193,9 @@ export function waitingTable(
       to: itemPath("/waiting", request.id),
       waited: formatDuration(now - request.createdAt),
       ...(why === undefined ? {} : { why }),
+      ...(request.workers === undefined
+        ? {}
+        : { workers: workersOf(request, request.workers, workers) }),
     };
   });
   const oldest = Math.min(...requests.map((request) => request.createdAt));
