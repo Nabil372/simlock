@@ -113,7 +113,7 @@ const CANNOT_SERVE_REASONS: Readonly<Record<string, WorkerReason["reason"]>> = {
   UNKNOWN_MODEL: "unknown-model",
 };
 
-// why: a filter that no later state of the worker lifts; any other reason holds a worker back only for now.
+// why: filters set by what the worker is or how an operator set it up (drain, capabilities, drivers, runtimes, models), not by lease traffic; waiting for lease activity does not lift them. Any other reason holds a worker back only for now.
 const PERMANENT_FILTERS: ReadonlySet<WorkerReason["reason"]> = new Set([
   "capability-missing",
   "drained",
