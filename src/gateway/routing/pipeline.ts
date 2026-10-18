@@ -13,10 +13,36 @@ export interface RoutableRequest {
   readonly requires?: readonly string[];
 }
 
+export type CapacityReason =
+  | "device-limit"
+  | "ram-budget"
+  | "global-running-limit"
+  | "platform-running-limit";
+
+export type WorkerReasonCode =
+  | "disconnected"
+  | "incompatible"
+  | "not-ready"
+  | "unhealthy"
+  | "drained"
+  | "busy"
+  | "no-driver"
+  | "unknown-model"
+  | "runtime-missing"
+  | "capability-missing"
+  | "full"
+  | "no-free-physical"
+  | "not-chosen";
+export interface WorkerReason {
+  readonly reason: WorkerReasonCode;
+  readonly capacityReason?: CapacityReason;
+}
+
 export interface FilterStage {
   readonly kind: "filter";
   readonly appliesToPhysical: boolean;
   keeps(worker: WorkerView, request: RoutableRequest): boolean;
+  check(worker: WorkerView, request: RoutableRequest): WorkerReason | undefined;
 }
 
 export interface RankStage {
@@ -25,6 +51,7 @@ export interface RankStage {
   readonly appliesToPhysical: boolean;
   readonly settles: boolean;
   score(worker: WorkerView, request: RoutableRequest): number;
+  zeroReason?(worker: WorkerView, request: RoutableRequest): WorkerReason | undefined;
 }
 
 export type RoutingStage = FilterStage | RankStage;
@@ -69,4 +96,16 @@ export function runStages(
   const first = remaining[0];
   if (lastDecided === undefined || first === undefined) return undefined;
   return { stage: lastRemoved ?? lastDecided, workerId: first.id };
+}
+
+export interface Explanation {
+  readonly workerId: string;
+  readonly reason?: WorkerReason;
+}
+export function explainStages(
+  _stages: readonly RoutingStage[],
+  _request: RoutableRequest,
+  workers: readonly WorkerView[],
+): readonly Explanation[] {
+  return workers.map((worker) => ({ workerId: worker.id }));
 }

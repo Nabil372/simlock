@@ -381,6 +381,29 @@ const waitingReasonSchema = z.enum([
   "no-free-physical",
 ]);
 
+const capacityReasonSchema = z.enum([
+  "device-limit",
+  "ram-budget",
+  "global-running-limit",
+  "platform-running-limit",
+]);
+
+const gatewayWaitingReasonSchema = z.enum([
+  "disconnected",
+  "incompatible",
+  "not-ready",
+  "unhealthy",
+  "drained",
+  "busy",
+  "no-driver",
+  "unknown-model",
+  "runtime-missing",
+  "capability-missing",
+  "full",
+  "no-free-physical",
+  "not-chosen",
+]);
+
 const waitingRequestShape = z.object({
   id: z.string(),
   requesterId: z.string(),
@@ -390,6 +413,15 @@ const waitingRequestShape = z.object({
   queuePosition: z.number().int().positive().optional(),
   reason: waitingReasonSchema.optional(),
   workerId: z.string().optional(),
+  workers: z
+    .array(
+      z.object({
+        workerId: z.string(),
+        reason: gatewayWaitingReasonSchema,
+        capacityReason: capacityReasonSchema.optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**

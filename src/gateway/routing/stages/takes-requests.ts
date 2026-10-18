@@ -15,6 +15,9 @@ export const takesRequests: FilterStage = {
     if (worker.health === "starting") return worker.catalog !== undefined;
     return worker.capacity !== undefined && worker.catalogReadAt !== undefined;
   },
+  check() {
+    return undefined;
+  },
   appliesToPhysical: true,
   kind: "filter",
 };

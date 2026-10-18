@@ -6667,6 +6667,156 @@ describe("simlock list --requests", () => {
     });
   });
 
+  describe("the reason each worker cannot take a request on a gateway", () => {
+    const gatewayEntry = (
+      workers: readonly Record<string, unknown>[],
+      platform: "ios" | "android" = "ios",
+    ): Record<string, unknown> => ({
+      createdAt: 0,
+      id: "req_1",
+      queuePosition: 1,
+      requesterId: "ci",
+      spec: { model: "Device", platform },
+      stage: "queued",
+      workers,
+    });
+
+    async function printedGateway(
+      entries: readonly Record<string, unknown>[],
+      known: readonly { id: string; label?: string }[] = [],
+    ): Promise<{ stdout: string; listed: number }> {
+      const output = outputCapture();
+      let listed = 0;
+      const client = fakeClient({
+        list: async () => entries as never,
+        listWorkers: () => {
+          listed += 1;
+          return Promise.resolve({
+            workers: known.map((worker) => ({
+              catalog: [],
+              connection: "connected" as const,
+              devices: [],
+              drained: false,
+              lastSeenAt: 1,
+              leases: [],
+              ...worker,
+            })),
+          } as never);
+        },
+      });
+      await runCli(
+        ["list", "--requests"],
+        output.environmentWith({ connectAdmin: async () => client }),
+      );
+      return { listed, stdout: output.stdout };
+    }
+
+    it("prints one indented line per worker under the request, named by its label, else its id", async () => {
+      const { stdout } = await printedGateway(
+        [
+          gatewayEntry([
+            { reason: "drained", workerId: "wrk_a" },
+            { capacityReason: "platform-running-limit", reason: "full", workerId: "wrk_b" },
+            { reason: "runtime-missing", workerId: "wrk_c" },
+            { reason: "busy", workerId: "wrk_d" },
+          ]),
+        ],
+        [{ id: "wrk_a", label: "mac-mini-1" }, { id: "wrk_b" }, { id: "wrk_c", label: "lab" }],
+      );
+
+      expect(stdout).toBe(
+        "Request req_1: ci, ios Device, queued at 1, waiting 0s\n" +
+          "  mac-mini-1: drained\n" +
+          "  wrk_b: full: running limit for iOS\n" +
+          "  lab: oS not installed\n" +
+          "  wrk_d: busy with its own queue\n",
+      );
+    });
+
+    it.each([
+      ["disconnected", "ios", undefined, "not connected"],
+      ["incompatible", "ios", undefined, "protocol mismatch"],
+      ["not-ready", "ios", undefined, "not ready yet"],
+      ["unhealthy", "ios", undefined, "not running"],
+      ["drained", "ios", undefined, "drained"],
+      ["busy", "ios", undefined, "busy with its own queue"],
+      ["no-driver", "ios", undefined, "no iOS support"],
+      ["no-driver", "android", undefined, "no Android support"],
+      ["unknown-model", "ios", undefined, "model not offered"],
+      ["runtime-missing", "ios", undefined, "oS not installed"],
+      ["capability-missing", "ios", undefined, "missing capability"],
+      ["full", "ios", undefined, "full"],
+      ["full", "ios", "device-limit", "full: device limit"],
+      ["full", "ios", "ram-budget", "full: RAM budget"],
+      ["full", "ios", "global-running-limit", "full: running limit"],
+      ["full", "ios", "platform-running-limit", "full: running limit for iOS"],
+      ["full", "android", "platform-running-limit", "full: running limit for Android"],
+      ["no-free-physical", "ios", undefined, "every matching device is leased or absent"],
+      ["not-chosen", "ios", undefined, "not chosen this time"],
+    ] as const)(
+      "prints %s on %s with capacity reason %s as '  wrk_a: %s'",
+      async (reason, platform, capacityReason, text) => {
+        const { stdout } = await printedGateway([
+          gatewayEntry(
+            [
+              {
+                ...(capacityReason === undefined ? {} : { capacityReason }),
+                reason,
+                workerId: "wrk_a",
+              },
+            ],
+            platform,
+          ),
+        ]);
+
+        expect(stdout.split("\n")[1]).toBe(`  wrk_a: ${text}`);
+      },
+    );
+
+    it("asks worker.list once for names, and not at all when no entry has workers", async () => {
+      const gateway = await printedGateway([
+        gatewayEntry([{ reason: "drained", workerId: "wrk_a" }]),
+        { ...gatewayEntry([{ reason: "busy", workerId: "wrk_a" }]), id: "req_2" },
+      ]);
+      const plain = await printedGateway([{ ...gatewayEntry([]), workers: undefined }]);
+
+      expect(gateway.listed).toBe(1);
+      expect(plain.listed).toBe(0);
+    });
+
+    it("prints a worker's own entry with its reason after ' — ' and no indented lines", async () => {
+      const { stdout } = await printedGateway([
+        {
+          ...gatewayEntry([]),
+          reason: "ram-budget",
+          workers: undefined,
+          workerId: "wrk_1",
+        },
+      ]);
+
+      expect(stdout).toBe(
+        "Request req_1: ci on wrk_1, ios Device, queued at 1, waiting 0s — full: RAM budget\n",
+      );
+    });
+
+    it("has a text for every gateway reason the contract's enum lists", async () => {
+      const field = (waitingRequestSchema.shape as Record<string, unknown>)["workers"];
+      expect(field).toBeDefined();
+      const element = (
+        field as { unwrap(): { element: { shape: { reason: { options: readonly string[] } } } } }
+      ).unwrap().element;
+      const listed = element.shape.reason.options;
+
+      expect(listed).toHaveLength(13);
+      for (const reason of listed) {
+        const { stdout } = await printedGateway([gatewayEntry([{ reason, workerId: "wrk_a" }])]);
+        const line = stdout.split("\n")[1] ?? "";
+        expect(line).toMatch(/^ {2}wrk_a: [a-zA-Z]/);
+        expect(line).not.toContain("-");
+      }
+    });
+  });
+
   it.each([["--devices"], ["--leases"], ["--rules"]])(
     "exits 2 with USAGE for --requests beside %s, without asking the daemon",
     async (other) => {

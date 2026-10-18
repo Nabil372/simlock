@@ -6,6 +6,9 @@ export const canServe: FilterStage = {
     if (request.physical === true) return physicalMatch(worker, request, "enrolled");
     return matchRequest(worker, request) !== undefined;
   },
+  check() {
+    return undefined;
+  },
   appliesToPhysical: true,
   kind: "filter",
 };

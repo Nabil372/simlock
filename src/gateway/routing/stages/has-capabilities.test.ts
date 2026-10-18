@@ -90,3 +90,18 @@ describe("has-capabilities", () => {
     expect(policy.select({ ...physical, requires: ["agent-device"] }, [lacking])).toBeUndefined();
   });
 });
+
+describe("has-capabilities' reason", () => {
+  it("names capability-missing for a worker lacking a required name as available, and nothing for one that lists it", () => {
+    const available = view("wrk_a", [{ name: "agent-device", state: "available" }]);
+    const off = view("wrk_b", [{ name: "agent-device", state: "off" }]);
+
+    expect(hasCapabilities.check(available, REQUIRES_AGENT_DEVICE)).toBeUndefined();
+    expect(hasCapabilities.check(off, REQUIRES_AGENT_DEVICE)).toEqual({
+      reason: "capability-missing",
+    });
+    expect(hasCapabilities.check(view("wrk_c", undefined), REQUIRES_AGENT_DEVICE)).toEqual({
+      reason: "capability-missing",
+    });
+  });
+});

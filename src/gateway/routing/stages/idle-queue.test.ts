@@ -43,3 +43,10 @@ describe("idle-queue", () => {
     expect(policy.select(PHYSICAL, [virtualWaiters])).toMatchObject({ workerId: "wrk_a" });
   });
 });
+
+describe("idle-queue's reason", () => {
+  it("names busy for a worker with its own queue, and nothing for one with none", () => {
+    expect(idleQueue.check(view({ queueDepth: 1 }), VIRTUAL)).toEqual({ reason: "busy" });
+    expect(idleQueue.check(view({ queueDepth: 0 }), VIRTUAL)).toBeUndefined();
+  });
+});

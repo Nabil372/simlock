@@ -159,3 +159,43 @@ describe("the Waiting screen", () => {
     expect(html).not.toContain("<h2");
   });
 });
+
+describe("the Waiting inspector on a gateway", () => {
+  it("shows one row per worker, labelled by the worker's name, with the reason's text", () => {
+    const queued = request({
+      workers: [
+        { reason: "drained", workerId: "wrk_1" },
+        { capacityReason: "platform-running-limit", reason: "full", workerId: "wrk_2" },
+      ],
+    });
+    const table = waitingTable(
+      [queued],
+      [
+        {
+          catalog: [],
+          connection: "connected",
+          devices: [],
+          drained: true,
+          id: "wrk_1",
+          label: "mac-mini-1",
+          lastSeenAt: NOW,
+          leases: [],
+        },
+      ],
+      NOW,
+    );
+    const page: WaitingPage = {
+      ...chooseWaiting(table.rows, undefined, table.rows),
+      count: 1,
+      meta: table.meta,
+      named: false,
+      paging: PAGING,
+      rows: table.rows,
+    };
+
+    const body = text(renderToStaticMarkup(<WaitingBody page={page} />));
+
+    expect(body).toContain("mac-mini-1 Drained");
+    expect(body).toContain("wrk_2 Full: running limit for iOS");
+  });
+});

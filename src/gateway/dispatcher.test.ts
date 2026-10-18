@@ -1449,6 +1449,7 @@ describe("GatewayDispatcher: waiting requests", () => {
     requesterId: string,
     queuePosition?: number,
     reason?: "platform-running-limit",
+    workers?: { reason: "drained"; workerId: string }[],
   ) {
     return {
       createdAt: 500,
@@ -1459,6 +1460,7 @@ describe("GatewayDispatcher: waiting requests", () => {
         ? { stage: "starting" as const }
         : { queuePosition, stage: "queued" as const }),
       ...(reason === undefined ? {} : { reason }),
+      ...(workers === undefined ? {} : { workers }),
     };
   }
 
@@ -1470,7 +1472,7 @@ describe("GatewayDispatcher: waiting requests", () => {
   const listRequests = (dispatcher: GatewayDispatcher) =>
     dispatcher.dispatch("list.get", { kind: "requests" }, session());
 
-  it("list.get requests on a gateway returns the fleet queue and each worker's waiting requests with their workerId and reason, the gateway's own entry with none", async () => {
+  it("list.get requests and status.get waiting on a gateway return the fleet queue with each worker's reason in workers, and each worker's waiting requests with their workerId and reason, a workers field a worker sends on its own entry dropped", async () => {
     const { coordinator, dispatcher, workers } = harness();
     // Two workers that can serve the request and have no free slot, whose own queues hold their
     // local agents' requests.
@@ -1490,6 +1492,7 @@ describe("GatewayDispatcher: waiting requests", () => {
             `local-${workerId}`,
             1,
             workerId === "wrk_1" ? "platform-running-limit" : undefined,
+            workerId === "wrk_2" ? [{ reason: "drained", workerId: "wrk_x" }] : undefined,
           ),
         ],
       });
@@ -1513,6 +1516,10 @@ describe("GatewayDispatcher: waiting requests", () => {
         requesterId: "fleet-agent",
         spec: SPEC,
         stage: "queued",
+        workers: [
+          { capacityReason: "platform-running-limit", reason: "full", workerId: "wrk_1" },
+          { capacityReason: "platform-running-limit", reason: "full", workerId: "wrk_2" },
+        ],
       },
       { ...onWorker("req_w1", "local-wrk_1", 1, "platform-running-limit"), workerId: "wrk_1" },
       { ...onWorker("req_w2", "local-wrk_2", 1), workerId: "wrk_2" },

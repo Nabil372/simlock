@@ -976,3 +976,59 @@ describe("waitingRequestSchema's reason", () => {
     }
   });
 });
+
+describe("waitingRequestSchema's workers", () => {
+  const reasons = [
+    "disconnected",
+    "incompatible",
+    "not-ready",
+    "unhealthy",
+    "drained",
+    "busy",
+    "no-driver",
+    "unknown-model",
+    "runtime-missing",
+    "capability-missing",
+    "full",
+    "no-free-physical",
+    "not-chosen",
+  ] as const;
+  const queued = {
+    createdAt: 1,
+    id: "req_1",
+    queuePosition: 1,
+    requesterId: "agent",
+    spec: { model: "iPhone 16", platform: "ios" },
+    stage: "queued",
+  } as const;
+  const withWorkers = (workers: unknown) => waitingRequestSchema.safeParse({ ...queued, workers });
+
+  it("accepts each of the thirteen reasons and a capacity reason with full, and keeps them", () => {
+    for (const reason of reasons) {
+      expect(withWorkers([{ reason, workerId: "wrk_a" }]).success).toBe(true);
+    }
+    expect(
+      waitingRequestSchema.parse({
+        ...queued,
+        workers: [{ capacityReason: "ram-budget", reason: "full", workerId: "wrk_a" }],
+      }),
+    ).toMatchObject({ workers: [{ capacityReason: "ram-budget", reason: "full" }] });
+  });
+
+  it("refuses an unknown reason, a capacity reason with drained, an unknown capacity reason and one workerId twice", () => {
+    expect(withWorkers([{ reason: "full", workerId: "wrk_a" }]).success).toBe(true);
+    expect(withWorkers([{ reason: "bogus", workerId: "wrk_a" }]).success).toBe(false);
+    expect(
+      withWorkers([{ capacityReason: "ram-budget", reason: "drained", workerId: "wrk_a" }]).success,
+    ).toBe(false);
+    expect(
+      withWorkers([{ capacityReason: "bogus", reason: "full", workerId: "wrk_a" }]).success,
+    ).toBe(false);
+    expect(
+      withWorkers([
+        { reason: "drained", workerId: "wrk_a" },
+        { reason: "full", workerId: "wrk_a" },
+      ]).success,
+    ).toBe(false);
+  });
+});

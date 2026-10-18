@@ -5,6 +5,9 @@ export const idleQueue: FilterStage = {
   keeps(worker) {
     return worker.queueDepth === 0;
   },
+  check() {
+    return undefined;
+  },
   appliesToPhysical: false,
   kind: "filter",
 };

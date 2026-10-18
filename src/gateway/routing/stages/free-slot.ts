@@ -13,6 +13,9 @@ export const freeSlot: FilterStage = {
     const global = capacity.global;
     return freeOrEvictableRunning(platform) > 0 && freeOrEvictableRunning(global) > 0;
   },
+  check() {
+    return undefined;
+  },
   appliesToPhysical: false,
   kind: "filter",
 };

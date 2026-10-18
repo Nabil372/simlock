@@ -4,6 +4,9 @@ export const hasCapabilities: FilterStage = {
   keeps(worker, request) {
     return listsAllAvailable(worker.capabilities, request.requires);
   },
+  check() {
+    return undefined;
+  },
   appliesToPhysical: true,
   kind: "filter",
 };

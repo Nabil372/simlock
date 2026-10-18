@@ -47,7 +47,7 @@ describe("helloRequestSchema", () => {
 });
 
 describe("PROTOCOL_VERSION_RANGE", () => {
-  it("is one above the base branch's, for a quarantined device's cause on status.get and list.get", () => {
-    expect(PROTOCOL_VERSION_RANGE).toEqual({ max: 41, min: 41 });
+  it("is one above the base branch's, for a waiting request's per-worker reasons on a gateway", () => {
+    expect(PROTOCOL_VERSION_RANGE).toEqual({ max: 42, min: 42 });
   });
 });

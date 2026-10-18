@@ -213,3 +213,85 @@ describe("why a request waits", () => {
     }
   });
 });
+
+describe("the waiting table on a gateway", () => {
+  const gatewayWorkers: NonNullable<WaitingRequest["workers"]> = [
+    { reason: "drained", workerId: "wrk_1" },
+    { capacityReason: "platform-running-limit", reason: "full", workerId: "wrk_2" },
+    { reason: "busy", workerId: "wrk_gone" },
+  ];
+
+  it("gives one Why row per worker, named by its label, else its id, else the raw id of a worker it has no view of", () => {
+    const row = rowOf({ workers: gatewayWorkers }, [
+      worker({ id: "wrk_1", label: "mac-mini-1" }),
+      worker({ id: "wrk_2" }),
+    ]);
+
+    expect(row.workers).toEqual([
+      { name: "mac-mini-1", text: "Drained" },
+      { name: "wrk_2", text: "Full: running limit for iOS" },
+      { name: "wrk_gone", text: "Busy with its own queue" },
+    ]);
+  });
+
+  it("writes the platform of the request into the running limit and the driver", () => {
+    const android = { spec: { model: "Pixel 8", platform: "android" as const } };
+
+    expect(
+      rowOf({
+        ...android,
+        workers: [
+          { capacityReason: "platform-running-limit", reason: "full", workerId: "wrk_1" },
+          { reason: "no-driver", workerId: "wrk_2" },
+        ],
+      }).workers?.map((entry) => entry.text),
+    ).toEqual(["Full: running limit for Android", "No Android support"]);
+  });
+
+  it.each([
+    ["disconnected", undefined, "Not connected"],
+    ["incompatible", undefined, "Protocol mismatch"],
+    ["not-ready", undefined, "Not ready yet"],
+    ["unhealthy", undefined, "Not running"],
+    ["drained", undefined, "Drained"],
+    ["busy", undefined, "Busy with its own queue"],
+    ["no-driver", undefined, "No iOS support"],
+    ["unknown-model", undefined, "Model not offered"],
+    ["runtime-missing", undefined, "OS not installed"],
+    ["capability-missing", undefined, "Missing capability"],
+    ["full", undefined, "Full"],
+    ["full", "device-limit", "Full: device limit"],
+    ["full", "ram-budget", "Full: RAM budget"],
+    ["full", "global-running-limit", "Full: running limit"],
+    ["no-free-physical", undefined, "Every matching device is leased or absent"],
+    ["not-chosen", undefined, "Not chosen this time"],
+  ] as const)("writes %s with capacity reason %s as '%s'", (reason, capacityReason, text) => {
+    const entry = { ...(capacityReason === undefined ? {} : { capacityReason }), reason };
+
+    expect(rowOf({ workers: [{ ...entry, workerId: "wrk_1" }] }).workers).toEqual([
+      { name: "wrk_1", text },
+    ]);
+  });
+
+  it("has a text for every gateway reason the contract's enum lists", () => {
+    const field = (waitingRequestSchema.shape as Record<string, unknown>)["workers"];
+    expect(field).toBeDefined();
+    const listed = (
+      field as { unwrap(): { element: { shape: { reason: { options: readonly string[] } } } } }
+    ).unwrap().element.shape.reason.options;
+
+    expect(listed).toHaveLength(13);
+    for (const reason of listed) {
+      const text = rowOf({ workers: [{ reason, workerId: "wrk_1" } as never] }).workers?.[0]?.text;
+      expect(text).toMatch(/^[A-Z]/);
+      expect(text).not.toContain("-");
+    }
+  });
+
+  it("keeps a single-host entry's one Why row and gives it no worker rows", () => {
+    const row = rowOf({ reason: "ram-budget" });
+
+    expect(row.why).toBe("Full: RAM budget");
+    expect(row.workers).toBeUndefined();
+  });
+});

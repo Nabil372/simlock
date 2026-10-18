@@ -10,6 +10,8 @@ import {
   ramBudget,
   type RoutableRequest,
   type RoutingStage,
+  type Explanation,
+  explainStages,
   runStages,
   takesRequests,
   warmHit,
@@ -29,11 +31,15 @@ export interface RoutingDecision {
 export interface RoutingPolicy {
   assess(request: RoutableRequest, workers: readonly WorkerView[]): Assessment;
   select(request: RoutableRequest, workers: readonly WorkerView[]): RoutingDecision | undefined;
+  explain(request: RoutableRequest, workers: readonly WorkerView[]): readonly Explanation[];
 }
 
 function composeRoutingPolicy(stages: readonly RoutingStage[]): RoutingPolicy {
   return {
     assess,
+    explain(request, workers) {
+      return explainStages(stages, request, workers);
+    },
     select(request, workers) {
       const pick = runStages(stages, request, workers);
       if (pick === undefined) return undefined;

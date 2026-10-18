@@ -101,6 +101,7 @@ describe("simlock list --requests", () => {
 
     await untilListed(gateway, [
       /^Request \S+: fleet-c, ios iPhone 16 18\.4, queued at 1, waiting \d+s$/,
+      /^ {2}worker-a: busy with its own queue$/,
       new RegExp(
         `^Request \\S+: local-b on ${workerId}, ios iPhone 16 18\\.4, queued at 1, waiting \\d+s — full: device limit$`,
       ),

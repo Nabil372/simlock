@@ -7,6 +7,9 @@ export const healthy: FilterStage = {
   keeps(worker) {
     return worker.health === "running";
   },
+  check() {
+    return undefined;
+  },
   appliesToPhysical: true,
   kind: "filter",
 };

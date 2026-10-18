@@ -61,6 +61,7 @@ export interface WaitingRow {
   readonly created: string;
   readonly queue: WaitingQueue;
   readonly why?: string;
+  readonly workers?: readonly { readonly name: string; readonly text: string }[];
 }
 
 export interface WaitingTable {
