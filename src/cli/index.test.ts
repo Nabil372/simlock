@@ -29,7 +29,12 @@ import { DaemonEndpointHost } from "../daemon/connection-host.js";
 import { DaemonServer } from "../daemon/server.js";
 import { AdminSecretManager } from "../daemon/admin-secret.js";
 import { createCredentialRoleResolver } from "../daemon/session.js";
-import { fromWireError, SimlockError, type AnySimlockError } from "../contract/index.js";
+import {
+  fromWireError,
+  SimlockError,
+  waitingRequestSchema,
+  type AnySimlockError,
+} from "../contract/index.js";
 import type {
   CatalogGetOutput,
   DeviceRecoveredPush,
@@ -6598,6 +6603,69 @@ describe("simlock list --requests", () => {
         "Request req_2: local-agent on wrk_1, ios iPhone 16 18.4, queued at 2, waiting 3s\n" +
         "Request req_3: skewed-agent on wrk_2, ios iPhone 16, queued at 1, waiting 0s\n",
     );
+  });
+
+  describe("the reason a queued request waits", () => {
+    const queued = (
+      reason: string | undefined,
+      platform: "ios" | "android" = "ios",
+    ): Record<string, unknown> => ({
+      createdAt: 0,
+      id: "req_1",
+      queuePosition: 1,
+      requesterId: "agent",
+      spec: { model: "Device", platform },
+      stage: "queued",
+      ...(reason === undefined ? {} : { reason }),
+    });
+
+    async function printed(entry: Record<string, unknown>): Promise<string> {
+      const output = outputCapture();
+      const client = fakeClient({ list: async () => [entry] as never });
+      await runCli(
+        ["list", "--requests"],
+        output.environmentWith({ connectAdmin: async () => client }),
+      );
+      return output.stdout.trimEnd();
+    }
+
+    it.each([
+      ["behind-earlier-request", "ios", "behind an earlier request"],
+      ["device-limit", "ios", "full: device limit"],
+      ["ram-budget", "ios", "full: RAM budget"],
+      ["global-running-limit", "ios", "full: running limit"],
+      ["platform-running-limit", "ios", "full: running limit for iOS"],
+      ["platform-running-limit", "android", "full: running limit for Android"],
+      ["provisioning-failed", "ios", "creating a device failed twice"],
+      ["waiting-for-device", "ios", "a matching device is starting"],
+      ["no-free-physical", "ios", "every matching device is leased or absent"],
+    ] as const)(
+      "ends the line of a queued request with %s on %s as ' — %s'",
+      async (reason, platform, text) => {
+        expect(await printed(queued(reason, platform))).toBe(
+          `Request req_1: agent, ${platform} Device, queued at 1, waiting 0s — ${text}`,
+        );
+      },
+    );
+
+    it("ends the line of a queued request with no reason as it ended before", async () => {
+      expect(await printed(queued(undefined))).toBe(
+        "Request req_1: agent, ios Device, queued at 1, waiting 0s",
+      );
+    });
+
+    it("has a text for every reason the contract's enum lists", async () => {
+      const field = (waitingRequestSchema.shape as Record<string, unknown>)["reason"];
+      expect(field).toBeDefined();
+      const listed = (field as { unwrap(): { options: readonly string[] } }).unwrap().options;
+
+      expect(listed).toHaveLength(8);
+      for (const reason of listed) {
+        const line = await printed(queued(reason));
+        expect(line).toMatch(/ — [a-z]/);
+        expect(line).not.toContain(reason);
+      }
+    });
   });
 
   it.each([["--devices"], ["--leases"], ["--rules"]])(

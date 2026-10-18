@@ -15,6 +15,7 @@ import {
   leaseRequestRecordSchema,
   platformCatalogSchema,
   statusDeviceSchema,
+  waitingRequestSchema,
   workerViewSchema,
 } from "./schemas.js";
 
@@ -932,5 +933,47 @@ describe("the worker view's load", () => {
         load: { ...load, cpu: { ...load.cpu, busyPercent: 100.5 } },
       }),
     ).toThrow();
+  });
+});
+
+describe("waitingRequestSchema's reason", () => {
+  const reasons = [
+    "behind-earlier-request",
+    "device-limit",
+    "ram-budget",
+    "global-running-limit",
+    "platform-running-limit",
+    "provisioning-failed",
+    "waiting-for-device",
+    "no-free-physical",
+  ] as const;
+  const queued = {
+    createdAt: 1,
+    id: "req_1",
+    queuePosition: 1,
+    requesterId: "agent",
+    spec: { model: "iPhone 16", platform: "ios" },
+    stage: "queued",
+  } as const;
+
+  it("accepts each of the eight reasons on a queued entry and keeps it", () => {
+    expect(waitingRequestSchema.safeParse(queued).success).toBe(true);
+    for (const reason of reasons) {
+      expect(waitingRequestSchema.parse({ ...queued, reason })).toMatchObject({ reason });
+    }
+  });
+
+  it("refuses a reason outside the eight on a queued entry", () => {
+    expect(waitingRequestSchema.safeParse({ ...queued, reason: "bogus" }).success).toBe(false);
+  });
+
+  it("refuses any reason on a starting entry", () => {
+    const { queuePosition: _position, ...rest } = queued;
+    const starting = { ...rest, stage: "starting" } as const;
+
+    expect(waitingRequestSchema.safeParse(starting).success).toBe(true);
+    for (const reason of reasons) {
+      expect(waitingRequestSchema.safeParse({ ...starting, reason }).success).toBe(false);
+    }
   });
 });

@@ -1444,7 +1444,7 @@ describe("GatewayDispatcher: waiting requests", () => {
   const SPEC = { model: "iPhone 17", platform: "ios" as const };
 
   /** A request a worker lists in its own `status.get`'s `waiting`. */
-  function onWorker(id: string, requesterId: string, queuePosition?: number) {
+  function onWorker(id: string, requesterId: string, queuePosition?: number, reason?: string) {
     return {
       createdAt: 500,
       id,
@@ -1453,6 +1453,7 @@ describe("GatewayDispatcher: waiting requests", () => {
       ...(queuePosition === undefined
         ? { stage: "starting" as const }
         : { queuePosition, stage: "queued" as const }),
+      ...(reason === undefined ? {} : { reason }),
     };
   }
 
@@ -1464,7 +1465,7 @@ describe("GatewayDispatcher: waiting requests", () => {
   const listRequests = (dispatcher: GatewayDispatcher) =>
     dispatcher.dispatch("list.get", { kind: "requests" }, session());
 
-  it("list.get requests on a gateway returns the fleet queue and each worker's waiting requests with their workerId", async () => {
+  it("list.get requests on a gateway returns the fleet queue and each worker's waiting requests with their workerId and reason, the gateway's own entry with none", async () => {
     const { coordinator, dispatcher, workers } = harness();
     // Two workers that can serve the request and have no free slot, whose own queues hold their
     // local agents' requests.
@@ -1478,7 +1479,14 @@ describe("GatewayDispatcher: waiting requests", () => {
         capacity: { ...capacity, ios: { ...capacity.ios, maxRunning: 0 } },
         catalog: catalogFixture([{ models: ["iPhone 17"], platform: "ios", runtimes: ["26.0"] }])
           .platforms,
-        waiting: [onWorker(requestId, `local-${workerId}`, 1)],
+        waiting: [
+          onWorker(
+            requestId,
+            `local-${workerId}`,
+            1,
+            workerId === "wrk_1" ? "platform-running-limit" : undefined,
+          ),
+        ],
       });
     }
     // Both are busy, so the fleet request waits in the gateway's own queue.
@@ -1501,7 +1509,7 @@ describe("GatewayDispatcher: waiting requests", () => {
         spec: SPEC,
         stage: "queued",
       },
-      { ...onWorker("req_w1", "local-wrk_1", 1), workerId: "wrk_1" },
+      { ...onWorker("req_w1", "local-wrk_1", 1, "platform-running-limit"), workerId: "wrk_1" },
       { ...onWorker("req_w2", "local-wrk_2", 1), workerId: "wrk_2" },
     ]);
     expect(JSON.stringify(listed)).not.toContain("key-1");

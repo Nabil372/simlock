@@ -4292,7 +4292,7 @@ describe("FleetLeaseCoordinator routes a physical request by the enrolled device
     expect(leaseRequests(only.b)).toEqual([]);
   });
 
-  it("a worker that answers a physical request NO_CAPACITY is not sent it again by a refresh that leaves its view unchanged, and the request waits meanwhile", async () => {
+  it("a worker that answers a physical request NO_CAPACITY is not sent it again by a refresh that leaves its view unchanged, and the request waits meanwhile with no reason of its own", async () => {
     const { client, clock, coordinator, workers } = oneWorker([iphone()]);
 
     const waiting = await start(coordinator, physicalRequest());
@@ -4309,6 +4309,7 @@ describe("FleetLeaseCoordinator routes a physical request by the enrolled device
     expect(coordinator.waitingRequests()).toEqual([
       expect.objectContaining({ queuePosition: 1, stage: "queued" }),
     ]);
+    expect(coordinator.waitingRequests()[0]).not.toHaveProperty("reason");
   });
 
   it("after a NO_CAPACITY refusal, a refresh in which the device's presence turns not present sends the request nowhere, and the next refresh in which it turns present sends it to that worker again", async () => {

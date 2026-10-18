@@ -85,6 +85,21 @@ describe("the Waiting screen", () => {
     expect(text(html)).toContain("Created 2026-10-02 11:58:45 UTC");
   });
 
+  it("shows a Why fact after Queue with the reason's text, and none for a request that is starting", () => {
+    const queued = request({
+      reason: "platform-running-limit",
+    } as unknown as Partial<WaitingRequest>);
+    const starting = request({ stage: "starting" });
+    delete (starting as { queuePosition?: number }).queuePosition;
+
+    const withReason = text(renderToStaticMarkup(<WaitingBody page={pageOf([queued])} />));
+    const without = text(renderToStaticMarkup(<WaitingBody page={pageOf([starting])} />));
+
+    expect(withReason).toContain("Queue the gateway&#x27;s queue Why Full: running limit for iOS");
+    expect(without).toContain("Stage starting");
+    expect(without).not.toContain("Why");
+  });
+
   it("links the worker whose queue holds the request, names the gateway's queue when none does, and the raw id of a worker it cannot see", () => {
     const onWorker = renderToStaticMarkup(
       <WaitingBody

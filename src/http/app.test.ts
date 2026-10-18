@@ -650,6 +650,28 @@ describe("POST /v1/lease-requests", () => {
     expect(response.headers.get("Retry-After")).toBeTruthy();
   });
 
+  it("answers a noWait request refused at the running limit with 503 and the capacity reason in the error body", async () => {
+    const { app, dispatcher } = buildHarness();
+    const responsePromise = postLeaseRequest(app, { ...defaultBody, noWait: true });
+    const call = await waitForDispatch(dispatcher, "lease.request");
+    call.reject(
+      new DispatchError("NO_CAPACITY", "No device capacity is currently available", {
+        capacityReason: "platform-running-limit",
+      }),
+    );
+    const response = await responsePromise;
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBeTruthy();
+    expect(await response.json()).toEqual({
+      error: {
+        capacityReason: "platform-running-limit",
+        code: "NO_CAPACITY",
+        message: "No device capacity is currently available",
+      },
+    });
+  });
+
   it("replays an identical Idempotency-Key without a second dispatch call", async () => {
     const { app, dispatcher } = buildHarness();
     const { id: firstId } = await createLeaseRequest(app, dispatcher, defaultBody, {

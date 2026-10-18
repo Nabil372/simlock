@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { waitingRequestSchema } from "../../../src/contract/index";
 import {
   chooseWaiting,
   requestedDevice,
@@ -170,5 +171,46 @@ describe("choosing a waiting request", () => {
 
   it("calls a named request that is no longer waiting gone, and chooses nothing", () => {
     expect(chooseWaiting(rows, "granted", rows)).toEqual({ chosen: undefined, gone: true });
+  });
+});
+
+describe("why a request waits", () => {
+  const withReason = (reason: string, platform: "ios" | "android" = "ios") =>
+    rowOf({
+      reason,
+      spec: { model: "Device", platform },
+    } as unknown as Partial<WaitingRequest>);
+  const whyOf = (row: WaitingRow) => (row as { why?: string }).why;
+
+  it.each([
+    ["behind-earlier-request", "ios", "Behind an earlier request"],
+    ["device-limit", "ios", "Full: device limit"],
+    ["ram-budget", "ios", "Full: RAM budget"],
+    ["global-running-limit", "ios", "Full: running limit"],
+    ["platform-running-limit", "ios", "Full: running limit for iOS"],
+    ["platform-running-limit", "android", "Full: running limit for Android"],
+    ["provisioning-failed", "ios", "Creating a device failed twice"],
+    ["waiting-for-device", "ios", "A matching device is starting"],
+    ["no-free-physical", "ios", "Every matching device is leased or absent"],
+  ] as const)("is the text for %s on %s: %s", (reason, platform, text) => {
+    expect(whyOf(withReason(reason, platform))).toBe(text);
+  });
+
+  it("is the raw word for a reason a newer daemon sends, and absent for a request with no reason", () => {
+    expect(whyOf(withReason("hibernating"))).toBe("hibernating");
+    expect(whyOf(rowOf())).toBeUndefined();
+  });
+
+  it("has a text for every reason the contract's enum lists", () => {
+    const field = (waitingRequestSchema.shape as Record<string, unknown>)["reason"];
+    expect(field).toBeDefined();
+    const listed = (field as { unwrap(): { options: readonly string[] } }).unwrap().options;
+
+    expect(listed).toHaveLength(8);
+    for (const reason of listed) {
+      const why = whyOf(withReason(reason));
+      expect(why).toBeDefined();
+      expect(why).not.toBe(reason);
+    }
   });
 });

@@ -466,7 +466,7 @@ describe("createLeasing with physical devices", () => {
     expect(await outcome(next)).toMatchObject({ device: { id: device.id } });
   });
 
-  it("releases the grant claim, leaves the device ready and keeps the waiter queued when the lease write of a physical grant throws", async () => {
+  it("releases the grant claim, leaves the device ready, keeps the waiter queued and says no-free-physical when the lease write of a physical grant throws", async () => {
     const harness = await createHarness();
     const device = await enrollIphone(harness, "UDID-A");
     const createLease = vi
@@ -482,6 +482,9 @@ describe("createLeasing with physical devices", () => {
     expect(harness.engine.core.claims.isClaimed(device.id)).toBe(false);
     expect(stateOf(harness, device)).toBe("ready");
     expect(harness.registry.snapshot.leases).toEqual([]);
+    expect(harness.engine.waitingRequests()).toMatchObject([
+      { reason: "no-free-physical", requesterId: "agent", stage: "queued" },
+    ]);
   });
 
   it("a physical lease counts toward lease.maxPerRequester like a virtual one", async () => {
@@ -579,13 +582,18 @@ describe("createLeasing with a physical and a virtual line", () => {
     ]).toEqual([1, 2, 1, 2]);
   });
 
-  it("lists a waiting physical request with physical true and a waiting virtual one without it", async () => {
+  it("lists a waiting physical request with physical true and a waiting virtual one without it, each with why it waits", async () => {
     const { harness } = await queuedLines();
 
     expect(harness.engine.waitingRequests().map((waiting) => waiting.spec)).toEqual([
       { model: "iPhone 15 Pro", physical: true, platform: "ios" },
       { model: "iPhone 15 Pro", physical: true, platform: "ios" },
       { model: "iPhone 16", osVersion: "26.5", platform: "ios" },
+    ]);
+    expect(harness.engine.waitingRequests()).toMatchObject([
+      { requesterId: "physical-1", reason: "no-free-physical", stage: "queued" },
+      { requesterId: "physical-2", reason: "no-free-physical", stage: "queued" },
+      { requesterId: "virtual-1", reason: "device-limit", stage: "queued" },
     ]);
   });
 });
