@@ -288,6 +288,12 @@ describe("the waiting table on a gateway", () => {
     }
   });
 
+  it("shows a reason it has no text for as the word the daemon sent", () => {
+    const row = rowOf({ workers: [{ reason: "from-the-future", workerId: "wrk_1" } as never] });
+
+    expect(row.workers?.[0]?.text).toBe("from-the-future");
+  });
+
   it("keeps a single-host entry's one Why row and gives it no worker rows", () => {
     const row = rowOf({ reason: "ram-budget" });
 

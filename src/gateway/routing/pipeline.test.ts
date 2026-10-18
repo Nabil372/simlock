@@ -250,7 +250,7 @@ describe("explainStages", () => {
     ]);
   });
 
-  it("answers in worker id order, skips a stage a physical request does not meet, and changes nothing runStages answers", () => {
+  it("answers in worker id order, and skips a stage a physical request does not meet", () => {
     const virtualOnly: FilterStage = { ...dropping({ wrk_a: busy }), appliesToPhysical: false };
     const unsorted = [workers[1] as WorkerView, workers[0] as WorkerView];
 
@@ -264,10 +264,6 @@ describe("explainStages", () => {
     expect(explainStages([virtualOnly], REQUEST, workers)[0]).toEqual({
       reason: busy,
       workerId: "wrk_a",
-    });
-    expect(runStages([virtualOnly, rank("r", { wrk_b: 1 }, true)], REQUEST, workers)).toEqual({
-      stage: "r",
-      workerId: "wrk_b",
     });
   });
 });

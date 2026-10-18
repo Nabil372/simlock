@@ -4962,6 +4962,23 @@ describe("FleetLeaseCoordinator lists why each worker cannot take a waiting requ
 
       expect(state.state).toBe("pending");
       expect(coordinator.waitingRequests()).toEqual([expect.objectContaining({ stage: "queued" })]);
+      expect(listed(coordinator)).toEqual([
+        { reason: "not-chosen", workerId: "wrk_a" },
+        { reason: "full", workerId: "wrk_b" },
+      ]);
+    });
+
+    it("leaves the request queued when the worker that is only full refused first and the one asked after a view change failed to provision", async () => {
+      const { clients, coordinator, workers } = fleet(["wrk_a", "wrk_b"]);
+      clients["wrk_a"]?.requestLeaseQueue.push(noCapacity());
+      clients["wrk_b"]?.requestLeaseQueue.push(provisionFailed("worker b: boom"));
+      const { state } = await ask(coordinator);
+
+      workers.refresh("wrk_b", { capacity: roomierIos() });
+      await tick();
+
+      expect(state.state).toBe("pending");
+      expect(coordinator.waitingRequests()).toEqual([expect.objectContaining({ stage: "queued" })]);
     });
   });
 });

@@ -843,8 +843,10 @@ export class FleetLeaseCoordinator {
     zero: WorkerReason | undefined,
   ): WorkerReason | undefined {
     if (!this.#refused(waiter, view)) return undefined;
-    const capacityReason =
-      this.#refusals.get(waiter)?.get(view.id)?.capacityReason ?? zero?.capacityReason;
+    const refusal = this.#refusals.get(waiter)?.get(view.id);
+    // why: a failed provision is no capacity refusal; the worker lists as one that passed every check.
+    if (refusal?.provisionFailure !== undefined) return undefined;
+    const capacityReason = refusal?.capacityReason ?? zero?.capacityReason;
     return capacityReason === undefined ? { reason: "full" } : { capacityReason, reason: "full" };
   }
 
