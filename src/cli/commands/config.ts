@@ -75,7 +75,6 @@ function dropRetiredEventLogKey(config: Record<string, unknown>): boolean {
     return false;
   }
   delete (eventLog as Record<string, unknown>).rotateBytes;
-  if (Object.keys(eventLog).length === 0) delete config.eventLog;
   return true;
 }
 
