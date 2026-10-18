@@ -40,6 +40,7 @@ import {
   requestedDevice,
   type OperationName,
   type tokenRecordSchema,
+  withoutQuarantineMessages,
 } from "../contract/index.js";
 import {
   DispatchError,
@@ -233,7 +234,7 @@ export class GatewayDispatcher {
     });
   }
 
-  #statusGet: Handler<"status.get"> = () => {
+  #statusGet: Handler<"status.get"> = (_input, session) => {
     const consoleUrl = consoleUrlField(this.options.config.http);
     const load = this.options.load?.();
     const loadField = load === undefined ? {} : { load };
@@ -253,7 +254,8 @@ export class GatewayDispatcher {
       waiting: [...this.options.coordinator.waitingRequests()],
       leaseIndex: this.options.leaseIndex,
     });
-    return { ...status, daemon: { ...status.daemon, ...consoleUrl } };
+    const answer = { ...status, daemon: { ...status.daemon, ...consoleUrl } };
+    return session.role === "agent" ? withoutQuarantineMessages(answer) : answer;
   };
 
   #catalogGet: Handler<"catalog.get"> = (input) =>

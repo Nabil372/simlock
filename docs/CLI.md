@@ -1414,6 +1414,16 @@ threshold (see `simlock doctor` below): it stays visible in `status` and
 the background (a physical device included, which is unenrolled, never destroyed, when its
 retries run out), and is never handed to a new requester.
 
+A quarantined device says what failed. `status` ends its marker with `;` and the
+cause, for example `(purge retry 0, next retry at 1760619150000; purge failed:
+DriverCrashError: simctl erase exited 164)`. The cause is `purge failed`,
+`shutdown failed` or `delete failed` followed by the tool's error message (cut to
+300 characters), or `stalled while provisioning` or `stalled while reclaiming`,
+which has no message. `status --json` and `list --devices` carry it as
+`quarantineCause` (`kind`, and `stalledState` or `message`). A device quarantined
+before the cause was recorded shows none. The cause goes when the device leaves
+quarantine. A caller with an agent role sees the kind but not the message.
+
 A device currently `provisioning` or `reclaiming` carries a derived
 `transitionAgeMs` — how long it has been in that state — visible in `status`
 and `list --devices` well before it crosses the threshold that would make

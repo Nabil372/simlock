@@ -656,7 +656,7 @@ describe("Registry", () => {
     });
     await registry.beginRelease(lease.id);
 
-    const quarantined = await registry.enterQuarantine(device.id, 5_000);
+    const quarantined = await registry.enterQuarantine(device.id, 5_000, { kind: "purge-failed" });
 
     expect(quarantined).toMatchObject({
       quarantineAttempts: 0,
@@ -664,7 +664,9 @@ describe("Registry", () => {
       quarantinedAt: 1_000,
       state: "quarantined",
     });
-    await expect(registry.enterQuarantine(device.id, 6_000)).rejects.toThrow(RegistryEventError);
+    await expect(
+      registry.enterQuarantine(device.id, 6_000, { kind: "purge-failed" }),
+    ).rejects.toThrow(RegistryEventError);
   });
 
   it("enters quarantine from provisioning, its stalled-transition entry point", async () => {
@@ -683,7 +685,7 @@ describe("Registry", () => {
       spec,
     });
 
-    const quarantined = await registry.enterQuarantine(device.id, 5_000);
+    const quarantined = await registry.enterQuarantine(device.id, 5_000, { kind: "purge-failed" });
 
     expect(quarantined).toMatchObject({
       quarantineAttempts: 0,
@@ -726,7 +728,7 @@ describe("Registry", () => {
     // Every path into `shutdown` stamps it, the reclaim's own included.
     expect(shutDown.shutdownAt).toBe(8_000);
 
-    const quarantined = await registry.enterQuarantine(device.id, 5_000);
+    const quarantined = await registry.enterQuarantine(device.id, 5_000, { kind: "purge-failed" });
 
     expect(quarantined).toMatchObject({ quarantineNextRetryAt: 5_000, state: "quarantined" });
   });
@@ -761,7 +763,9 @@ describe("Registry", () => {
       ttlDeadline: 2_000,
     });
 
-    await expect(registry.enterQuarantine(device.id, 5_000)).rejects.toThrow(RegistryEventError);
+    await expect(
+      registry.enterQuarantine(device.id, 5_000, { kind: "purge-failed" }),
+    ).rejects.toThrow(RegistryEventError);
     expect(registry.snapshot.devices[0]?.state).toBe("leased");
   });
 
@@ -792,7 +796,7 @@ describe("Registry", () => {
       ttlDeadline: 2_000,
     });
     await registry.beginRelease(lease.id);
-    await registry.enterQuarantine(device.id, 5_000);
+    await registry.enterQuarantine(device.id, 5_000, { kind: "purge-failed" });
 
     const retried = await registry.recordQuarantineRetryFailure(device.id, 1, 15_000);
 
@@ -833,7 +837,7 @@ describe("Registry", () => {
       ttlDeadline: 2_000,
     });
     await registry.beginRelease(lease.id);
-    await registry.enterQuarantine(device.id, 5_000);
+    await registry.enterQuarantine(device.id, 5_000, { kind: "purge-failed" });
 
     const recovered = await registry.recoverFromQuarantine(device.id, "ready");
 
@@ -885,7 +889,7 @@ describe("Registry", () => {
       ttlDeadline: 2_000,
     });
     await registry.beginRelease(lease.id);
-    await registry.enterQuarantine(device.id, 5_000);
+    await registry.enterQuarantine(device.id, 5_000, { kind: "purge-failed" });
 
     const deleted = await registry.deleteQuarantined(device.id, "lease-end");
 
@@ -2768,7 +2772,7 @@ describe("Registry: device.deleted carries physical, and enrollment writes (ADR 
       ttlMs: 8_000,
     });
     await registry.beginRelease(lease.id);
-    await registry.enterQuarantine(quarantined.id, 5_000);
+    await registry.enterQuarantine(quarantined.id, 5_000, { kind: "purge-failed" });
     await registry.deleteQuarantined(quarantined.id, "lease-end");
     const missing = await readyVirtual(registry, "d2");
     await registry.markDeviceMissing(missing.id, "doctor");
@@ -3539,6 +3543,7 @@ describe("Registry: quarantineCause", () => {
       }
     }
     const physical = await stateFile({
+      devices: [],
       physicalDevices: [{ ...physicalRecord, quarantineCause: purgeCause, state: "ready" }],
     });
     const registry = await physical.load();
@@ -3575,7 +3580,10 @@ describe("Registry: quarantineCause", () => {
     for (const [why, cause] of bad) {
       const { load } = await stateFile({ devices: [quarantinedVirtual(cause)] });
       await expect(load(), why).rejects.toThrow(invalid);
-      const physical = await stateFile({ physicalDevices: [quarantinedPhysical(cause)] });
+      const physical = await stateFile({
+        devices: [],
+        physicalDevices: [quarantinedPhysical(cause)],
+      });
       await expect(physical.load(), `${why} (physical)`).rejects.toThrow(invalid);
     }
   });
@@ -3643,6 +3651,7 @@ describe("Registry: quarantineCause", () => {
       ["unenrollPhysical", (r: Registry) => r.unenrollPhysical("dev_physical")],
     ])("%s", async (_name, exit) => {
       const { load, written } = await stateFile({
+        devices: [],
         physicalDevices: [quarantinedPhysical(purgeCause)],
       });
       const registry = await load();

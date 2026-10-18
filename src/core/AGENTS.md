@@ -140,11 +140,11 @@ Events: → `absent` `device.absence-detected`; `absent` → `reclaiming` `devic
 
 ## Known gaps
 
+- **A rollback keeps a stale quarantine cause.** An older daemon keeps `quarantineCause` unknown; re-entry under it shows the old one.
 - **One download at a time per platform.** A second missing runtime waits, spending its own
   `downloads.timeoutMs`. A bounded model with no `--os` asks Xcode for a bare major; pass `--os`.
 - **`component remove` sees only this instance.** Another instance's devices, never-used default-set
   simulators and foreign devices made after the driver's count are not counted.
-- **An older Simlock cannot end a physical lease.** It skips `physicalDevices`; `beginRelease`
-  throws `UnknownDeviceError`. Release physical leases before a rollback.
-- **Two instances can enrol one device.** Each release uninstalls apps not on its own list.
-  Enrol a device in one instance only.
+- **An older Simlock cannot end a physical lease.** It skips `physicalDevices`; `beginRelease` throws
+  `UnknownDeviceError`. Release physical leases before a rollback.
+- **Two instances can enrol one device.** Each release uninstalls apps not on its own list; enrol in one.

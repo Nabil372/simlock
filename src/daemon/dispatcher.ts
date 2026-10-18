@@ -60,6 +60,7 @@ import {
   WORKER_VIEW_CATALOG_EVENTS,
   WORKER_VIEW_REFRESH_INTERVAL_MS,
   workerViewFields,
+  withoutQuarantineMessages,
 } from "../contract/index.js";
 import type { TokenStore } from "../http/token-store.js";
 import {
@@ -352,7 +353,7 @@ export class Dispatcher {
     platforms: (await this.options.catalog.listCatalog(input.platform)).map(fitPlatformCatalog),
   });
 
-  #statusGet: Handler<"status.get"> = async () => {
+  #statusGet: Handler<"status.get"> = async (_input, session) => {
     const daemon = {
       health: this.options.health(),
       mode: this.options.config.mode,
@@ -366,7 +367,7 @@ export class Dispatcher {
     if (daemon.health === "starting") return { daemon, host, ...loadField };
     const capabilities = await this.#readCapabilities();
     const snapshot = this.options.registry.snapshot;
-    return {
+    const answer = {
       ...(capabilities === undefined ? {} : { capabilities }),
       capacity: buildCapacityFigures(snapshot.virtualDevices, this.options.capacity),
       devices: snapshot.devices.map((device) => this.#decorateDevice(device)),
@@ -380,6 +381,7 @@ export class Dispatcher {
       waiting: [...this.options.queue.waitingRequests()],
       warmPool: this.options.warmPool.figures(),
     };
+    return session.role === "agent" ? withoutQuarantineMessages(answer) : answer;
   };
 
   // why: a module can never make status.get fail or hang, which would cut the worker off from its gateway.

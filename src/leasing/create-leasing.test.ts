@@ -1464,7 +1464,9 @@ describe("createLeasing RAM budget by mode", () => {
       provisionDuration: 0,
       spec: { ...slimRequest, physical: false },
     });
-    const quarantined = await harness.registry.enterQuarantine(registered.id, 60_000);
+    const quarantined = await harness.registry.enterQuarantine(registered.id, 60_000, {
+      kind: "purge-failed",
+    });
 
     expect(quarantined.state).toBe("quarantined");
     expect(harness.engine.ramBudget?.usedBytes).toBe(ramBudget.iosBytesPerDevice);

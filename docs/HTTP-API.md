@@ -288,6 +288,12 @@ past its threshold with nothing working on it also carries
 `stalledTransition.*` in [CONFIGURATION.md](CONFIGURATION.md)). Every other
 device has no `stalled` field, and an older daemon sends none.
 
+A `quarantined` device in `devices` carries **`quarantineCause`**: `kind` (`purge-failed`,
+`shutdown-failed`, `delete-failed` or `stalled`), `stalledState` (`provisioning` or
+`reclaiming`) on `stalled` alone, and `message`, the tool's error text of at most 300
+characters, on the other three. An agent token gets the cause without `message`; an operator
+token gets it whole. A device quarantined before the cause was recorded has none.
+
 Every device in `devices` carries **`servesDefaultMode`**, a boolean: whether
 its pool is the one a lease request with no `mode` draws from on this daemon
 (the default mode of the device's platform). `mode` says what the device is;

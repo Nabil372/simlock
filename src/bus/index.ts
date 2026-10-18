@@ -155,6 +155,10 @@ export interface EventMap {
     readonly deviceId: string;
     readonly maxRetries: number;
     readonly nextRetryAt: number;
+    readonly platform: "ios" | "android";
+    readonly kind: "purge-failed" | "shutdown-failed" | "delete-failed" | "stalled";
+    readonly stalledState?: "provisioning" | "reclaiming" | undefined;
+    readonly message?: string | undefined;
   };
   "device.absence-detected": {
     readonly deviceId: string;

@@ -143,7 +143,9 @@ async function createHarness(
     readonly logger?: Logger;
     readonly others?: readonly VirtualDevice[];
     readonly physicalDeviceReady?: (deviceId: string) => void;
-    readonly target?: Pick<VirtualDevice, "lastLeaseEndedAt" | "leaseIdentity">;
+    readonly target?: Pick<VirtualDevice, "lastLeaseEndedAt" | "leaseIdentity"> & {
+      readonly state?: VirtualDevice["state"];
+    };
   } = {},
 ) {
   const clock = options.clock ?? new FakeClock(1_000);
@@ -183,6 +185,7 @@ describe("QuarantineCoordinator", () => {
 
     await harness.coordinator.enter({
       attemptedStrategy: "wipe",
+      kind: "purge-failed",
       deviceId: harness.target.id,
       duration: 40,
       error: "Error: purge exploded",
@@ -211,9 +214,13 @@ describe("QuarantineCoordinator", () => {
   it("hands the driver's retried reclaim a device marked virtual", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
-    const harness = await createHarness({ clock, driver });
+    const harness = await createHarness({
+      clock,
+      driver,
+      target: { state: "provisioning" as const },
+    });
 
-    await harness.coordinator.enterFromStalledTransition(harness.target.id);
+    await harness.coordinator.enterFromStalledTransition(harness.target.id, "provisioning");
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
 
@@ -227,9 +234,14 @@ describe("QuarantineCoordinator", () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
     const physicalDeviceReady = vi.fn();
-    const harness = await createHarness({ clock, driver, physicalDeviceReady });
+    const harness = await createHarness({
+      clock,
+      driver,
+      physicalDeviceReady,
+      target: { state: "provisioning" as const },
+    });
 
-    await harness.coordinator.enterFromStalledTransition(harness.target.id);
+    await harness.coordinator.enterFromStalledTransition(harness.target.id, "provisioning");
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
 
@@ -238,9 +250,9 @@ describe("QuarantineCoordinator", () => {
   });
 
   it("commits stalled-transition quarantine entry, emits only quarantined (no device.purge-failed), and does not wake availability", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ target: { state: "provisioning" as const } });
 
-    await harness.coordinator.enterFromStalledTransition(harness.target.id);
+    await harness.coordinator.enterFromStalledTransition(harness.target.id, "provisioning");
 
     expect(harness.registry.snapshot.virtualDevices[0]).toMatchObject({
       quarantineAttempts: 0,
@@ -257,9 +269,13 @@ describe("QuarantineCoordinator", () => {
   it("retries and gives up on a stalled-transition entry exactly like a purge-failure one", async () => {
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
-    const harness = await createHarness({ clock, driver });
+    const harness = await createHarness({
+      clock,
+      driver,
+      target: { state: "provisioning" as const },
+    });
 
-    await harness.coordinator.enterFromStalledTransition(harness.target.id);
+    await harness.coordinator.enterFromStalledTransition(harness.target.id, "provisioning");
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
 
@@ -277,6 +293,7 @@ describe("QuarantineCoordinator", () => {
     const harness = await createHarness({ clock, driver });
     await harness.coordinator.enter({
       attemptedStrategy: "wipe",
+      kind: "purge-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -303,6 +320,7 @@ describe("QuarantineCoordinator", () => {
     const harness = await createHarness();
     await harness.coordinator.enter({
       attemptedStrategy: "wipe",
+      kind: "purge-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -326,6 +344,7 @@ describe("QuarantineCoordinator", () => {
     const harness = await createHarness({ clock, config: retryConfig, driver });
     await harness.coordinator.enter({
       attemptedStrategy: "wipe",
+      kind: "purge-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -367,6 +386,7 @@ describe("QuarantineCoordinator", () => {
     const harness = await createHarness({ clock, config: retryConfig, driver });
     await harness.coordinator.enter({
       attemptedStrategy: "wipe",
+      kind: "purge-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -407,6 +427,7 @@ describe("QuarantineCoordinator", () => {
     });
     await harness.coordinator.enter({
       attemptedStrategy: "delete",
+      kind: "delete-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "Error: delete exploded",
@@ -440,6 +461,7 @@ describe("QuarantineCoordinator", () => {
     });
     await harness.coordinator.enter({
       attemptedStrategy: "delete",
+      kind: "delete-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -468,6 +490,7 @@ describe("QuarantineCoordinator", () => {
     });
     await harness.coordinator.enter({
       attemptedStrategy: "wipe",
+      kind: "purge-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -503,6 +526,7 @@ describe("QuarantineCoordinator", () => {
     });
     await harness.coordinator.enter({
       attemptedStrategy: "wipe",
+      kind: "purge-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -540,6 +564,7 @@ describe("QuarantineCoordinator", () => {
     });
     await harness.coordinator.enter({
       attemptedStrategy: "delete",
+      kind: "delete-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -566,6 +591,7 @@ describe("QuarantineCoordinator", () => {
     const harness = await createHarness();
     await harness.coordinator.enter({
       attemptedStrategy: "wipe",
+      kind: "purge-failed",
       deviceId: harness.target.id,
       duration: 0,
       error: "boom",
@@ -744,7 +770,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
   it("commits quarantined for a stalled physical device and arms a retry that reclaims it when nextRetryAt falls due", async () => {
     const harness = await physicalHarness("reclaiming");
 
-    await harness.coordinator.enterFromStalledTransition("dev_physical");
+    await harness.coordinator.enterFromStalledTransition("dev_physical", "reclaiming");
     expect(harness.driverCalls).not.toHaveBeenCalled();
     harness.clock.advance(retryConfig.retryBackoffMs);
     await flush();
@@ -763,6 +789,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
 
     await harness.coordinator.enter({
       attemptedStrategy: "uninstall",
+      kind: "purge-failed",
       deviceId: "dev_physical",
       duration: 5,
       error: "Error: uninstall failed",
@@ -834,8 +861,12 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
 describe("QuarantineCoordinator retry claim (ADR 0022 §2)", () => {
   async function stalled(options: Parameters<typeof createHarness>[0] = {}) {
     const clock = options.clock ?? new FakeClock(1_000);
-    const harness = await createHarness({ ...options, clock });
-    await harness.coordinator.enterFromStalledTransition(harness.target.id);
+    const harness = await createHarness({
+      ...options,
+      clock,
+      target: { ...options.target, state: "provisioning" as const },
+    });
+    await harness.coordinator.enterFromStalledTransition(harness.target.id, "provisioning");
     return harness;
   }
 
@@ -1022,7 +1053,7 @@ describe("QuarantineCoordinator and enrollment of a quarantined physical device 
       ttlMs: 60_000,
     });
     await harness.registry.beginRelease(lease.id);
-    await harness.core.quarantine.enterFromStalledTransition(device.id);
+    await harness.core.quarantine.enterFromStalledTransition(device.id, "reclaiming");
     return device.id;
   }
 
@@ -1197,7 +1228,7 @@ describe("QuarantineCoordinator retry of a physical device that is not present (
       ttlMs: 60_000,
     });
     await harness.registry.beginRelease(lease.id);
-    await harness.core.quarantine.enterFromStalledTransition(device.id);
+    await harness.core.quarantine.enterFromStalledTransition(device.id, "reclaiming");
     return device.id;
   }
 
@@ -1240,8 +1271,8 @@ describe("QuarantineCoordinator retry of a physical device that is not present (
 
     const clock = new FakeClock(1_000);
     const driver = new FakeDriver({ clock, platform: "ios", reclaimResult: "ready" });
-    const virtual = await createHarness({ clock, driver });
-    await virtual.coordinator.enterFromStalledTransition(virtual.target.id);
+    const virtual = await createHarness({ clock, driver, target: { state: "reclaiming" } });
+    await virtual.coordinator.enterFromStalledTransition(virtual.target.id, "reclaiming");
     virtual.clock.advance(retryConfig.retryBackoffMs);
     await flush();
     expect(virtual.driver.calls.filter((call) => call.operation === "reclaim")).toHaveLength(1);

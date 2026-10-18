@@ -207,8 +207,8 @@ export type DeviceState = VirtualState | PhysicalState;
 
 export interface QuarantineCause {
   readonly kind: "purge-failed" | "shutdown-failed" | "delete-failed" | "stalled";
-  readonly stalledState?: "provisioning" | "reclaiming";
-  readonly message?: string;
+  readonly stalledState?: "provisioning" | "reclaiming" | undefined;
+  readonly message?: string | undefined;
 }
 
 interface DeviceRecordFields {

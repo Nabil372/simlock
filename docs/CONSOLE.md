@@ -334,7 +334,7 @@ reconnects or is removed. The console only shows these; it does not fix them.
 | `incompatible` | The worker and the gateway have no protocol version in common. Its page says which versions each speaks. |
 | `drained` | The worker gets no new leases (`simlock worker drain`). |
 | `over RAM budget` | The devices on the worker use more RAM than its budget allows, as `simlock status` reports with `(over limit)`. |
-| `quarantined` | A device Simlock could not clean up. It retries the cleanup in the background and leases the device to no one meanwhile. |
+| `quarantined` | A device Simlock could not clean up; its `Cause` says what failed. It retries the cleanup in the background and leases the device to no one meanwhile. |
 | `stalled` | A device stuck `provisioning` or `reclaiming` for longer than it should take, with nothing working on it. `simlock doctor` reports the same devices. |
 
 The first three come from a gateway only: a single host has no gateway to lose
@@ -343,7 +343,9 @@ too.
 
 Select an item to see the facts that matter for it, such as when a
 disconnected worker was last seen or how much RAM a worker uses of its budget,
-and the events of the last hour about that worker or device. **Open worker**
+and the events of the last hour about that worker or device. A quarantined
+device shows its `Cause`: `Purge failed`, `Shutdown failed` or `Delete failed` with the
+tool's error message, or `Stalled while provisioning` or `Stalled while reclaiming`. **Open worker**
 opens the worker's page.
 
 Each item shows within about a second of the daemon reporting it. A stalled

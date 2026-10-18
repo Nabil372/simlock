@@ -242,5 +242,16 @@ function quarantineMarker(device: NonNullable<StatusGetOutput["devices"]>[number
     device.quarantineNextRetryAt === undefined
       ? ""
       : `, next retry at ${device.quarantineNextRetryAt}`;
-  return `purge retry ${attempts}${nextRetryAt}`;
+  const cause = device.quarantineCause;
+  return `purge retry ${attempts}${nextRetryAt}${cause === undefined ? "" : `; ${quarantineCauseText(cause)}`}`;
+}
+
+function quarantineCauseText(cause: {
+  readonly kind: "purge-failed" | "shutdown-failed" | "delete-failed" | "stalled";
+  readonly stalledState?: string | undefined;
+  readonly message?: string | undefined;
+}): string {
+  if (cause.kind === "stalled") return `stalled while ${cause.stalledState ?? ""}`;
+  const text = cause.kind.replace("-", " ");
+  return cause.message === undefined ? text : `${text}: ${cause.message}`;
 }

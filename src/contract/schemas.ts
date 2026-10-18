@@ -121,6 +121,76 @@ const deviceSpecSchema = z.object({
   imageTag: imageTagSchema.optional(),
 });
 
+const QUARANTINE_MESSAGE_MAX = 300;
+
+export const quarantineCauseSchema = z
+  .object({
+    kind: z.enum(["purge-failed", "shutdown-failed", "delete-failed", "stalled"]),
+    stalledState: z.enum(["provisioning", "reclaiming"]).optional(),
+    message: z
+      .string()
+      .min(1)
+      .max(QUARANTINE_MESSAGE_MAX)
+      .refine((text) => !/[\p{Cc}\u2028\u2029]/u.test(text))
+      .optional(),
+  })
+  .refine((cause) =>
+    cause.kind === "stalled"
+      ? cause.stalledState !== undefined && cause.message === undefined
+      : cause.stalledState === undefined,
+  );
+
+/**
+ * The one place a failure's text becomes a quarantine cause's `message`: control characters to
+ * spaces, trimmed, and over the bound cut to end with `…` inside it. Empty gives no message.
+ */
+export function quarantineCauseMessage(text: string): string | undefined {
+  const cleaned = text.replace(CONTROL_CHARACTERS, " ").trim();
+  if (cleaned === "") return undefined;
+  if (cleaned.length <= QUARANTINE_MESSAGE_MAX) return cleaned;
+  let cut = cleaned.slice(0, QUARANTINE_MESSAGE_MAX - 1);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+interface CauseCarrier {
+  readonly quarantineCause?: { readonly message?: string | undefined } | undefined;
+}
+
+function withoutMessage<T extends CauseCarrier>(device: T): T {
+  if (device.quarantineCause?.message === undefined) return device;
+  const { message: _message, ...kept } = device.quarantineCause;
+  return { ...device, quarantineCause: kept };
+}
+
+/**
+ * What an `agent` session may read of a `status.get` answer: every quarantine cause, in `devices`
+ * and in each `workers[].devices`, without its failure text. The one place the role rule lives.
+ */
+export function withoutQuarantineMessages<
+  S extends {
+    readonly devices?: readonly CauseCarrier[] | undefined;
+    readonly workers?:
+      | readonly { readonly devices?: readonly CauseCarrier[] | undefined }[]
+      | undefined;
+  },
+>(status: S): S {
+  return {
+    ...status,
+    ...(status.devices === undefined ? {} : { devices: status.devices.map(withoutMessage) }),
+    ...(status.workers === undefined
+      ? {}
+      : {
+          workers: status.workers.map((worker) =>
+            worker.devices === undefined
+              ? worker
+              : { ...worker, devices: worker.devices.map(withoutMessage) },
+          ),
+        }),
+  };
+}
+
 export const deviceRecordSchema = z
   .object({
     id: z.string(),
@@ -137,6 +207,7 @@ export const deviceRecordSchema = z
     quarantinedAt: z.number().optional(),
     quarantineAttempts: z.number().optional(),
     quarantineNextRetryAt: z.number().optional(),
+    quarantineCause: quarantineCauseSchema.optional(),
     address: z.string().optional(),
     absentReason: absentReasonSchema.optional(),
     physical: z.boolean(),
@@ -170,6 +241,7 @@ export const statusDeviceSchema = z
     foreignProvenanceDetectedAt: z.number().optional(),
     quarantineAttempts: z.number().optional(),
     quarantineNextRetryAt: z.number().optional(),
+    quarantineCause: quarantineCauseSchema.optional(),
     absentReason: absentReasonSchema.optional(),
     transitionAgeMs: z.number().optional(),
     stalled: z.boolean().optional(),
