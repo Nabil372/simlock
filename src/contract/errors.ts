@@ -233,8 +233,7 @@ export const ERROR_TABLE: { readonly [Code in SimlockErrorCode]: ErrorTableEntry
   },
   NO_CAPACITY: { code: "NO_CAPACITY", kind: "domain", cliExitCode: 11, httpStatus: 503 },
   QUEUE_TIMEOUT: { code: "QUEUE_TIMEOUT", kind: "domain", cliExitCode: 10, httpStatus: 500 },
-  // why: exit 14 is the next free domain exit code; the CLI also uses 14 for a lease the daemon ended.
-  PROVISION_FAILED: { code: "PROVISION_FAILED", kind: "domain", cliExitCode: 14, httpStatus: 500 },
+  PROVISION_FAILED: { code: "PROVISION_FAILED", kind: "domain", cliExitCode: 1, httpStatus: 500 },
   REQUESTER_ALREADY_LEASED: {
     code: "REQUESTER_ALREADY_LEASED",
     kind: "domain",

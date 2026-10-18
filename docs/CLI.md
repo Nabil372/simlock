@@ -79,6 +79,7 @@ command starts it again) to bring the platform up.
 | 0 | — | success (for a `lease` that stayed alive: the lease ended normally) |
 | 1 | `INTERNAL` | internal / unexpected error |
 | 1 | `DAEMON_STARTUP_FAILED` | the daemon was started but did not accept connections before the startup timeout |
+| 1 | `PROVISION_FAILED` | creating a device for the request failed twice; the message is the driver's error |
 | 1 | `WORKER_UNREACHABLE` | the gateway cannot reach the worker this lease or request lives on (its uplink is down), or a worker named with `component install --worker` cannot be asked |
 | 2 | `USAGE` | usage error (bad flags, missing required args, unknown command) |
 | 2 | `BAD_FRAME` | malformed request frame sent to the daemon |
@@ -110,15 +111,13 @@ command starts it again) to bring the platform up.
 | 12 | `COMPONENT_IN_USE` | `component remove` of a component a device uses, Simlock's or your own |
 | 13 | `REQUESTER_ALREADY_LEASED` | requester already holds `lease.maxPerRequester` leases (default 1) or has a pending request; release the named lease first |
 | 13 | `LEASE_ID_TAKEN` | `lease --lease-id` named an ID an active lease or a waiting request already holds |
-| 14 | `PROVISION_FAILED` | creating a device for the request failed twice; the message is the driver's error |
 | 14 | — | `lease` without `--detach` only: the daemon ended the lease without the holder asking (TTL expiry, operator `release`, or an unrecoverable device) |
 | 15 | — | `component install --worker`/`--all-workers` on a gateway only: at least one worker did not end `installed` or `already-installed` (it refused, failed, was skipped, or its result is unknown) |
 
 Every row but the dash rows matches the `cliExitCode` column of the contract's
 error table (`src/contract/errors.ts`'s `ERROR_TABLE`) exactly — the CLI does
 not maintain a second mapping. The dash rows 14 and 15 are not daemon error codes but
-outcomes of a command that succeeded (exit 14 is also `PROVISION_FAILED`: a
-`lease` that fails prints an error line, one that was granted and ended does not): 14 of a `lease` that stays alive, so it
+outcomes of a command that succeeded: 14 of a `lease` that stays alive, so it
 lives beside the table's other `lease` outcome, 0; 15 of an install on
 several workers, whose per-worker report on stdout says which worker ended
 how.

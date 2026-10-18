@@ -638,7 +638,7 @@ const { waiting = [] } = await client.getStatus();
   and `details.capacityReason` set to `device-limit`, `ram-budget`, `global-running-limit`
   or `platform-running-limit`. A refusal for another cause has no `details`.
 - A request whose new device could not be created twice fails with `PROVISION_FAILED`
-  (exit code 14 on the CLI, HTTP 500); its message is the driver's error. It never waits in
+  (exit code 1 on the CLI, HTTP 500); its message is the driver's error. It never waits in
   the list.
 - A request leaves the list as soon as it is granted, fails or is cancelled.
   The field is absent only from an older daemon.

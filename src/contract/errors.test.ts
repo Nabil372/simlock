@@ -114,6 +114,19 @@ describe("CAPABILITY_MISSING", () => {
   });
 });
 
+describe("PROVISION_FAILED", () => {
+  it("maps PROVISION_FAILED to CLI exit 1 and HTTP 500 as a domain error", () => {
+    const table: Record<string, unknown> = ERROR_TABLE;
+
+    expect(table["PROVISION_FAILED"]).toEqual({
+      cliExitCode: 1,
+      code: "PROVISION_FAILED",
+      httpStatus: 500,
+      kind: "domain",
+    });
+  });
+});
+
 describe("RELAY_TARGET_MISSING", () => {
   it("maps RELAY_TARGET_MISSING to HTTP 503 and CLI exit 1 as a domain error whose details name the target", () => {
     const table: Record<string, unknown> = ERROR_TABLE;
