@@ -7,8 +7,7 @@ Uses: bus, contract, ports, link, admin, simlock-client, `../daemon/dispatch.ts`
 core and leasing only the names `.oxlintrc.json` allows (request book, in-memory store, wait queue).
 Never imports: drivers, the rest of daemon, core's registry, capacity or lifecycle.
 Imported by: `../daemon/main.ts`. This manual also covers the worker's end of the uplink.
-Flows: [device selection](../../docs/internal/flows/device-selection.md),
-[device.exec](../../docs/internal/flows/device-exec.md), [leasing](../leasing/AGENTS.md).
+Flows: [device selection](../../docs/internal/flows/device-selection.md), [device.exec](../../docs/internal/flows/device-exec.md), [leasing](../leasing/AGENTS.md).
 
 ## Files
 
@@ -68,16 +67,18 @@ Flows: [device selection](../../docs/internal/flows/device-selection.md),
    (`already-leased`) → `leaseId` held by the index or an open request (`lease-id-taken`) →
    `requests.admit` stores it, creates the waiter. Emits `lease.requested`.
 3. Walk (on admit, on any view change, after each settled attempt), oldest first: `assess` the
-   request over views minus workers that said cannot-serve. A reject ends the request.
-   Else `select` over workers not claimed this pass and not refused at their current `viewLoadKey`.
-4. No pick: `noWait` → `NO_CAPACITY`; else queue (`lease.queued`).
+   request over views minus workers that said cannot-serve. A reject ends the request. Else
+   `select` over workers not claimed this pass and not refused at their current `viewLoadKey`.
+4. No pick: `noWait` → `NO_CAPACITY`; else queue (`lease.queued`). A walk also keeps a reason per
+   view (`routing.explain`, then the memos) as the entry's `workers`.
 5. Attempt: `requestLease` on the picked worker with `requesterId: gw:<id>:<requester>`, `owner`,
    `noWait: true`, `allowDownload: false`, `fleetRequestId`, the worker's own model name.
    Bounded by `gateway.leaseRequestTimeoutMs`. First progress push → `request.dispatched`.
 6. Answers before any progress: `NO_CAPACITY` → remember refusal, refresh view, re-queue
    (`noWait`: one more walk). `UNKNOWN_MODEL`, `RUNTIME_MISSING`, `NO_DRIVER`, `CAPABILITY_MISSING`
-   → exclude that worker for this request, refresh its catalog, walk again. Anything else, or any
-   failure after progress → `lease.rejected` `worker-failed`.
+   → exclude that worker for this request, refresh its catalog, walk again. `PROVISION_FAILED` →
+   a refusal; every worker that could take it failed so → reject with the last. Anything else,
+   or a failure after progress → `lease.rejected` `worker-failed`.
 7. Grant: a lease id unlike the forwarded `leaseId` → release it on the worker, retry. Gateway
    lease id = the caller's `leaseId`, else `<workerId>.<workerLeaseId>`. `leaseIndex.add`, then
    `request.granted`; a clash → release on worker, `LEASE_ID_TAKEN`.
@@ -126,7 +127,6 @@ Persisted: `workers.json` (drained ids), `tokens.json`, `instance.json`. Nothing
 - A gateway forwards `allowDownload: false`, always.
 - Only the gateway's prefix `gw:<instance id>:` marks its leases; `release-all` and retention read it.
 - Only `WorkerLink` republishes onto the bus (`boundary.test.ts`).
-- Routing reads views only; stage order is code, never config.
 
 ## Known gaps
 

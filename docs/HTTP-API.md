@@ -573,6 +573,7 @@ known and a reconnecting one stays known from its last catalog.
 | A known worker could serve it, but none that takes requests can | `503 NO_CAPACITY` |
 | The request requires capabilities (not a body field; the programmatic client sends it), and no connected worker that could serve it has all of them available | `422 CAPABILITY_MISSING`, with `capabilities` naming the required ones |
 | A worker that takes requests can serve it but is busy | queues; `503 NO_CAPACITY` only with `noWait: true` |
+| A worker fails to create a device for it twice (`PROVISION_FAILED`) | The gateway asks the next worker. When every worker that could take it has failed so, the request fails with `500 PROVISION_FAILED` and the last worker's message, and is not queued; a worker that is only busy keeps it queued |
 
 A request that is already waiting is held to the same table: when the only
 worker able to serve it is drained or disconnects, the request ends `failed`
@@ -1579,6 +1580,17 @@ Every request still waiting for a device, oldest first, whoever sent it. An
   `ram-budget`, `global-running-limit`, `platform-running-limit`,
   `waiting-for-device` or `no-free-physical`. It is replaced by each new attempt, and a
   `starting` request has none. On a gateway, a worker's own entries keep theirs.
+- `workers` is set on a gateway's own `queued` entries (not on a worker's own, and not
+  while `starting`): one object per worker the gateway knows, connected or not, in
+  worker id order, saying why that worker cannot take the request now:
+  `{ "workerId": "wrk_a", "reason": "drained" }`. `reason` is one of `disconnected`,
+  `incompatible`, `not-ready`, `unhealthy`, `drained`, `busy`, `no-driver`,
+  `unknown-model`, `runtime-missing`, `capability-missing`, `full`, `no-free-physical`
+  or `not-chosen`. `full` may carry `capacityReason`, one of `device-limit`,
+  `ram-budget`, `global-running-limit` or `platform-running-limit`, when the worker or its
+  last-reported state says which. Each worker appears once. The entries are the gateway's
+  latest look at the request and are replaced by each new one; a gateway restart loses
+  them with the request. `GET /v1/status` `waiting` carries the same field.
 - A request leaves the list as soon as it is granted, fails or is cancelled.
   The request's idempotency key and owner are never listed.
 

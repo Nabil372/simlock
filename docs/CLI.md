@@ -952,6 +952,7 @@ catalog has not arrived, is neither.
 | A known worker could serve it, but none that takes requests can | `NO_CAPACITY` (exit 11) at once |
 | The request requires capabilities (programmatic client only), and no connected worker that could serve it has all of them available | `CAPABILITY_MISSING` (exit 12) at once; `capabilities` names the required ones |
 | A worker that takes requests can serve it but is busy | Waits in the queue; `NO_CAPACITY` only with `--no-wait` |
+| A worker fails to create a device for it twice (`PROVISION_FAILED`) | The gateway asks the next worker; when every worker that could take it has failed so, the request fails with `PROVISION_FAILED` (exit 1) and the last worker's message, and is not queued. A worker that is only full keeps it waiting |
 
 "At once" holds with and without `--no-wait` and `--timeout`, and the same
 requester can ask again right away. The table also applies to a request that is
@@ -1604,6 +1605,30 @@ agents, with ` on <workerId>`. A request the gateway has sent to a worker is
 listed once, as the gateway's. A disconnected worker's requests are not
 listed. A worker's request is stamped by that worker's clock, so if that
 clock is off, its time waited is off by as much.
+
+A request waiting in the gateway's own queue also says why each worker the
+gateway knows cannot take it now: one line under the request per worker, two
+spaces, the worker's label (its id when it has none), a colon and the reason.
+Only the first letter of the reason is lower-cased:
+
+```
+Request req_3: ci, ios iPhone 16, queued at 1, waiting 42s
+  wrk_a: drained
+  wrk_b: full: running limit for iOS
+  wrk_c: oS not installed
+  wrk_d: busy with its own queue
+```
+
+The reasons are `not connected`, `protocol mismatch` (the worker and the
+gateway share no protocol version), `not ready yet`, `not running`, `drained`,
+`busy with its own queue`, `no iOS support` (or `Android`), `model not
+offered`, `oS not installed`, `missing capability`, `full` (with `: device
+limit`, `: RAM budget`, `: running limit` or `: running limit for iOS`/`Android`
+when the worker said which), `every matching device is leased or absent`, and
+`not chosen this time` (the worker could take it, and the gateway picked or
+kept another). The lines are from the gateway's latest look at the request and
+change while it waits. A `starting` request has none, and neither does a
+request in a worker's own queue, which keeps its one reason after ` — `.
 
 ## `simlock catalog [--platform <ios|android>] [--json]`
 

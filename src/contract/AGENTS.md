@@ -71,7 +71,9 @@ Three identities:
 - `CODES_WITH_DECLARED_DETAILS`: codes whose `details` are contract. The compiler keeps it
   in step with `ErrorDetailsMap`. `NO_CAPACITY` declares `capacityReason` (one of the four
   capacity refusals), set by the worker dispatcher only when a capacity check refused.
-- `waitingRequestSchema.reason` is allowed on a `queued` entry only.
+- `waitingRequestSchema.reason` is allowed on a `queued` entry only. `workers` (a gateway's
+  `queued` entries: one reason per worker) refuses a `capacityReason` with any reason but `full`
+  and a `workerId` twice.
 
 ## Pushes
 
