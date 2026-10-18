@@ -485,7 +485,10 @@ worker's capacity check refused it, the error body's `details.capacityReason` na
 check: `device-limit`, `ram-budget`, `global-running-limit` or `platform-running-limit`.
 A refusal for another cause, the answer to a repeat of a refused request, and a
 gateway's own `NO_CAPACITY` (no worker can serve the request) have no `details`.
-A gateway relays a worker's `NO_CAPACITY` with its `details` intact.
+A gateway relays a worker's `NO_CAPACITY` with its `details` only once that worker has
+reported progress on the request. Before that, the gateway queues the request again, or
+with `noWait` tries the other workers and answers with its own `NO_CAPACITY`, which has
+no `details`.
 `physical` with `mode` or `imageTag`, or with `allowDownload: true`, is
 `400 BAD_REQUEST` naming the field. The lease's `device` then has no `mode`. A
 request without `physical` never gets a physical device. A physical request

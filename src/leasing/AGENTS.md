@@ -49,8 +49,10 @@ and registry writers. Read-decide-commit runs under it; driver I/O never does.
    entry, never on a `starting` one. `NoCapacityError` carries it too. Cancelling a queued
    waiter (a physical one mid presence read wakes it after its claim is released) and a
    second provisioning failure wake the queue. A waiter that failed two provisions
-   stays queued with `provisioning-failed` and no wake drives it; it does not hold
-   the virtual waiters behind it, and the wake drives the first of them in line order.
+   stays queued with `provisioning-failed`; the wake that follows its failure does not
+   replan it, and it does not hold the virtual waiters behind it. Every other wake
+   drives the first waiter that has not failed twice, or the line's first waiter when
+   none is left, so a later release can still place it.
 4. **Perform** (no lock) — provision, boot or evict through core, then plan again.
    A boot failure destroys the device and rejects `boot-timeout`; a destroy
    that fails hands the device to core's quarantine through a port leasing

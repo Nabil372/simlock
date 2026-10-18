@@ -867,7 +867,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         this.#driving.delete(waiter);
         await this.#drive(waiter);
       } else {
-        this.#wakeQueue();
+        this.#wakeQueue(waiter);
       }
       return;
     }
@@ -1243,10 +1243,16 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
     );
   }
 
-  // why: a request that failed its second provision is not driven by a wake, so the wake drives the first one behind it.
-  #wakeQueue(): void {
+  // why: `failed` is a request that just failed its second provision; that wake does not replan it, but any other wake may drive a twice-failed waiter that is alone in line.
+  #wakeQueue(failed?: AcquisitionWaiter): void {
     void this.options.decisions.run(async () => {
-      const next = this.#lineHead();
+      const next =
+        this.#lineHead() ??
+        (failed === undefined
+          ? (this.options.queue.head as AcquisitionWaiter | undefined)
+          : (this.options.queue.list() as readonly AcquisitionWaiter[]).find(
+              (waiter) => waiter !== failed && lineOf(waiter.request) === "virtual",
+            ));
       if (next !== undefined && next.state === "queued") this.#track(this.#drive(next));
       for (const waiter of this.options.queue.pending() as readonly AcquisitionWaiter[]) {
         if (lineOf(waiter.request) === "physical") {
