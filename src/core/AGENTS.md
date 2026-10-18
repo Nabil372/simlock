@@ -88,9 +88,8 @@ Events: → `absent` `device.absence-detected`; `absent` → `reclaiming` `devic
 4. **Quarantine** — from a failed purge, a failed spent delete, a failed boot-destroy, or
    `doctor --fix` on a stall. Retry under `reclaim` (claim held: wait one backoff). Out of retries: destroy a virtual device
    (`device.quarantine-abandoned`; failed destroy: `device.quarantine-stranded`, stays), unenrol a
-   physical one. Physical not present: wait `health.probeIntervalMs`, not counted.
-   Entry writes `quarantineCause` (kind, and the message cut to 300 characters, or `stalledState`) with
-   the state; retries keep it; every exit from `quarantined` drops it (the registry's commit).
+   physical one. Physical not present: wait `health.probeIntervalMs`, not counted. Entry writes
+   `quarantineCause` (kind, message cut to 300 characters, or `stalledState`); retries keep it, every exit drops it.
 5. **Cleanup** — `CleanupReaper` on `lease.released`, `daemon.started`, `disk.pressure-detected`, a
    tick. `idle-shutdown`: leased once, `ready`, idle past T1, not warm-targeted. `idle-destroy`:
    `shutdown`, idle (lease end, else `shutdownAt`) past T2, or T1 under pressure. `CleanupExecutor`
@@ -147,7 +146,5 @@ Events: → `absent` `device.absence-detected`; `absent` → `reclaiming` `devic
   `downloads.timeoutMs`. A bounded model with no `--os` asks Xcode for a bare major; pass `--os`.
 - **`component remove` sees only this instance.** Another instance's devices, never-used default-set
   simulators and foreign devices made after the driver's count are not counted.
-- **An older Simlock cannot end a physical lease.** It skips `physicalDevices`; `beginRelease`
-  throws `UnknownDeviceError`. Release physical leases before a rollback.
-- **Two instances can enrol one device.** Each release uninstalls apps not on its own list.
-  Enrol a device in one instance only.
+- **An older Simlock cannot end a physical lease.** It skips `physicalDevices`; `beginRelease` throws `UnknownDeviceError`. Release physical leases before a rollback.
+- **Two instances can enrol one device.** Each release uninstalls apps not on its own list. Enrol a device in one instance only.
