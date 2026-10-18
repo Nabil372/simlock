@@ -86,6 +86,7 @@ import {
   type RoutableRequest,
   type RoutingDecision,
   type RoutingPolicy,
+  type WorkerExplanation,
 } from "./routing.js";
 import {
   type CapacityReason,
@@ -806,27 +807,31 @@ export class FleetLeaseCoordinator {
     const explained = new Map(
       this.options.routing.explain(request, views).map((entry) => [entry.workerId, entry]),
     );
-    const cannotServe = this.#cannotServe.get(waiter);
-    return views.map((view): WorkerEntry => {
-      const entry = explained.get(view.id);
-      const workerId = view.id;
-      if (entry?.filter !== undefined) return { ...entry.filter, workerId };
-      if (options.unreachable === workerId) return { reason: "disconnected", workerId };
-      const cannot = CANNOT_SERVE_REASONS[cannotServe?.get(workerId)?.code ?? ""];
-      if (cannot !== undefined) return { reason: cannot, workerId };
-      if (this.#refused(waiter, view)) {
-        const capacityReason =
-          this.#refusals.get(waiter)?.get(workerId)?.capacityReason ?? entry?.zero?.capacityReason;
-        return {
-          reason: "full",
-          workerId,
-          ...(capacityReason === undefined ? {} : { capacityReason }),
-        };
-      }
-      if (options.claimed?.(workerId) === true) return { reason: "not-chosen", workerId };
-      if (entry?.zero !== undefined) return { ...entry.zero, workerId };
-      return { reason: "not-chosen", workerId };
-    });
+    return views.map(
+      (view): WorkerEntry => ({
+        ...this.#reasonFor(waiter, view, explained.get(view.id), options),
+        workerId: view.id,
+      }),
+    );
+  }
+
+  #reasonFor(
+    waiter: FleetWaiter,
+    view: WorkerView,
+    entry: WorkerExplanation | undefined,
+    options: { readonly claimed?: (workerId: string) => boolean; readonly unreachable?: string },
+  ): WorkerReason {
+    if (entry?.filter !== undefined) return entry.filter;
+    if (options.unreachable === view.id) return { reason: "disconnected" };
+    const cannot = CANNOT_SERVE_REASONS[this.#cannotServe.get(waiter)?.get(view.id)?.code ?? ""];
+    if (cannot !== undefined) return { reason: cannot };
+    if (this.#refused(waiter, view)) {
+      const capacityReason =
+        this.#refusals.get(waiter)?.get(view.id)?.capacityReason ?? entry?.zero?.capacityReason;
+      return capacityReason === undefined ? { reason: "full" } : { capacityReason, reason: "full" };
+    }
+    if (options.claimed?.(view.id) === true) return { reason: "not-chosen" };
+    return entry?.zero ?? { reason: "not-chosen" };
   }
 
   // why: a second failed provision walks on like a cannot-serve code, and only when every worker that could take the request failed so does it end with the last answer.

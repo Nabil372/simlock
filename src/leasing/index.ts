@@ -5,10 +5,8 @@ export { LeaseHealthMonitor } from "./lease-health-monitor.js";
 export { type PhysicalDeviceWatcher } from "./physical-device-watcher.js";
 export {
   type DeviceModeReader,
-  // fallow-ignore-next-line unused-type -- the port for optional modules (#474 registers the first participant).
   type EndedLease,
   type LeaseCommands,
-  // fallow-ignore-next-line unused-type -- the port for optional modules (#474 registers the first participant).
   type LeaseEndParticipant,
   type QueueControl,
 } from "./lease-ports.js";
