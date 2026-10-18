@@ -59,12 +59,10 @@ import {
   stableError,
   type TargetResolution,
   type WaitingDemand,
-  type CapacityRefusalReason,
 } from "../core/index.js";
 import {
   type AcquisitionPlan,
   type AcquisitionPlanner,
-  capacityReasonOf,
   type PhysicalPlanInput,
   type WaitingReason,
 } from "./acquisition-planner.js";
@@ -87,10 +85,6 @@ export class NoCapacityError extends Error {
   constructor(readonly reason?: WaitingReason) {
     super("No device capacity is currently available");
     this.name = "NoCapacityError";
-  }
-
-  get capacityReason(): CapacityRefusalReason | undefined {
-    return capacityReasonOf(this.reason);
   }
 }
 

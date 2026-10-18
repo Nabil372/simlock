@@ -37,6 +37,7 @@ import {
   type DeviceModeReader,
   LeaseIdTakenError,
   type LeaseCommands,
+  capacityReasonOf,
   NoCapacityError,
   type QueueControl,
 } from "../leasing/index.js";
@@ -497,10 +498,11 @@ export class Dispatcher {
       if (error instanceof LeaseIdTakenError) {
         throw new DispatchError("LEASE_ID_TAKEN", error.message, { leaseId: error.leaseId });
       }
-      if (error instanceof NoCapacityError && error.capacityReason !== undefined) {
-        throw new DispatchError("NO_CAPACITY", error.message, {
-          capacityReason: error.capacityReason,
-        });
+      if (error instanceof NoCapacityError) {
+        const capacityReason = capacityReasonOf(error.reason);
+        if (capacityReason !== undefined) {
+          throw new DispatchError("NO_CAPACITY", error.message, { capacityReason });
+        }
       }
       // The lease path sees only the clamped-to-false permission, so this is the one place that can
       // tell the caller that config, not missing consent, blocked the download.
