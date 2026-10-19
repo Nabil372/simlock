@@ -318,6 +318,15 @@ describe("usage projection: request rows", () => {
     r.relay("w1", "lease.requested", requested("R9", { requester: "eve" }), T0 + 8_000);
     r.emit("lease.granted", granted("LX", "R-unknown"));
     r.emit("lease.released", released("L-unknown"));
+    const ready = { bootDuration: 10, deviceId: "d1", platform: "ios" };
+    r.relay("w1", "device.ready", ready, T0 + 9_000);
+    r.bus.republish({
+      event: "device.ready",
+      id: `evt_relay_${T0}_3`,
+      module: "gateway",
+      payload: { ...ready, workerId: "w1" } as never,
+      timestamp: T0 + 9_000,
+    });
 
     const rows = await rowsOf(r);
 
@@ -331,6 +340,7 @@ describe("usage projection: request rows", () => {
     });
     expect(row(rows, "R1").rejectedAt).toBeUndefined();
     expect(row(rows, "R9").requester).toBe("alice");
+    expect(await factsOf(r)).toHaveLength(1);
     await r.history.stop();
   });
 
@@ -428,7 +438,7 @@ describe("usage projection: a gateway", () => {
       {
         fleetRequestId: "G1",
         reason: "no-wait",
-        requestId: "W1",
+        requestId: "G1",
         requestSpec: { platform: "ios" },
         requester: "alice",
       },
@@ -1017,13 +1027,13 @@ describe("usage reads", () => {
       {
         act: (r) => {
           r.at(T0 + 1_000);
-          r.emit("lease.requested", requested("R1"));
+          r.emit("lease.requested", requested("R1", { fleetRequestId: "F1" }));
           r.at(T0 + 5_000);
           r.emit("device.ready", { bootDuration: 10, deviceId: "d", platform: "ios" });
           r.at(T0 + 2 * MIN);
           r.emit("capacity.changed", capacity({ ios: [1, 0, 4] }));
         },
-        expected: T0,
+        expected: T0 + 1_000,
         name: "request rows",
       },
       {
