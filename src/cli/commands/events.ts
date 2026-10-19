@@ -52,7 +52,7 @@ async function connectForEvents(
     return await connectDaemonClient(environment, token, { launch: false });
   } catch (error: unknown) {
     if ((await asDaemonRefusal(error)) !== undefined) throw error;
-    for (const event of await environment.readEventFile(historySinceTs))
+    for (const event of await environment.readEventHistory(historySinceTs))
       writeResult((value) => environment.stdout.write(value), event);
     return undefined;
   }

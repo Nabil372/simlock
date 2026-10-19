@@ -5649,7 +5649,7 @@ describe("CLI: events history", () => {
             daemonVersion: "0.9.0",
           });
         },
-        readEventFile: async () => {
+        readEventHistory: async () => {
           fileRead = true;
           return [];
         },
@@ -5676,7 +5676,7 @@ describe("CLI: events history", () => {
               return [envelope(7, hour + 1)];
             },
           }),
-        readEventFile: async () => {
+        readEventHistory: async () => {
           fileRead = true;
           return [];
         },
@@ -6370,7 +6370,7 @@ function outputCapture(ports?: CliEnvironmentPorts): OutputCapture {
           writeConfigFile: async () => {},
           validateConfig: async () => {},
           readLogFile: async () => "",
-          readEventFile: async () => [],
+          readEventHistory: async () => [],
           signals: new EventEmitter() as unknown as CliEnvironment["signals"],
           parentWatch: new FakeParentWatch(),
           stderr: stderrOut,

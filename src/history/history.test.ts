@@ -34,9 +34,11 @@ afterEach(async () => {
 
 class RecordingFilesystem extends NodeFilesystem {
   readonly renames: Array<{ readonly from: string; readonly to: string }> = [];
+  beforeRename: (() => Promise<void>) | undefined;
 
   override async rename(from: string, to: string): Promise<void> {
     this.renames.push({ from, to });
+    await this.beforeRename?.();
     await super.rename(from, to);
   }
 }
@@ -200,6 +202,24 @@ describe("createEventHistory", () => {
     expect(replayed).toEqual([first, early, second, tiedFirst, tiedSecond]);
   });
 
+  it("reads events sharing one timestamp in seq order, not in the order their rows were written", async () => {
+    const earlierRun = await rig();
+    const earlierWriter = earlierRun.history();
+    await earlierWriter.start();
+    relayed(earlierRun.bus, "evt_pad", NOW - 1);
+    const highSeq = relayed(earlierRun.bus, "evt_high", NOW);
+    await earlierWriter.stop();
+    const laterRun = await rig({ directory: earlierRun.directory });
+    const laterWriter = laterRun.history();
+    await laterWriter.start();
+    const lowSeq = relayed(laterRun.bus, "evt_low", NOW);
+
+    const replayed = await laterWriter.replay({ sinceTs: NOW - 1 });
+    await laterWriter.stop();
+    expect([highSeq.seq, lowSeq.seq]).toEqual([2, 1]);
+    expect(replayed).toEqual([lowSeq, highSeq]);
+  });
+
   it("answers replay({ sinceTs }) with the events strictly newer than sinceTs", async () => {
     const rigged = await rig({ capacity: 1 });
     const history = rigged.history();
@@ -303,6 +323,7 @@ describe("createEventHistory", () => {
     const replayed = await history.replay();
     await history.stop();
     expect(replayed).toEqual([two, three]);
+    expect(levelRecords(rigged, "warn")).toBe(0);
   });
 
   it("replays the ring with sinceTs before start() opened the file", async () => {
@@ -399,7 +420,7 @@ describe("createEventHistory", () => {
     await history.stop();
   });
 
-  it("stop() while start() awaits its open leaves no file open and no timer armed, a later start() does nothing, and no prune runs an hour later", async () => {
+  it("stop() while start() awaits its open leaves no file open, logs no error and arms no timer, a later start() does nothing, and no prune runs an hour later", async () => {
     const rigged = await rig();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -419,6 +440,7 @@ describe("createEventHistory", () => {
 
     expect(sqlite.connections.every((connection) => connection.closed)).toBe(true);
     expect(sqlite.opens).toBe(1);
+    expect(levelRecords(rigged, "error")).toBe(0);
     expect(rigged.clock.pendingTimerCount).toBe(0);
     expect(projection.pruned).toEqual([]);
   });
@@ -490,6 +512,27 @@ describe("createEventHistory", () => {
       await kept(rigged, join(rigged.directory, `history.db.damaged-${NOW}`));
     },
   );
+
+  it("stop() while the damaged file is being set aside starts no fresh file", async () => {
+    const rigged = await rig();
+    await writeFile(rigged.dbPath, JUNK);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    rigged.filesystem.beforeRename = () => gate;
+    const sqlite = new ProbeSqliteOpener();
+    const history = rigged.history({ sqlite });
+
+    const starting = history.start();
+    await settle();
+    const stopped = history.stop();
+    release();
+    await Promise.all([starting, stopped]);
+
+    expect(sqlite.opens).toBe(1);
+    expect(await readdir(rigged.directory)).toEqual([`history.db.damaged-${NOW}`]);
+  });
 
   it("a healthy file is not renamed, and keeps its rows", async () => {
     const rigged = await rig();
@@ -626,6 +669,10 @@ describe("createEventHistory", () => {
     expect(history.status().writing).toBe(false);
     expect(await history.replay({ sinceTs: 0 })).toEqual([two, three]);
     expect(await readFile(join(rigged.directory, `history.db.damaged-${NOW}`), "utf8")).toBe(JUNK);
+    expect(rigged.filesystem.renames).toHaveLength(1);
+    expect(
+      rigged.logs.records.filter((record) => record.message.startsWith("The fresh history")),
+    ).toHaveLength(1);
   });
 
   it("prune deletes event rows older than retention and keeps one stamped exactly at the cutoff", async () => {
@@ -644,7 +691,7 @@ describe("createEventHistory", () => {
     expect(replayed).toEqual([atCutoff, newer]);
   });
 
-  it("prune deletes the oldest event rows, 1 000 per step, until their stored size fits maxBytes, keeps the newest, and history.db plus its -wal is smaller after the prune than before it", async () => {
+  it("prune deletes the oldest event rows, 1 000 per step, until their stored size fits maxBytes, keeps the newest, and after the prune history.db plus its -wal is smaller than before it and the -wal is empty", async () => {
     const rigged = await rig({ capacity: 10 });
     const writer = rigged.history();
     await writer.start();
@@ -668,10 +715,39 @@ describe("createEventHistory", () => {
 
     await history.start();
     const kept = await history.replay({ sinceTs: 0 });
+    // why: read while the file is open; closing it would drop the -wal and hide a missing checkpoint
+    const after = await diskSize();
+    const walAfter = await sizeOf(`${rigged.dbPath}-wal`);
     await history.stop();
 
     expect(kept).toEqual(emitted.slice(-500));
-    expect(await diskSize()).toBeLessThan(before);
+    expect(after).toBeLessThan(before);
+    expect(walAfter).toBe(0);
+  });
+
+  it("the hourly prune counts the size of events written since start(), so it trims the oldest 1 000 at a time to maxBytes and the next hour trims nothing more", async () => {
+    const rigged = await rig({ capacity: 10 });
+    const storedSize = (envelope: EventEnvelope): number =>
+      Buffer.byteLength(JSON.stringify(envelope), "utf8");
+    const probe = stopping(rigged.bus, "0000");
+    const history = rigged.history({ maxBytes: storedSize(probe) * 1_200 });
+    await history.start();
+    const emitted: EventEnvelope[] = [probe];
+    for (let index = 0; index < 2_500; index += 1) {
+      rigged.clock.advance(1);
+      emitted.push(stopping(rigged.bus, String(index).padStart(4, "0")));
+    }
+
+    rigged.clock.advance(HOUR);
+    await settle();
+    const kept = await history.replay({ sinceTs: 0 });
+    rigged.clock.advance(HOUR);
+    await settle();
+    const keptAfterSecondHour = await history.replay({ sinceTs: 0 });
+    await history.stop();
+
+    expect(kept).toEqual(emitted.slice(-501));
+    expect(keptAfterSecondHour).toEqual(emitted.slice(-501));
   });
 
   it("prune runs again one hour after start() on the clock, not before, and stop() cancels it", async () => {
@@ -766,6 +842,39 @@ describe("openHistoryReader", () => {
 
     expect(read).toEqual([first, second]);
     expect(sinceFirst).toEqual([second]);
+  });
+
+  it("opens history.db read-only", async () => {
+    const rigged = await rig();
+    const history = rigged.history();
+    await history.start();
+    const sqlite = new ProbeSqliteOpener();
+
+    await openHistoryReader({
+      dataDirectory: rigged.directory,
+      filesystem: new NodeFilesystem(),
+      sqlite,
+    }).read({ sinceTs: 0 });
+    await history.stop();
+
+    expect(sqlite.connections.map((connection) => connection.readOnly)).toEqual([true]);
+  });
+
+  it("throws, and does not answer empty, when history.db cannot be examined for a reason other than being missing", async () => {
+    const directory = await dataDirectory();
+    class DeniedFilesystem extends NodeFilesystem {
+      override async stat(): Promise<never> {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      }
+    }
+
+    await expect(
+      openHistoryReader({
+        dataDirectory: directory,
+        filesystem: new DeniedFilesystem(),
+        sqlite: new NodeSqliteOpener(),
+      }).read({ sinceTs: 0 }),
+    ).rejects.toThrow(/permission denied/);
   });
 
   it("answers empty when history.db is missing", async () => {

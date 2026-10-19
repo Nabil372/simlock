@@ -154,6 +154,19 @@ describe("the event history", () => {
     const events = await historyEventsWhen(directory, hasEvent("daemon.started"));
     expect(events.map((event) => event.id)).toContain("evt_1");
   });
+
+  it("prunes at start by the configured eventLog.retention, so an event older than it on the injected clock is gone", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "simlock-main-"));
+    temporaryDirectories.push(directory);
+    // why: the fake clock reads 1_000; with a retention of 100 the cutoff is 900, past 500 and before 950.
+    await seedHistory(directory, [500, 950]);
+
+    await start({ configOverrides: { eventLog: { retention: 100 } }, dataDirectory: directory });
+
+    const events = await historyEventsWhen(directory, hasEvent("daemon.started"));
+    expect(events.map((event) => event.id)).not.toContain("evt_1");
+    expect(events.map((event) => event.id)).toContain("evt_2");
+  });
 });
 
 /** A gateway URL on a port just released. Nothing listens there, so a worker's uplink dial

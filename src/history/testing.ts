@@ -27,6 +27,7 @@ export function readHistoryEvents(dataDirectory: string, sinceTs = 0): Promise<E
 export interface ProbeConnection {
   readonly path: string;
   readonly database: SqliteDatabase;
+  readonly readOnly: boolean;
   closed: boolean;
 }
 
@@ -59,7 +60,7 @@ export class ProbeSqliteOpener implements SqliteOpener {
     await this.#options.beforeOpen?.({ connection });
     this.#options.fault?.({ connection, kind: "open", path });
     const database = await this.#inner.open(path, options);
-    const probe: ProbeConnection = { closed: false, database, path };
+    const probe: ProbeConnection = { closed: false, database, path, readOnly: options.readOnly };
     this.connections.push(probe);
     return {
       close: () => {

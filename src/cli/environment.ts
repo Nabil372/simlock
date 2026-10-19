@@ -225,7 +225,7 @@ export function buildCliEnvironment(
         write: (text: string) => (ports.stdout ?? process.stdout).write(text),
       });
     },
-    readEventFile: async (sinceTs) => {
+    readEventHistory: async (sinceTs) => {
       const { openHistoryReader } = await import("../history/index.js");
       const { NodeSqliteOpener } = await import("../ports/index.js");
       return openHistoryReader({
