@@ -63,6 +63,8 @@ describe("usage.get read", () => {
       database.close();
     }
     const reader = createUsageReader(rig.deps({ opened: () => true }));
+    // why: a source run starts the read thread by transpiling its modules, a cost a built daemon does not pay and a slow runner multiplies; one small read starts it before the timed call.
+    await reader.get({ from: to - DAY, to });
     const delay = monitorEventLoopDelay({ resolution: 5 });
 
     delay.enable();
