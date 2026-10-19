@@ -4,6 +4,7 @@ import { type Clock, type Logger, NoopLogger, type TimerHandle } from "../ports/
 import type { DeviceOperationClaim, DeviceOperationClaims } from "./device-operation-claims.js";
 import {
   type DeviceRecord,
+  type DeviceState,
   mayBeGranted,
   type PhysicalDevice,
   type Platform,
