@@ -1293,12 +1293,12 @@ describe("usage projection: rebuild", () => {
 
   it("a rebuild that throws leaves no rows for the events' window, rebuildFailed true, writing true, no rebuiltAt, one error, and later events are still written", async () => {
     const first = await rig();
-    await seed(first, 30);
+    await seed(first, 2_100);
     await first.history.stop();
     await breakMinuteTable(first.path);
     await execOn(
       first.path,
-      "CREATE TRIGGER refuse BEFORE INSERT ON request_rows BEGIN SELECT RAISE(ABORT, 'refused'); END",
+      "CREATE TRIGGER refuse BEFORE INSERT ON request_rows WHEN NEW.requestId = 'R1500' BEGIN SELECT RAISE(ABORT, 'refused'); END",
     );
 
     const second = await rig({ at: T0 + MIN, directory: first.directory });
