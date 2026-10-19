@@ -2,7 +2,8 @@ import type { z } from "zod";
 
 import type { DispatchSession } from "../daemon/dispatcher.js";
 import type { LeaseProgress } from "../core/index.js";
-import type { ComponentProgress, OPERATIONS, OperationName, Role } from "../contract/index.js";
+import { OPERATIONS } from "../contract/index.js";
+import type { ComponentProgress, OperationName, Role } from "../contract/index.js";
 import type { Identity } from "../auth/index.js";
 
 /**
@@ -23,6 +24,14 @@ export type HttpDispatch = <Op extends OperationName>(
  * token resolves to `"agent"`. */
 function toRole(identityRole: Identity["role"]): Role {
   return identityRole === "operator" ? "admin" : "agent";
+}
+
+const VIA_VALUES = OPERATIONS["identity.get"].output.shape.via.options;
+
+function toVia(via: string): DispatchSession["via"] {
+  const known = VIA_VALUES.find((value) => value === via);
+  if (known === undefined) throw new Error(`Unknown identity via: ${via}`);
+  return known;
 }
 
 // why: `onProgress` and the like are per-call, not part of the identity, so the routes that need one pass an override in `extra`; every other route gets inert defaults that no operation it dispatches ever calls.
@@ -61,7 +70,9 @@ export function buildHttpSession(
   return {
     manageEventSubscription: extra?.manageEventSubscription ?? (() => undefined),
     principal: identity.principal,
+    name: identity.name,
     role: toRole(identity.role),
+    via: toVia(identity.via),
     ...(extra?.onProgress === undefined ? {} : { onProgress: extra.onProgress }),
     ...(extra?.onRequestAdmitted === undefined
       ? {}

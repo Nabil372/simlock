@@ -30,7 +30,7 @@ park on readiness (all but `status.get`) → handler → parse output.
 `src/daemon/dispatcher.ts` and `src/gateway/dispatcher.ts` each hold a handler for
 every operation but `daemon.stop`, which `DaemonServer` answers.
 
-- `agent`: `catalog.get`, `status.get`, `component.list`, `lease.request`, `lease.cancel`,
+- `agent`: `identity.get`, `catalog.get`, `status.get`, `component.list`, `lease.request`, `lease.cancel`,
   `lease.renew`, `lease.release`, `lease.list`, `driver.passthrough`, `device.exec`,
   `doctor.run` without `fix` or `purgeOrphans`.
 - `admin`: every other operation (`list.get`, `config.get`, `daemon.stop`, `events.*`,
@@ -55,7 +55,7 @@ Three identities:
 
 ## Protocol version
 
-- Now `{ min: 46, max: 46 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
+- Now `{ min: 47, max: 47 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
 - Every change to a contract shape bumps it by one in the same PR. Move `min` too, unless
   a compatibility path stays side by side.
 - `hello` picks the highest overlap. None → `PROTOCOL_VERSION_UNSUPPORTED` with both ranges.

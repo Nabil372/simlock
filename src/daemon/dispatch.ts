@@ -60,6 +60,9 @@ export interface DispatchSession {
    * now, admin included).
    */
   readonly isGatewayUplink?: boolean;
+  readonly name?: string;
+  readonly via: "token" | "proxy" | "socket" | "uplink";
+  readonly signOutUrl?: string;
   /** Called for each progress update while this specific `lease.request` call is in flight.
    * Ignored by every other operation. */
   readonly onProgress?: (progress: DispatchProgress) => void;
@@ -129,6 +132,17 @@ export class DispatchError extends Error {
     super(message);
     this.name = "DispatchError";
   }
+}
+
+// why: the one handler both dispatchers use; `name` absent means the principal.
+export function identityGet(_input: unknown, session: DispatchSession) {
+  return {
+    principal: session.principal,
+    name: session.name ?? session.principal,
+    role: session.role,
+    via: session.via,
+    ...(session.signOutUrl === undefined ? {} : { signOutUrl: session.signOutUrl }),
+  };
 }
 
 /**

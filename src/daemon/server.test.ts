@@ -216,8 +216,9 @@ describe("DaemonServer", () => {
     [36, "cannot read the module-unavailable finding in doctor.run"],
     [37, "cannot read config.get's capabilities"],
     [38, "cannot read agent-device's section under config.get's capabilities"],
+    [46, "cannot call identity.get"],
   ])(
-    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 46, to a client on protocol %i, which %s",
+    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 47, to a client on protocol %i, which %s",
     async (version) => {
       const harness = await createHarness();
       const previous = await createClient(harness.socketPath);
@@ -227,7 +228,7 @@ describe("DaemonServer", () => {
       ).resolves.toMatchObject({
         error: {
           code: "PROTOCOL_VERSION_UNSUPPORTED",
-          details: { client: { min: version, max: version }, daemon: { min: 46, max: 46 } },
+          details: { client: { min: version, max: version }, daemon: { min: 47, max: 47 } },
         },
         ok: false,
       });
@@ -3138,6 +3139,40 @@ describe("DaemonServer roles and ownership (ADR 0003 §2-4)", () => {
       error: { code: "FORBIDDEN" },
     });
     await local.close();
+  });
+
+  it("identity.get answers the declared principal as principal and name over a socket: agent with no credential, admin with the admin secret, admin with an operator token", async () => {
+    const harness = await createHarness({
+      resolveRole: {
+        resolve: (payload) =>
+          payload.credential === "admin-secret" || payload.credential === "slk_operator"
+            ? "admin"
+            : "agent",
+      },
+    });
+    const cases = [
+      { credential: undefined, principal: "claude-1", role: "agent" },
+      { credential: "admin-secret", principal: "claude-2", role: "admin" },
+      { credential: "slk_operator", principal: "claude-3", role: "admin" },
+    ];
+
+    for (const { credential, principal, role } of cases) {
+      const client = await createClient(harness.socketPath);
+      await expect(
+        client.request("hello", {
+          clientVersion: "test",
+          protocolVersion: DAEMON_PROTOCOL_VERSION,
+          principal,
+          ...(credential === undefined ? {} : { credential }),
+        }),
+      ).resolves.toMatchObject({ ok: true });
+
+      await expect(client.request("identity.get", {})).resolves.toMatchObject({
+        ok: true,
+        payload: { name: principal, principal, role, via: "socket" },
+      });
+      await client.close();
+    }
   });
 
   it("negotiates the protocol range over an uplink exactly as over the socket (ADR 0005 §31)", async () => {

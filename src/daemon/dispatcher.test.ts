@@ -397,6 +397,7 @@ async function buildDispatcher(
 function session(overrides: Partial<DispatchSession> = {}): DispatchSession {
   return {
     manageEventSubscription: () => undefined,
+    via: "socket",
     principal: "tok_agent",
     role: "agent",
     ...overrides,
@@ -818,6 +819,26 @@ describe("Dispatcher: token.create | token.list | token.revoke", () => {
       session({ role: "admin" }),
     );
     expect(result.revoked).toBe(false);
+  });
+});
+
+describe("Dispatcher: identity.get", () => {
+  it("copies signOutUrl from a session that has one into its output, and omits it otherwise", async () => {
+    const { dispatcher } = await buildDispatcher();
+
+    const withUrl = await dispatcher.dispatch(
+      "identity.get",
+      {},
+      session({ role: "admin", via: "proxy", signOutUrl: "https://sso.example/logout" }),
+    );
+    const without = await dispatcher.dispatch(
+      "identity.get",
+      {},
+      session({ role: "admin", via: "socket" }),
+    );
+
+    expect(withUrl).toHaveProperty("signOutUrl", "https://sso.example/logout");
+    expect(without).not.toHaveProperty("signOutUrl");
   });
 });
 
