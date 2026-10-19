@@ -166,7 +166,9 @@ class EventHistory implements EventHistoryHandle {
     this.#opened = true;
     this.#writing = true;
     this.#readable = true;
-    for (const envelope of this.#options.bus.replay()) {
+    // why: `replay()` orders by time, but a run's `seq` is its order, and a relayed event or a stepped-back clock breaks the two apart
+    const ring = this.#options.bus.replay().sort((a, b) => a.seq - b.seq);
+    for (const envelope of ring) {
       if (this.#setAsideAt === undefined || this.#seenBeforeStart.has(envelope.id)) {
         this.#write(envelope);
       }

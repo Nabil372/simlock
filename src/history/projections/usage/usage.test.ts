@@ -851,6 +851,21 @@ describe("usage projection: minute rows", () => {
     await second.history.stop();
   });
 
+  it("a start catch-up reads one run in seq order, so a relayed event stamped before the run's own start does not begin a new run", async () => {
+    const r = await rig({ fleet: true, start: false });
+    r.at(T0 + 2_000);
+    r.emit("daemon.started", { configSnapshot: {}, version: "1" });
+    r.relay("w1", "capacity.changed", capacity({ global: [2, 0, 4], ios: [2, 0, 4] }), T0 + 1_500);
+    await r.history.start();
+    r.at(T0 + 3 * MIN);
+    r.relay("w1", "capacity.changed", capacity({ global: [2, 0, 4], ios: [2, 0, 4] }));
+
+    const read = await buckets(r, { from: T0, platform: "ios", to: T0 + 4 * MIN, workerId: "*" });
+
+    expect(read.map((bucket) => (bucket.start - T0) / MIN)).toEqual([0, 1, 2, 3]);
+    await r.history.stop();
+  });
+
   it("a key the next run has not stepped by its daemon.started is closed there, not carried over the downtime", async () => {
     const first = await rig();
     first.emit("capacity.changed", capacity({ android: [1, 0, 3], ios: [2, 0, 4] }));
