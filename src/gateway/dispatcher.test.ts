@@ -539,7 +539,7 @@ describe("GatewayDispatcher", () => {
     );
   });
 
-  it("lists no device or lease for a worker that is starting, whether the session is an admin or the owner of a lease the gateway indexed on it, and answers worker.list with the view as it is", async () => {
+  it("keeps an owner's indexed lease visible while its worker is starting, without exposing leases or devices in admin views", async () => {
     const { dispatcher, workers } = harness();
     workers.connected("wrk_1", "mac-mini-1", undefined);
     const lease = {
@@ -562,7 +562,9 @@ describe("GatewayDispatcher", () => {
     await expect(dispatcher.dispatch("lease.list", {}, session())).resolves.toEqual({
       leases: [],
     });
-    await expect(dispatcher.dispatch("lease.list", {}, owner)).resolves.toEqual({ leases: [] });
+    await expect(
+      dispatcher.dispatch("lease.list", {}, session({ principal: "other-agent", role: "agent" })),
+    ).resolves.toEqual({ leases: [] });
     await expect(dispatcher.dispatch("list.get", { kind: "devices" }, session())).resolves.toEqual(
       [],
     );
@@ -570,6 +572,17 @@ describe("GatewayDispatcher", () => {
     expect(views).toHaveLength(1);
     expect(views[0]).toMatchObject({ health: "starting", host: GATEWAY_HOST, id: "wrk_1" });
     expect(Object.keys(views[0] ?? {})).not.toContain("leases");
+    await expect(dispatcher.dispatch("lease.list", {}, owner)).resolves.toEqual({
+      leases: [
+        {
+          ...lease,
+          id: "wrk_1.lease_1",
+          requesterId: "agent-1",
+          workerId: "wrk_1",
+          worker: { id: "wrk_1", label: "mac-mini-1" },
+        },
+      ],
+    });
   });
 
   it("lists each of an owner's gateway-issued leases under its own record, and none whose worker has no view", async () => {
