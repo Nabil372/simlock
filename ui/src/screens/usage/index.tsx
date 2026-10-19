@@ -37,9 +37,11 @@ export function UsageScreen() {
   );
 }
 
+// why: the space after a count keeps one row's count and the next row's label apart in the table's
+// text, which is how a screen reader's text view and a text search read it.
 const COUNT_COLUMNS = (header: string): readonly Column<UsageCount>[] => [
   { cell: (row) => row.label, header, mono: true },
-  { cell: (row) => row.count, header: "Count", numeric: true },
+  { cell: (row) => `${row.count} `, header: "Count", numeric: true },
 ];
 
 function Counts(props: {

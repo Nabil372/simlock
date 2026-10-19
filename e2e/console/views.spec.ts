@@ -210,12 +210,13 @@ test.describe("every view", () => {
       await expect(tabs.locator("[aria-current='page']")).toHaveText(entry.label);
     }
 
+    const [before, last] = NAV.slice(-2);
     await page.goBack();
-    await expect(page).toHaveURL(/\/attention$/);
-    await expect(tabs.locator("[aria-current='page']")).toHaveText(/^Attention/);
+    await expect(page).toHaveURL(new RegExp(`${before?.path}$`));
+    await expect(tabs.locator("[aria-current='page']")).toHaveText(new RegExp(`^${before?.label}`));
     await page.goForward();
-    await expect(page).toHaveURL(/\/events$/);
-    await expect(tabs.locator("[aria-current='page']")).toHaveText("Events");
+    await expect(page).toHaveURL(new RegExp(`${last?.path}$`));
+    await expect(tabs.locator("[aria-current='page']")).toHaveText(last?.label ?? "");
   });
 
   test("no view reports a Content-Security-Policy violation", async ({ page }) => {
