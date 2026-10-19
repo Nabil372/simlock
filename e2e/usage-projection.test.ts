@@ -12,7 +12,11 @@ const ALL = Number.MAX_SAFE_INTEGER;
 
 async function prepare(env: TestEnv): Promise<void> {
   await env.driverScript.set({
-    ios: { knownModels: ["iPhone 16"], availableOsVersions: ["18.4"] },
+    ios: {
+      knownModels: ["iPhone 16"],
+      availableOsVersions: ["18.4"],
+      latencyMs: { makeReady: 50 },
+    },
   });
 }
 

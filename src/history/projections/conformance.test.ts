@@ -68,7 +68,7 @@ async function run(
           if (options.throwOn === envelope.id) throw new Error("apply failed");
         },
         prune: (now) => inner.prune(now),
-        rebuild: (oldest) => inner.rebuild?.(oldest),
+        rebuild: (oldest) => inner.rebuild(oldest),
       };
     },
   };
@@ -174,7 +174,7 @@ function conformance(
         for (const envelope of envelopes) projector.apply(envelope);
         const live = dumpTables(database);
 
-        projector.rebuild?.(1_000);
+        projector.rebuild(1_000);
         for (const envelope of envelopes) projector.apply(envelope);
 
         expect(dumpTables(database)).toEqual(live);

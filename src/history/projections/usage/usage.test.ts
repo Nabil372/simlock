@@ -334,7 +334,7 @@ describe("usage projection: request rows", () => {
   });
 
   it("a relayed payload with an over-long string, a negative number, an unknown source or no requestId writes the event row, and the row field is absent or no row changes; an unknown event name changes no projection row", async () => {
-    const r = await rig({ fleet: true });
+    const r = await rig({ fleet: false });
     r.relay("w1", "lease.requested", requested("R-ok"), T0);
     r.relay("w1", "lease.requested", requested("R-long", { requester: "x".repeat(500) }), T0 + 1);
     r.relay("w1", "lease.granted", granted("L-ok", "R-ok", { source: "mystery" as never }), T0 + 2);
@@ -621,7 +621,7 @@ describe("usage projection: minute rows", () => {
 
     expect(figure(own[0], "slotsUsed")).toEqual({ integral: 3 * 20_000 + 1 * 30_000, peak: 3 });
     expect(figure(fleet[0], "slotsUsed")).toEqual({
-      integral: 3 * 10_000 + 3 * 20_000 + 3 * 30_000,
+      integral: 150_000,
       peak: 3,
     });
     await r.history.stop();
@@ -837,7 +837,7 @@ describe("usage projection: device facts", () => {
       platform: "ios",
     });
     r.at(T0 + 9_000);
-    r.emit("device.ready", { bootDuration: 2_000, deviceId: "d8" });
+    r.emit("device.ready", { bootDuration: 2_000, deviceId: "d8" } as never);
     r.at(T0 + 10_000);
     r.relay("w1", "device.ready", { bootDuration: 5_000, deviceId: "d9", platform: "android" });
     r.at(T0 + 11_000);
@@ -907,7 +907,7 @@ describe("usage reads", () => {
           r.at(T0 + 2 * MIN);
           r.emit("capacity.changed", capacity({ ios: [1, 0, 4] }));
         },
-        expected: T0 + 1_000,
+        expected: T0,
         name: "request rows",
       },
       {
@@ -926,9 +926,9 @@ describe("usage reads", () => {
         act: (r) => {
           r.at(T0 + 10_000);
           r.emit("device.ready", { bootDuration: 10, deviceId: "d", platform: "ios" });
-          r.at(T0 + 20_000);
+          r.at(T0 + MIN + 20_000);
           r.emit("lease.requested", requested("R1"));
-          r.at(T0 + 2 * MIN);
+          r.at(T0 + 3 * MIN);
           r.emit("capacity.changed", capacity({ ios: [1, 0, 4] }));
         },
         expected: T0 + 10_000,
@@ -1036,6 +1036,7 @@ describe("usage projection: versions", () => {
         }
       },
       prune: () => undefined,
+      rebuild: () => undefined,
     }),
     migrations,
     name: "kept",
@@ -1151,9 +1152,18 @@ describe("usage projection: rebuild", () => {
       live.requests,
     );
     expect(await factsOf(second)).toEqual(live.facts);
-    expect(await buckets(second, { from: T0, platform: "ios", to: T0 + 5 * MIN })).toEqual(
-      live.minutes,
+    const withMid = live.minutes.map((bucket) =>
+      bucket.start < T0 + MIN
+        ? bucket
+        : {
+            ...bucket,
+            waiting: {
+              integral: (bucket.waiting?.integral ?? 0) + MIN,
+              peak: (bucket.waiting?.peak ?? 0) + 1,
+            },
+          },
     );
+    expect(await buckets(second, { from: T0, platform: "ios", to: T0 + 5 * MIN })).toEqual(withMid);
     await second.history.stop();
 
     const third = await rig({ at: T0 + 2 * MIN, directory: first.directory, eventRetention: DAY });

@@ -42,7 +42,7 @@ export interface HistoryProjectionDefinition {
 export interface ProjectionHandle {
   apply(envelope: EventEnvelope): void;
   prune(now: number): void;
-  rebuild?(oldestEventAt: number | undefined): void;
+  rebuild(oldestEventAt: number | undefined): void;
 }
 
 export interface HistoryProjectionOptions {

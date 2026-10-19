@@ -27,7 +27,7 @@ export async function rebuildProjections(settings: {
   inTransaction(database, () => {
     const oldest = database.prepare("SELECT MIN(timestamp) AS oldest FROM events").get()?.oldest;
     for (const { projector } of targets) {
-      projector.rebuild?.(typeof oldest === "number" ? oldest : undefined);
+      projector.rebuild(typeof oldest === "number" ? oldest : undefined);
     }
   });
   let cursor = 0;

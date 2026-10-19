@@ -24,7 +24,7 @@ export function plainProjection(
 ): HistoryProjectionDefinition {
   return {
     check: () => true,
-    create,
+    create: (database) => ({ rebuild: () => undefined, ...create(database) }),
     migrations: [],
     name,
     version: 0,

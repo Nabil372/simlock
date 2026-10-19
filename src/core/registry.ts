@@ -136,7 +136,10 @@ export interface CreateLeaseInput {
 }
 
 export type RegistryDeviceEvent =
-  | { readonly event: "device.ready"; readonly payload: EventMap["device.ready"] }
+  | {
+      readonly event: "device.ready";
+      readonly payload: Omit<EventMap["device.ready"], "platform">;
+    }
   | { readonly event: "device.reclaimed"; readonly payload: EventMap["device.reclaimed"] }
   | { readonly event: "device.shutdown"; readonly payload: EventMap["device.shutdown"] }
   | {

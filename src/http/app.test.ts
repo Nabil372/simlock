@@ -1310,7 +1310,7 @@ describe("lease routes", () => {
     );
     eventBus.emit(
       "device.recovered",
-      { attempts: 1, deviceId: "dev_1", duration: 500, leaseId: "lse_1" },
+      { attempts: 1, deviceId: "dev_1", duration: 500, leaseId: "lse_1", platform: "ios" },
       "test",
     );
 

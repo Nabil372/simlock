@@ -702,7 +702,14 @@ describe("GatewayDispatcher", () => {
     const { dispatcher, eventBus } = harness();
     eventBus.emit(
       "lease.granted",
-      { deviceId: "dev_1", leaseId: "l1", requester: "a", requestId: "req_1", source: "warm" },
+      {
+        deviceId: "dev_1",
+        leaseId: "l1",
+        platform: "ios",
+        requester: "a",
+        requestId: "req_1",
+        source: "warm",
+      },
       "worker",
     );
 

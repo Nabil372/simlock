@@ -36,8 +36,8 @@ export interface EventMap {
     readonly source: "warm" | "booted" | "provisioned";
     /** ADR 0021: the gateway's request id, when this grant served a gateway dispatch. */
     readonly fleetRequestId?: string;
-    // why: events stored before this field existed lack it, and a rebuild replays them; every emitter now sets it.
-    readonly platform?: "ios" | "android";
+    // why: events stored before this field existed lack it and a rebuild replays them, so the projector reads it as optional.
+    readonly platform: "ios" | "android";
   };
   "lease.renewed": { readonly leaseId: string; readonly newDeadline: number };
   "lease.released": {
@@ -123,7 +123,7 @@ export interface EventMap {
   "device.ready": {
     readonly deviceId: string;
     readonly bootDuration: number;
-    readonly platform?: "ios" | "android";
+    readonly platform: "ios" | "android";
   };
   "device.reclaimed": {
     readonly deviceId: string;
@@ -149,7 +149,7 @@ export interface EventMap {
     readonly leaseId: string;
     readonly attempts: number;
     readonly duration: number;
-    readonly platform?: "ios" | "android";
+    readonly platform: "ios" | "android";
   };
   "device.recovery-failed": {
     readonly deviceId: string;
@@ -157,7 +157,7 @@ export interface EventMap {
     readonly attempts: number;
     readonly reason: string;
     readonly error: string;
-    readonly platform?: "ios" | "android";
+    readonly platform: "ios" | "android";
   };
   "device.quarantined": {
     readonly deviceId: string;
@@ -179,18 +179,18 @@ export interface EventMap {
     readonly attempts: number;
     readonly strategy: "erase" | "snapshot" | "wipe" | "uninstall";
     readonly missingApps?: readonly string[];
-    readonly platform?: "ios" | "android";
+    readonly platform: "ios" | "android";
   };
   "device.quarantine-abandoned": {
     readonly deviceId: string;
     readonly attempts: number;
-    readonly platform?: "ios" | "android";
+    readonly platform: "ios" | "android";
   };
   "device.quarantine-stranded": {
     readonly deviceId: string;
     readonly attempts: number;
     readonly error: string;
-    readonly platform?: "ios" | "android";
+    readonly platform: "ios" | "android";
   };
   "device.orphan-purged": {
     readonly driverDeviceId: string;

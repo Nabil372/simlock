@@ -1202,7 +1202,13 @@ describe("DaemonServer", () => {
 
     harness.eventBus.emit(
       "device.recovered",
-      { attempts: 2, deviceId: deviceId as string, duration: 30_000, leaseId },
+      {
+        attempts: 2,
+        deviceId: deviceId as string,
+        duration: 30_000,
+        leaseId,
+        platform: "ios",
+      },
       "test",
     );
     await expect(
@@ -1228,7 +1234,13 @@ describe("DaemonServer", () => {
     );
     harness.eventBus.emit(
       "device.recovered",
-      { attempts: 1, deviceId: "device-x", duration: 1_000, leaseId: "lease-x" },
+      {
+        attempts: 1,
+        deviceId: "device-x",
+        duration: 1_000,
+        leaseId: "lease-x",
+        platform: "ios",
+      },
       "test",
     );
 
