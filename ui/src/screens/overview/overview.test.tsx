@@ -161,6 +161,22 @@ describe("the overview screen", () => {
     }
   });
 
+  it("keeps the last figures with the refusal above them when a stats read is refused after an answer", () => {
+    const kept = withFigures({});
+    const stale = {
+      ...kept,
+      figures: { ...kept.figures, refusal: "The stats are not allowed." },
+    } as Overview;
+    const shown = text(
+      renderToStaticMarkup(<OverviewBody overview={stale} range="6h" onRange={() => undefined} />),
+    );
+
+    expect(shown.split("The stats are not allowed.")).toHaveLength(2);
+    expect(shown.indexOf("The stats are not allowed.")).toBeLessThan(shown.indexOf("Granted"));
+    expect(shown).toContain("Wait p95");
+    expect(shown).toContain("Leases held, last 6 hours");
+  });
+
   it("shows Loading… in the same two places while the stats read is loading", () => {
     const shown = text(
       renderToStaticMarkup(
