@@ -35,4 +35,12 @@ describe("ledger CSV", () => {
     expect(rows[5]).toBe(`a=b,x-y,,${tail}`);
     expect(rows[6]).toBe(`"'=1,2",plain,,${tail}`);
   });
+
+  it("writes a duration as whole milliseconds, rounding a fraction, and a time as ISO 8601 UTC", () => {
+    const csv = ledgerCsv([entry({ heldMs: 507_600.4, turnaroundMs: 508_000.6, waitMs: 400 })]);
+
+    expect(csv.split("\r\n")[1]).toBe(
+      "req_1,tok_ci,,ios,,,,2026-10-16T12:01:02.000Z,,,,400,507600,508001,open,false,,",
+    );
+  });
 });

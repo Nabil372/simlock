@@ -723,7 +723,7 @@ describe("usage reader: the ledger", () => {
     });
   });
 
-  it("usage.get's ledger marks a request still waiting at to as open, one granted after to as open with no grantedAt, source or workerId, a lease open at to as granted with no endedAt, endReason, heldMs or turnaroundMs, a rejection as rejected with its rejectedAt and reason, and a declined probe on a worker as declined", async () => {
+  it("usage.get's ledger marks a request still waiting at to as open, one granted after to as open with no grantedAt, source or workerId, a lease open at to as granted with no endedAt, endReason, heldMs or turnaroundMs, a rejection as rejected with its rejectedAt and reason, one after to as open with no rejectedAt or reason, and a declined probe on a worker as declined", async () => {
     const { ledger, rig } = await ledgerSetup();
     const entryOf = async () => {
       const { requests } = await ledger(T0, T0 + HOUR);
@@ -749,8 +749,10 @@ describe("usage reader: the ledger", () => {
     rig.emit("lease.granted", granted("L-HELD", "HELD"));
     rig.at(T0 + 59 * MIN);
     rig.emit("lease.requested", requested("LATE"));
+    rig.emit("lease.requested", requested("REJ-LATE"));
     rig.at(T0 + 61 * MIN);
     rig.emit("lease.granted", granted("L-LATE", "LATE"));
+    rig.emit("lease.rejected", rejected("REJ-LATE", "no-wait"));
     rig.at(T0 + 70 * MIN);
     rig.emit("lease.released", released("L-HELD"));
 
@@ -770,6 +772,10 @@ describe("usage reader: the ledger", () => {
       reason: "no-wait",
       rejectedAt: T0 + 5 * MIN,
     });
+    expect(entry("REJ-LATE")).toMatchObject({ outcome: "open" });
+    for (const absent of ["rejectedAt", "reason"]) {
+      expect(entry("REJ-LATE"), absent).not.toHaveProperty(absent);
+    }
     expect(entry("PROBE")).toMatchObject({ outcome: "declined", probe: true, reason: "no-wait" });
   });
 
