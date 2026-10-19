@@ -104,6 +104,29 @@ function region(page: Page, name: string) {
   return page.getByRole("region", { name, exact: true });
 }
 
+async function expectCounts(
+  page: Page,
+  name: string,
+  counts: Readonly<Record<string, number | undefined>>,
+): Promise<void> {
+  for (const [key, count] of Object.entries(counts)) {
+    if (count !== undefined) {
+      await expect(region(page, name)).toContainText(new RegExp(`${key}\\W*${count}\\b`));
+    }
+  }
+}
+
+async function expectRequesters(page: Page, requesters: Stats["requesters"]): Promise<void> {
+  for (const requester of requesters) {
+    const row = region(page, "Per requester")
+      .getByRole("row")
+      .filter({ hasText: requester.label ?? requester.id });
+    await expect(row).toContainText(
+      new RegExp(`${requester.requests}\\s*${requester.granted}\\s*${requester.rejected}`),
+    );
+  }
+}
+
 test.describe("the Usage page", () => {
   test("after a scripted run, /usage?range=24h shows the requests, grants by source, rejections by reason, wait p95, slots peak and mean and requester rows of GET /v1/stats?since=24h and simlock stats --since 24h --json, and its per-worker table has one row, the host", async ({
     page,
@@ -125,18 +148,8 @@ test.describe("the Usage page", () => {
       expect(await tileValue(page, "Granted")).toBe(String(stats.totals.granted));
       expect(await tileValue(page, "Rejected")).toBe(String(stats.totals.rejected.total));
       expect(await tileValue(page, "Wait p95")).toBe(waitText(stats.totals.wait.p95));
-      for (const [source, count] of Object.entries(stats.totals.bySource)) {
-        if (count !== undefined) {
-          await expect(region(page, "Grants by source")).toContainText(
-            new RegExp(`${source}\\W*${count}\\b`),
-          );
-        }
-      }
-      for (const [reason, count] of Object.entries(stats.totals.rejected.byReason)) {
-        await expect(region(page, "Rejections by reason")).toContainText(
-          new RegExp(`${reason}\\W*${count}\\b`),
-        );
-      }
+      await expectCounts(page, "Grants by source", stats.totals.bySource);
+      await expectCounts(page, "Rejections by reason", stats.totals.rejected.byReason);
       await expect(region(page, "Use over the range")).toContainText(
         `peak ${stats.totals.utilisation.slots.peak}`,
       );
@@ -149,14 +162,7 @@ test.describe("the Usage page", () => {
           return shown?.includes(`mean ${mean === null ? "—" : mean.toFixed(1)}`) ?? false;
         })
         .toBe(true);
-      for (const requester of stats.requesters) {
-        const row = region(page, "Per requester")
-          .getByRole("row")
-          .filter({ hasText: requester.label ?? requester.id });
-        await expect(row).toContainText(
-          new RegExp(`${requester.requests}\\s*${requester.granted}\\s*${requester.rejected}`),
-        );
-      }
+      await expectRequesters(page, stats.requesters);
       expect(stats.requesters.map((entry) => entry.id)).toEqual(
         expect.arrayContaining(["holder", "waiter", "refused"]),
       );
