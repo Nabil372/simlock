@@ -38,6 +38,8 @@ const OWN_ONLY: ReadonlySet<string> = new Set([
 // why: a gateway builds a lease's rows from the workers' relayed copy, never from its own grant or end.
 const JOINED: ReadonlySet<string> = new Set(["lease.expired", "lease.granted", "lease.released"]);
 
+type Route = (payload: Readonly<Record<string, unknown>>, origin: Origin, at: number) => void;
+
 class Projector implements ProjectionHandle {
   readonly #database: SqliteDatabase;
   readonly #options: HistoryProjectionOptions;
@@ -50,6 +52,20 @@ class Projector implements ProjectionHandle {
   readonly #queues = new Map<string, { plain: number; physical: number }>();
   readonly #levels = new Map<string, Map<string, Map<UsageValue, number>>>();
   readonly #connected = new Set<string>();
+
+  readonly #routes = new Map<string, Route>([
+    ["lease.requested", (payload, _origin, at) => this.#requested(payload, at)],
+    ["lease.rejected", (payload, _origin, at) => this.#rejected(payload, at)],
+    ["lease.declined", (payload, origin, at) => this.#declined(payload, origin, at)],
+    ["request.granted", (payload, _origin, at) => this.#dispatched(payload, at)],
+    ["lease.granted", (payload, origin, at) => this.#granted(payload, origin, at)],
+    ["lease.released", (payload, origin, at) => this.#ended("lease.released", payload, origin, at)],
+    ["lease.expired", (payload, origin, at) => this.#ended("lease.expired", payload, origin, at)],
+    ["capacity.changed", (payload, origin, at) => this.#capacity(payload, origin, at)],
+    ["queue.changed", (payload, origin, at) => this.#queue(payload, origin, at)],
+    ["daemon.stopping", (_payload, _origin, at) => this.#stopping(at)],
+    ["daemon.started", (_payload, _origin, at) => this.#started(at)],
+  ]);
 
   constructor(database: SqliteDatabase, options: HistoryProjectionOptions) {
     this.#database = database;
@@ -85,41 +101,7 @@ class Projector implements ProjectionHandle {
   ): void {
     if (origin.relayed && OWN_ONLY.has(event)) return;
     if (JOINED.has(event) && this.#options.fleet && !origin.relayed) return;
-    switch (event) {
-      case "lease.requested":
-        this.#requested(payload, at);
-        return;
-      case "lease.rejected":
-        this.#rejected(payload, at);
-        return;
-      case "lease.declined":
-        this.#declined(payload, origin, at);
-        return;
-      case "request.granted":
-        this.#dispatched(payload, at);
-        return;
-      case "lease.granted":
-        this.#granted(payload, origin, at);
-        return;
-      case "lease.released":
-      case "lease.expired":
-        this.#ended(event, payload, origin, at);
-        return;
-      case "capacity.changed":
-        this.#capacity(payload, origin, at);
-        return;
-      case "queue.changed":
-        this.#queue(payload, origin, at);
-        return;
-      case "daemon.stopping":
-        this.#stopping(at);
-        return;
-      case "daemon.started":
-        this.#started(at);
-        return;
-      default:
-        return;
-    }
+    this.#routes.get(event)?.(payload, origin, at);
   }
 
   prune(now: number): void {

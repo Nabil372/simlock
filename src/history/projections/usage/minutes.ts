@@ -44,6 +44,34 @@ const CLOSE_OPEN_SQL = `UPDATE minute_rows SET carryUntil = minute + ${MINUTE_MS
     SELECT MAX(later.minute) FROM minute_rows later
     WHERE later.workerId = minute_rows.workerId AND later.platform = minute_rows.platform)`;
 
+function foldFigure(
+  row: MinuteRowData,
+  value: UsageValue,
+  step: {
+    readonly level: number;
+    readonly previous: number | undefined;
+    readonly rest: number;
+    readonly settled: number;
+  },
+): void {
+  const figure = row.figures.get(value);
+  if (figure === undefined) {
+    row.figures.set(value, {
+      integral: step.level * step.rest,
+      last: step.level,
+      peak: step.level,
+    });
+    return;
+  }
+  figure.integral += (step.level - (step.previous ?? 0)) * step.rest;
+  figure.peak = Math.max(step.settled, step.level);
+  figure.last = step.level;
+}
+
+function heldLevel(state: KeyState, held: Held | undefined, figure: Figure | undefined) {
+  return state.known ? held?.level : (figure?.last ?? undefined);
+}
+
 // why: a level replaced in the same ms it began held for no time, so it is no peak of the minute.
 function settledPeak(
   figure: Figure | undefined,
@@ -81,15 +109,9 @@ export class MinuteRecorder {
     const row = this.#rowFor(state, minute, at);
     const figure = row.figures.get(value);
     const held = state.known ? state.values.get(value) : undefined;
-    const previous = state.known ? held?.level : (figure?.last ?? undefined);
+    const previous = heldLevel(state, held, figure);
     const settled = settledPeak(figure, held, minute, at);
-    if (figure === undefined) {
-      row.figures.set(value, { integral: level * (end - at), last: level, peak: level });
-    } else {
-      figure.integral += (level - (previous ?? 0)) * (end - at);
-      figure.peak = Math.max(settled, level);
-      figure.last = level;
-    }
+    foldFigure(row, value, { level, previous, rest: end - at, settled });
     row.carryUntil = null;
     this.#save(worker, platform, minute, row);
     state.known = true;
