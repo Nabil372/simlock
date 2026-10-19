@@ -35,7 +35,7 @@ Uses: nothing from other components. Imported by: every component that touches t
 pre-creates, are opened mode `0600`. `sqlite.ts` is the only file that names `node:sqlite`,
 loaded with a dynamic `import()` on first open (Node 22.13 or later; below it `open` throws
 `SqliteUnavailableError`). `filterSqliteExperimentalWarning` drops Node's one SQLite
-`ExperimentalWarning` and no other; both process entries call it first.
+`ExperimentalWarning` and no other; the daemon's entry calls it first, and the CLI calls it just before it reads the history.
 
 ## Rules
 

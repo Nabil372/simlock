@@ -1,5 +1,5 @@
-// why: `--since` without `--follow` never launches a daemon -- with none running the event file
-// is read here instead, through the bus's own reader, loaded only for that path.
+// why: `--since` without `--follow` never launches a daemon -- with none running the event history
+// is read here instead, through the history reader, loaded only for that path.
 import { parseDuration } from "../duration.js";
 import { asDaemonRefusal } from "../errors.js";
 import { connectDaemonClient } from "../connect.js";

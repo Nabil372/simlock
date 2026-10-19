@@ -227,7 +227,9 @@ export function buildCliEnvironment(
     },
     readEventHistory: async (sinceTs) => {
       const { openHistoryReader } = await import("../history/index.js");
-      const { NodeSqliteOpener } = await import("../ports/index.js");
+      const { filterSqliteExperimentalWarning, NodeSqliteOpener } =
+        await import("../ports/index.js");
+      filterSqliteExperimentalWarning();
       return openHistoryReader({
         dataDirectory,
         filesystem,
