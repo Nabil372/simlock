@@ -8,6 +8,7 @@ import { HostLoadSampler } from "../host-load/index.js";
 import {
   createEventHistory,
   type EventHistoryHandle,
+  HISTORY_DB_NAME,
   HISTORY_PROJECTIONS,
 } from "../history/index.js";
 import {
@@ -499,6 +500,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
       options.defaultRequesterId ?? process.env.SIMLOCK_AGENT_ID ?? String(process.pid),
     eventBus,
     eventHistory,
+    historyPath: join(dataDirectory, HISTORY_DB_NAME),
     healthMonitor: leasing.healthMonitor,
     physicalDeviceWatcher: leasing.physicalDeviceWatcher,
     hostFacts: () => fitHostFacts(hostFacts.current()),
@@ -846,6 +848,25 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
       ? undefined
       : new HostLoadSampler({ clock, logger: logger.child("host-load"), probe: hostLoadProbe });
 
+  const gatewayDispatcher = new GatewayDispatcher({
+    awaitReady: () => Promise.resolve(),
+    clock,
+    errorCode: classifyError,
+    closeUplinksForToken: (tokenId) => gatewayService.closeLinksForToken(tokenId),
+    config,
+    coordinator: fleetCoordinator,
+    directory: gatewayService,
+    eventHistory,
+    health: () => daemon.health,
+    host: fitHostFacts({ ...options.hostSystem, tools: [] }),
+    ...(hostLoad === undefined ? {} : { load: () => fitHostLoad(hostLoad.current()) }),
+    leaseIndex,
+    logger: logger.child("gateway"),
+    tokens,
+    workers: gatewayService.workers,
+    historyPath: join(dataDirectory, HISTORY_DB_NAME),
+  });
+
   const daemon = new DaemonServer({
     adminSecret,
     clock,
@@ -853,25 +874,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
     defaultRequesterId: process.env.SIMLOCK_AGENT_ID ?? String(process.pid),
     ...(hostLoad === undefined ? {} : { hostLoad }),
     // ADR 0005 §32: the contract's second implementation, serving the same transport.
-    dispatcher: new GatewayDispatcher({
-      awaitReady: () => Promise.resolve(),
-      clock,
-      errorCode: classifyError,
-      // C-2: makes `token.revoke` actually close the uplink it names (ADR 0005 §8), rather than
-      // only writing the store and waiting for that worker's next reconnect.
-      closeUplinksForToken: (tokenId) => gatewayService.closeLinksForToken(tokenId),
-      config,
-      coordinator: fleetCoordinator,
-      directory: gatewayService,
-      eventHistory,
-      health: () => daemon.health,
-      host: fitHostFacts({ ...options.hostSystem, tools: [] }),
-      ...(hostLoad === undefined ? {} : { load: () => fitHostLoad(hostLoad.current()) }),
-      leaseIndex,
-      logger: logger.child("gateway"),
-      tokens,
-      workers: gatewayService.workers,
-    }),
+    dispatcher: gatewayDispatcher,
     eventBus,
     host: new DaemonEndpointHost({
       connector: options.ipc,
@@ -898,6 +901,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
       fleetCoordinator.start();
     },
     dispose: async () => {
+      gatewayDispatcher.dispose();
       fleetCoordinator.dispose();
       gatewayOwnerRoutedFacts.dispose();
       await gatewayService.stop();

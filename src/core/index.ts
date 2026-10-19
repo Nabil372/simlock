@@ -209,3 +209,10 @@ export {
   type IdleVictimScope,
 } from "./idle-order.js";
 export { ReclaimCoordinator } from "./reclaim-coordinator.js";
+export {
+  createUsageReader,
+  type UsageGetInput,
+  type UsageReader,
+  type UsageReaderDeps,
+  type UsageResult,
+} from "./usage/index.js";

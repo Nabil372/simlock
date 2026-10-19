@@ -144,6 +144,7 @@ export interface DaemonServerEngineOptions {
   readonly components: Pick<ComponentInstaller, "install" | "inProgress" | "list" | "remove">;
   readonly doctor?: Doctor;
   readonly eventHistory: Pick<EventHistoryHandle, "replay" | "status">;
+  readonly historyPath?: string;
   readonly leases: LeaseCommands;
   readonly hostFacts: () => HostFacts;
   readonly load?: () => StatusLoad | undefined;
@@ -293,6 +294,7 @@ function buildDispatcher(
     errorCode: classifyError,
     eventBus: options.eventBus,
     eventHistory: options.eventHistory,
+    ...(options.historyPath === undefined ? {} : { historyPath: options.historyPath }),
     health: hooks.health,
     hostFacts: options.hostFacts,
     ...(options.load === undefined ? {} : { load: options.load }),

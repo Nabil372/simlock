@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeDriver, testComponentWiring } from "../core/testing.js";
 
 import { EventBus } from "../bus/index.js";
-import { ringEventHistory } from "../history/testing.js";
+import { removeUsageRigs, ringEventHistory, usageRig, type UsageRig } from "../history/testing.js";
 import {
   CleanupReaper,
   type Config,
@@ -81,12 +81,15 @@ interface ServerFrame {
 
 const runningDaemons: DaemonServer[] = [];
 const temporaryDirectories: string[] = [];
+const usageRigs: UsageRig[] = [];
 
 afterEach(async () => {
   await Promise.all(runningDaemons.splice(0).map((daemon) => daemon.stop("test")));
   await Promise.all(
     temporaryDirectories.splice(0).map((path) => rm(path, { force: true, recursive: true })),
   );
+  await Promise.all(usageRigs.splice(0).map((rig) => rig.close()));
+  await removeUsageRigs();
 });
 
 describe("DaemonServer", () => {
@@ -209,7 +212,7 @@ describe("DaemonServer", () => {
     [37, "cannot read config.get's capabilities"],
     [38, "cannot read agent-device's section under config.get's capabilities"],
   ])(
-    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 44, to a client on protocol %i, which %s",
+    "answers PROTOCOL_VERSION_UNSUPPORTED, naming protocol 45, to a client on protocol %i, which %s",
     async (version) => {
       const harness = await createHarness();
       const previous = await createClient(harness.socketPath);
@@ -219,7 +222,7 @@ describe("DaemonServer", () => {
       ).resolves.toMatchObject({
         error: {
           code: "PROTOCOL_VERSION_UNSUPPORTED",
-          details: { client: { min: version, max: version }, daemon: { min: 44, max: 44 } },
+          details: { client: { min: version, max: version }, daemon: { min: 45, max: 45 } },
         },
         ok: false,
       });
@@ -457,7 +460,7 @@ describe("DaemonServer", () => {
   });
 
   it("routes usage.get to the dispatcher with the window the frame carries", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ withHistory: true });
     const client = await createClient(harness.socketPath);
     await hello(client);
 
@@ -3236,6 +3239,7 @@ async function helloAs(
 async function createHarness(
   options: {
     readonly estimateMs?: Partial<Record<"boot" | "provision", number>>;
+    readonly withHistory?: boolean;
     readonly latencyMs?: Partial<Record<"makeReady" | "provision", number>>;
     readonly lease?: Partial<Config["lease"]>;
     readonly socketPath?: string;
@@ -3272,6 +3276,8 @@ async function createHarness(
   const clock = options.clock ?? new FakeClock(1_000);
   const eventBus = new EventBus(clock);
   const stateFilesystem = options.stateFilesystem ?? new MemoryFilesystem();
+  const history = options.withHistory === true ? await usageRig() : undefined;
+  if (history !== undefined) usageRigs.push(history);
   const registry = await Registry.load({
     clock,
     eventBus,
@@ -3338,7 +3344,8 @@ async function createHarness(
       : { driverRejections: options.driverRejections }),
     defaultRequesterId: "test-process",
     eventBus,
-    eventHistory: ringEventHistory(eventBus),
+    eventHistory: history?.history ?? ringEventHistory(eventBus),
+    ...(history === undefined ? {} : { historyPath: history.historyPath }),
     host:
       options.host ??
       new DaemonEndpointHost({

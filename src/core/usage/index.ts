@@ -1,4 +1,8 @@
+import { Worker } from "node:worker_threads";
+
 import type { UsageOutput } from "../../contract/index.js";
+import { usageBucket } from "./compute-usage.js";
+import type { ReadRequest, ReadResponse } from "./read-thread.js";
 
 export interface UsageGetInput {
   readonly from: number;
@@ -23,9 +27,141 @@ export interface UsageReader {
   stop(): Promise<void>;
 }
 
-export function createUsageReader(_deps: UsageReaderDeps): UsageReader {
+const READ_TIMEOUT_MS = 30_000;
+
+type Thread =
+  | { readonly kind: "figures"; readonly figures: UsageOutput }
+  | {
+      readonly kind: "not-kept";
+      readonly oldestTs: number;
+    };
+
+interface Pending {
+  resolve(thread: Thread): void;
+  reject(error: Error): void;
+  readonly timer: NodeJS.Timeout;
+}
+
+// why: a worker thread runs the file natively, so a source run (tests) maps `.js` imports to `.ts` and strips types itself.
+const SOURCE_LOADER = `export async function resolve(s,c,n){try{return await n(s,c)}catch(e){if(e.code==="ERR_MODULE_NOT_FOUND"&&s.endsWith(".js"))return n(s.slice(0,-3)+".ts",c);throw e}}`;
+const SOURCE_BOOT = `import{register}from"node:module";register("data:text/javascript,"+encodeURIComponent(${JSON.stringify(SOURCE_LOADER)}));`;
+
+function startThread(): Worker {
+  const fromSource = import.meta.url.endsWith(".ts");
+  const url = new URL(fromSource ? "./read-thread.ts" : "./read-thread.js", import.meta.url);
+  return fromSource
+    ? new Worker(url, {
+        execArgv: [
+          "--experimental-transform-types",
+          "--disable-warning=ExperimentalWarning",
+          "--import",
+          `data:text/javascript,${encodeURIComponent(SOURCE_BOOT)}`,
+        ],
+      })
+    : new Worker(url);
+}
+
+export function createUsageReader(deps: UsageReaderDeps): UsageReader {
+  let thread: Worker | undefined;
+  let nextId = 0;
+  const pending = new Map<number, Pending>();
+  const inFlight = new Map<string, Promise<Thread>>();
+
+  const failAll = (error: Error): void => {
+    for (const [id, entry] of pending) {
+      pending.delete(id);
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+  };
+
+  const drop = (worker: Worker, error: Error): void => {
+    if (thread === worker) thread = undefined;
+    failAll(error);
+    void worker.terminate();
+  };
+
+  const ensureThread = (): Worker => {
+    if (thread !== undefined) return thread;
+    const worker = startThread();
+    thread = worker;
+    // why: an idle read thread must not keep the process alive.
+    worker.unref();
+    worker.on("message", (response: ReadResponse) => {
+      const entry = pending.get(response.id);
+      if (entry === undefined) return;
+      pending.delete(response.id);
+      clearTimeout(entry.timer);
+      if ("error" in response) entry.reject(new Error(response.error));
+      else if ("notKept" in response)
+        entry.resolve({ kind: "not-kept", oldestTs: response.notKept });
+      else entry.resolve({ figures: response.figures, kind: "figures" });
+    });
+    worker.on("error", (error: unknown) =>
+      drop(worker, error instanceof Error ? error : new Error(String(error))),
+    );
+    worker.on("exit", () => drop(worker, new Error("The usage read thread exited")));
+    return worker;
+  };
+
+  const read = (request: Omit<ReadRequest, "id">): Promise<Thread> =>
+    new Promise<Thread>((resolve, reject) => {
+      const worker = ensureThread();
+      const id = (nextId += 1);
+      const timer = setTimeout(
+        () => drop(worker, new Error("The usage read thread did not answer in time")),
+        READ_TIMEOUT_MS,
+      );
+      pending.set(id, { reject, resolve, timer });
+      worker.postMessage({ ...request, id } satisfies ReadRequest);
+    });
+
+  const labelled = async (usage: UsageOutput): Promise<UsageOutput> => {
+    if (usage.requesters.length === 0) return usage;
+    const tokens = await deps.tokenLabels();
+    const prefix = deps.fleet?.requesterPrefix;
+    return {
+      ...usage,
+      requesters: usage.requesters.map((entry) => {
+        const own = prefix !== undefined && entry.id.startsWith(prefix);
+        const label = tokens.get(own ? entry.id.slice(prefix.length) : entry.id);
+        return label === undefined ? entry : { ...entry, label };
+      }),
+    };
+  };
+
   return {
-    get: () => Promise.resolve({ kind: "unavailable" }),
-    stop: () => Promise.resolve(),
+    async get({ from, to }) {
+      if (!deps.opened()) return { kind: "unavailable" };
+      const bucket = usageBucket(from, to);
+      const key = `${bucket.from}:${to}`;
+      let running = inFlight.get(key);
+      if (running === undefined) {
+        const started = read({
+          bucketMs: bucket.bucketMs,
+          fleet: deps.fleet !== undefined,
+          from: bucket.from,
+          historyPath: deps.historyPath,
+          to,
+          workers: deps.workers(),
+        });
+        const settle = () => {
+          if (inFlight.get(key) === started) inFlight.delete(key);
+        };
+        started.then(settle, settle);
+        inFlight.set(key, started);
+        running = started;
+      }
+      const answer = await running;
+      return answer.kind === "not-kept"
+        ? answer
+        : { kind: "figures", usage: await labelled(answer.figures) };
+    },
+    async stop() {
+      const worker = thread;
+      thread = undefined;
+      failAll(new Error("The usage reader was stopped"));
+      if (worker !== undefined) await worker.terminate();
+    },
   };
 }

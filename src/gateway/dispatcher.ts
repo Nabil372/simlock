@@ -33,6 +33,7 @@
  */
 import type { z } from "zod";
 
+import { createUsageReader, type UsageReader } from "../core/index.js";
 import type { EventHistoryHandle } from "../history/index.js";
 import {
   consoleUrlField,
@@ -45,6 +46,7 @@ import {
 import {
   DispatchError,
   runDispatch,
+  usageAnswer,
   type DispatchSession,
   type ErasedHandler,
 } from "../daemon/dispatch.js";
@@ -147,9 +149,26 @@ export class GatewayDispatcher {
   readonly #logger: Logger;
   readonly #dispatchLogger: Logger;
   readonly #handlers: Record<Exclude<OperationName, "daemon.stop">, ErasedHandler>;
+  readonly #usage: UsageReader;
 
   constructor(private readonly options: GatewayDispatcherOptions) {
     this.#logger = options.logger ?? new NoopLogger();
+    this.#usage = createUsageReader({
+      fleet: { requesterPrefix: options.leaseIndex.requesterPrefix },
+      historyPath: options.historyPath ?? "",
+      opened: () => options.historyPath !== undefined && options.eventHistory.status().opened,
+      tokenLabels: async () =>
+        new Map(
+          ((await options.tokens?.list()) ?? []).flatMap((token) =>
+            token.label === undefined ? [] : [[token.id, token.label] as const],
+          ),
+        ),
+      workers: () =>
+        options.workers.views().map(({ id, label }) => ({
+          id,
+          ...(label === undefined ? {} : { label }),
+        })),
+    });
     this.#dispatchLogger = this.#logger.child("dispatch");
     this.#handlers = {
       "catalog.get": this.#catalogGet,
@@ -211,6 +230,10 @@ export class GatewayDispatcher {
     };
   }
 
+  dispose(): void {
+    void this.#usage.stop();
+  }
+
   dispatch<Op extends OperationName>(
     operation: Op,
     rawInput: unknown,
@@ -269,9 +292,7 @@ export class GatewayDispatcher {
 
   #configGet: Handler<"config.get"> = () => this.options.config;
 
-  #usageGet: Handler<"usage.get"> = () => {
-    throw new Error("usage.get is not implemented");
-  };
+  #usageGet: Handler<"usage.get"> = (input) => usageAnswer(this.#usage.get(input));
 
   #eventsReplay: Handler<"events.replay"> = (input) =>
     this.options.eventHistory.replay(input.sinceTs === undefined ? {} : { sinceTs: input.sinceTs });

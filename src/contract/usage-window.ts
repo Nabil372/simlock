@@ -1,3 +1,5 @@
+import { parseDurationMs } from "./duration.js";
+
 export interface UsageWindowAsk {
   readonly since?: string;
   readonly from?: string;
@@ -19,6 +21,41 @@ export type UsageWindowAnswer =
   | { readonly window: { readonly from: number; readonly to: number } }
   | { readonly refused: UsageWindowRefusal };
 
-export function usageWindow(_ask: UsageWindowAsk, _now: number): UsageWindowAnswer {
-  throw new Error("usageWindow is not implemented");
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+
+function parseTime(value: string): number | undefined {
+  if (!ISO_TIME.test(value)) return undefined;
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? undefined : time;
+}
+
+export function usageWindow(ask: UsageWindowAsk, now: number): UsageWindowAnswer {
+  if (ask.since !== undefined && ask.from !== undefined) {
+    return { refused: { parameter: "from", problem: "since-and-from" } };
+  }
+  if (ask.to !== undefined && ask.from === undefined) {
+    return { refused: { parameter: "to", problem: "to-without-from" } };
+  }
+  if (ask.from === undefined) {
+    const span = ask.since === undefined ? DAY_MS : parseDurationMs(ask.since);
+    if (span === undefined) {
+      return {
+        refused: { parameter: "since", problem: "bad-duration", value: ask.since as string },
+      };
+    }
+    return { window: { from: now - span, to: now } };
+  }
+  const from = parseTime(ask.from);
+  if (from === undefined) {
+    return { refused: { parameter: "from", problem: "bad-time", value: ask.from } };
+  }
+  const to = ask.to === undefined ? now : parseTime(ask.to);
+  if (to === undefined) {
+    return { refused: { parameter: "to", problem: "bad-time", value: ask.to as string } };
+  }
+  return from < to
+    ? { window: { from, to } }
+    : { refused: { parameter: "from", problem: "not-before-to" } };
 }

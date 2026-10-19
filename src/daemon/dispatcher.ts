@@ -33,6 +33,8 @@ import {
   type WarmPoolReader,
   type CatalogReader,
   type PassthroughResolver,
+  createUsageReader,
+  type UsageReader,
 } from "../core/index.js";
 import {
   type DeviceModeReader,
@@ -69,6 +71,7 @@ import type { TokenStore } from "../http/token-store.js";
 import {
   DispatchError,
   runDispatch,
+  usageAnswer,
   type DispatchSession,
   type ErasedHandler,
 } from "./dispatch.js";
@@ -263,8 +266,28 @@ export class Dispatcher {
   /** Ends the bus subscriptions that drop `#viewCatalog`; see `dispose`. */
   readonly #unsubscribe: (() => void)[] = [];
 
+  readonly #usage: UsageReader;
+
   constructor(private readonly options: DispatcherOptions) {
     this.#logger = options.logger ?? new NoopLogger();
+    this.#usage = createUsageReader({
+      historyPath: options.historyPath ?? "",
+      opened: () => options.historyPath !== undefined && options.eventHistory.status().opened,
+      tokenLabels: async () =>
+        new Map(
+          ((await options.tokens?.list()) ?? []).flatMap((token) =>
+            token.label === undefined ? [] : [[token.id, token.label] as const],
+          ),
+        ),
+      workers: () => [
+        {
+          id: options.instanceId,
+          ...(options.config.gateway.label === undefined
+            ? {}
+            : { label: options.config.gateway.label }),
+        },
+      ],
+    });
     // Observers only (architecture rule 5): dropping a kept read decides nothing.
     for (const event of WORKER_VIEW_CATALOG_EVENTS) {
       const unsubscribe = options.eventBus?.subscribe(event, () => {
@@ -317,6 +340,7 @@ export class Dispatcher {
   dispose(): void {
     for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
     this.#viewCatalog = undefined;
+    void this.#usage.stop();
   }
 
   dispatch<Op extends OperationName>(
@@ -784,9 +808,7 @@ export class Dispatcher {
     return this.options.nuke.run({ deleteDevices: input.deleteDevices ?? false });
   };
 
-  #usageGet: Handler<"usage.get"> = () => {
-    throw new Error("usage.get is not implemented");
-  };
+  #usageGet: Handler<"usage.get"> = (input) => usageAnswer(this.#usage.get(input));
 
   #eventsReplay: Handler<"events.replay"> = (input) =>
     this.options.eventHistory.replay(input.sinceTs === undefined ? {} : { sinceTs: input.sinceTs });

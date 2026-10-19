@@ -47,7 +47,7 @@ describe("helloRequestSchema", () => {
 });
 
 describe("PROTOCOL_VERSION_RANGE", () => {
-  it("is 44, for the history rebuild fields of status.get and the metrics section of config.get", () => {
-    expect(PROTOCOL_VERSION_RANGE).toEqual({ max: 44, min: 44 });
+  it("is 45, for usage.get and the history errors", () => {
+    expect(PROTOCOL_VERSION_RANGE).toEqual({ max: 45, min: 45 });
   });
 });

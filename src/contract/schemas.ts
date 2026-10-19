@@ -1309,7 +1309,18 @@ export const statusLeaseSchema = leaseRecordSchema.extend({
   workerId: z.string().optional(),
 });
 
-export const usageWindowSchema = z.object({ from: z.number(), to: z.number() });
+const USAGE_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** `usage.get`'s input: wire input, so both ends are bounded before anything is read (safety rule 10). */
+export const usageWindowSchema = z
+  .object({
+    from: z.number().int().min(0).max(MAX_DATE_MS),
+    to: z.number().int().min(0).max(MAX_DATE_MS),
+  })
+  .refine((window) => window.from < window.to, { message: "from must be before to" })
+  .refine((window) => window.to - window.from <= USAGE_MAX_WINDOW_MS, {
+    message: "the window must not be longer than 90 days",
+  });
 
 const usageSamplesSchema = z.object({
   count: z.number().int().nonnegative(),

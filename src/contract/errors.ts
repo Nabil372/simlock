@@ -101,6 +101,8 @@ export interface ErrorDetailsMap {
   UNKNOWN_PASSTHROUGH_TOOL: { readonly tool: string };
   EXEC_TIMEOUT: Record<string, never>;
   DOCTOR_UNAVAILABLE: Record<string, never>;
+  HISTORY_NOT_KEPT: { readonly oldestTs: number };
+  HISTORY_UNAVAILABLE: Record<string, never>;
   NUKE_UNAVAILABLE: Record<string, never>;
   INTERNAL: Record<string, never>;
 
@@ -163,6 +165,7 @@ const CODES_WITH_DECLARED_DETAILS_BY_CODE: Record<CodeWithDeclaredDetails, true>
   RELAY_TARGET_MISSING: true,
   RUNTIME_MISSING: true,
   UNKNOWN_MODEL: true,
+  HISTORY_NOT_KEPT: true,
   INSUFFICIENT_DISK_SPACE: true,
   LICENSE_NOT_ACCEPTED: true,
   DOWNLOAD_TIMEOUT: true,
@@ -351,6 +354,13 @@ export const ERROR_TABLE: { readonly [Code in SimlockErrorCode]: ErrorTableEntry
     httpStatus: 503,
   },
   NUKE_UNAVAILABLE: { code: "NUKE_UNAVAILABLE", kind: "domain", cliExitCode: 1, httpStatus: 503 },
+  HISTORY_NOT_KEPT: { code: "HISTORY_NOT_KEPT", kind: "domain", cliExitCode: 12, httpStatus: 422 },
+  HISTORY_UNAVAILABLE: {
+    code: "HISTORY_UNAVAILABLE",
+    kind: "domain",
+    cliExitCode: 1,
+    httpStatus: 503,
+  },
   INTERNAL: { code: "INTERNAL", kind: "domain", cliExitCode: 1, httpStatus: 500 },
   // 501, not 400/503: the request was well-formed and the daemon is healthy -- this endpoint
   // simply does not implement that operation, which is exactly what "Not Implemented" says.

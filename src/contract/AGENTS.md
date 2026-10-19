@@ -55,7 +55,7 @@ Three identities:
 
 ## Protocol version
 
-- Now `{ min: 44, max: 44 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
+- Now `{ min: 45, max: 45 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
 - Every change to a contract shape bumps it by one in the same PR. Move `min` too, unless
   a compatibility path stays side by side.
 - `hello` picks the highest overlap. None → `PROTOCOL_VERSION_UNSUPPORTED` with both ranges.
