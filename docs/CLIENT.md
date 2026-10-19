@@ -15,7 +15,7 @@ import { connectSimlockAdmin } from "simlock/admin"; // agent + admin role
 
 `connectSimlockAdmin` returns a superset of `connectSimlock`'s client — every
 agent-role method plus the admin-role ones (`list`, `runCleanup`, `runNuke`,
-`getConfig` (its `capabilities` block holds each optional module's section), `stopDaemon`, `replayEvents`/`subscribeEvents` (each event carries an `id`),
+`getConfig` (its `capabilities` block holds each optional module's section), `stopDaemon`, `replayEvents`/`subscribeEvents` (each event carries an `id`), `usage`,
 `createToken`/`listTokens`/`revokeToken`, `installComponent`, `removeComponent`,
 `addDevice`, `removeDevice`). The split exists so
 `simlock/client` doesn't even show admin methods in a caller's editor; the
@@ -238,6 +238,27 @@ Every exported type — `LeaseRequestInput`, `LeaseGrant`, `LeaseRecord`,
 and MCP's tool schemas now share. Nothing core-private
 (`DeviceRecord`/`LeaseRecord`-the-core-type) ever appears on this surface;
 see `src/simlock-client/no-core-leak.test.ts`.
+
+## How the fleet was used: `usage`
+
+```ts
+const usage = await admin.usage({ from: Date.now() - 24 * 3_600_000, to: Date.now() });
+usage.totals.requests;                 // requests in the window
+usage.totals.wait.p95;                 // milliseconds, null with no samples
+usage.workers.map((worker) => worker.id);
+```
+
+`usage({ from, to })` takes two epoch-millisecond times, `from` before `to`
+and at most 90 days apart; anything else rejects with `BAD_REQUEST` before
+anything is sent. It answers the figures `simlock stats --json` prints:
+`window` (`from` moved down to the start of its bucket), `bucketMs`,
+`coversFrom` and `partial` (true when the history holds figures for only the
+later part of the window), `totals`, `platforms.ios` and `platforms.android`,
+`workers`, `requesters` and a `series` of up to 200 points. Figures are read from
+the rows of `history.db`, so they reach back as far as `metrics.retention`.
+It rejects with `HISTORY_NOT_KEPT` (`details.oldestTs`) when the window ends
+before the oldest figure, and with `HISTORY_UNAVAILABLE` when the daemon could
+not open `history.db`.
 
 ## Running a command on the leased device: `exec`
 

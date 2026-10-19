@@ -3,7 +3,7 @@
 Part of the user manual: every command the simlock CLI is expected to
 implement. Results are JSON on **stdout**; progress/diagnostics are JSON
 lines on **stderr** — this is the default output, not an opt-in, because
-agents are the primary audience. `status`, `catalog`, and
+agents are the primary audience. `status`, `catalog`, `stats` and
 `daemon <start|stop|status|logs>` are the exception: they default to a
 human-oriented view for interactive/operator use and accept `--json` to
 switch to the structured form. Every other command's output is already
@@ -80,6 +80,7 @@ command starts it again) to bring the platform up.
 | 1 | `INTERNAL` | internal / unexpected error |
 | 1 | `DAEMON_STARTUP_FAILED` | the daemon was started but did not accept connections before the startup timeout |
 | 1 | `PROVISION_FAILED` | creating a device for the request failed twice; the message is the driver's error |
+| 1 | `HISTORY_UNAVAILABLE` | `stats` while `history.db` could not be opened, so the usage figures cannot be read; the daemon's log says why |
 | 1 | `WORKER_UNREACHABLE` | the gateway cannot reach the worker this lease or request lives on (its uplink is down), or a worker named with `component install --worker` cannot be asked |
 | 2 | `USAGE` | usage error (bad flags, missing required args, unknown command) |
 | 2 | `BAD_FRAME` | malformed request frame sent to the daemon |
@@ -108,6 +109,7 @@ command starts it again) to bring the platform up.
 | 12 | `COMPONENT_NOT_OWNED` | `component remove` of a component Simlock did not install, or one that changed on disk since |
 | 12 | `DEVICE_NOT_ENROLLABLE` | `device add` of a device that cannot be enrolled; the message says why |
 | 12 | `UNKNOWN_DEVICE` | `device remove` of an ID that is not an enrolled device |
+| 12 | `HISTORY_NOT_KEPT` | `stats` for a window that ends before the oldest usage figure the history holds; the message names when the figures start |
 | 12 | `COMPONENT_IN_USE` | `component remove` of a component a device uses, Simlock's or your own |
 | 13 | `REQUESTER_ALREADY_LEASED` | requester already holds `lease.maxPerRequester` leases (default 1) or has a pending request; release the named lease first |
 | 13 | `LEASE_ID_TAKEN` | `lease --lease-id` named an ID an active lease or a waiting request already holds |
@@ -2333,6 +2335,55 @@ gateway's order. A replay (`simlock events`, `--since`) prints events by
 `timestamp`, then in the order the daemon recorded them within the same
 millisecond. `--follow` prints each live push as it arrives, so a relayed event
 from a worker whose clock is behind prints after a later gateway event.
+
+## `simlock stats [--since <duration> | --from <ISO> [--to <ISO>]] [--json]`
+
+Print how the fleet was used over a window: requests, how each grant was
+served, waits, held time, rejections, incidents and use per platform, per
+worker and per requester. Run against a gateway it reports the whole fleet,
+with one row per worker; run against a single host it reports that host as
+one worker.
+
+```
+$ simlock stats --since 30d          # a host upgraded yesterday
+Usage from 2026-09-16T12:00:00.000Z to 2026-10-16T13:04:12.345Z
+Figures cover from 2026-10-15T09:12:00.000Z: the history does not reach back to the start of the window.
+
+Totals
+  Requests:     214 (209 granted, 5 rejected)
+  Granted:      warm 160, booted 41, provisioned 8
+  Rejected:     no-wait 3, timeout 2
+  Wait:         p50 400ms, p95 38s, max 2m 10s (214 samples)
+  ...
+```
+
+- With no flag the window is the last 24 hours. `--since 7d` is that long
+  back from now. `--from` and `--to` name the ends as ISO 8601 times with a
+  `Z` or an offset (`2026-10-15T00:00Z`, `2026-10-15T00:00:00+02:00`); without
+  `--to` the window ends now. `--since` with `--from`, `--to` without `--from`,
+  a `--from` that is not earlier than the end, a time with no zone and a
+  duration that is not one are usage errors (exit 2).
+- A window is at most 90 days (`BAD_REQUEST`, exit 2, when longer). The
+  window printed starts at the start of the series bucket that holds `--from`
+  (1 minute to 1 day wide, picked so a window has at most 200 points) and ends
+  at the moment asked.
+- The figures come from rows Simlock keeps in `history.db`, not from the
+  events, so they reach back as far as `metrics.retention` (90 days by
+  default) and stay after the events are pruned. A host that has kept them for
+  less than the window says where they start (`Figures cover from ...`) and
+  counts only from there.
+- A request counts in the window its request time falls in; a grant, a
+  rejection or a release after the window's end is not seen, so a lease
+  still open at the end counts as a request and a grant with no held time.
+  Slot, queue and RAM figures cover whole minutes: the minute still running at
+  the end of the window is left out, so a restart does not change them.
+- A window that ends before the oldest figure the history holds exits 12 with
+  `HISTORY_NOT_KEPT`; the message says when the figures start. While
+  `history.db` could not be opened, the command exits 1 with
+  `HISTORY_UNAVAILABLE`.
+- `--json` prints the answer as one JSON object (the same `usage` the
+  [programmatic client](CLIENT.md) returns), with a series of up to 200 points
+  for charting.
 
 ## `simlock daemon <start|stop|status|logs [--follow]>`
 

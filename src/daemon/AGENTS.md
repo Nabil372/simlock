@@ -135,7 +135,7 @@ Security model: cooperative identity, not a hostile-process boundary.
   [history](../history/AGENTS.md), kept `eventLog.retention` (7 days), event rows capped at
   `eventLog.maxBytes` (256 MiB); usage rows are kept `metrics.retention` (90 days). `onSocketClaimed`
   starts it in both modes with `config.mode` and `metrics.retention`; `dispose` stops it last. A file that fails costs only history. A start the history refuses (a newer stored projection version, a
-  failed migration) stops the daemon with reason `history-refused` and exit 1. `status.get` carries its `history`, also while starting.
+  failed migration) stops the daemon with reason `history-refused` and exit 1. `status.get` carries its `history`, also while starting. `usage.get` (both dispatchers, `usageAnswer` in `dispatch.ts`) reads the same file's usage rows through `core/usage` on a read thread; `main.ts` passes `historyPath` in both modes, and `dispose` stops the thread. `history.status().opened` false → `HISTORY_UNAVAILABLE`; a window ending before the oldest row → `HISTORY_NOT_KEPT`.
 - A start that throws is logged by a fallback logger to the default `daemon.log`; exit 1.
 
 ## Rules
