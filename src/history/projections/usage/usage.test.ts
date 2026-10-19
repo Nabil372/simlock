@@ -315,6 +315,7 @@ describe("usage projection: request rows", () => {
       payload: { ...requested("R9", { requester: "mallory" }), workerId: "w1" } as never,
       timestamp: T0 + 7_000,
     });
+    r.relay("w1", "lease.requested", requested("R9", { requester: "eve" }), T0 + 8_000);
     r.emit("lease.granted", granted("LX", "R-unknown"));
     r.emit("lease.released", released("L-unknown"));
 
@@ -440,7 +441,8 @@ describe("usage projection: a gateway", () => {
       "lease.rejected",
       rejected("G2", "worker-failed", { code: "PROVISION_FAILED", worker: "w2" }),
     );
-    r.emit("lease.rejected", rejected("G3", "timeout"));
+    r.emit("lease.granted", granted("OWN-L", "G3"));
+    r.emit("lease.rejected", rejected("G3", "timeout", { worker: "w3" }));
 
     const rows = await rowsOf(r);
 
@@ -458,6 +460,7 @@ describe("usage projection: a gateway", () => {
       workerId: "w2",
     });
     expect(row(rows, "G3")).toMatchObject({ reason: "timeout" });
+    expect(row(rows, "G3").grantedAt).toBeUndefined();
     expect(row(rows, "G3").workerId).toBeUndefined();
     await r.history.stop();
   });
@@ -524,6 +527,38 @@ describe("usage projection: a gateway", () => {
 });
 
 describe("usage projection: minute rows", () => {
+  it("a relayed platform that is not ios or android mints no platform key: a capacity key, a request spec and a device platform of another value change no minute row and leave the platform absent", async () => {
+    const r = await rig({ fleet: false });
+    r.relay(
+      "w1",
+      "capacity.changed",
+      { tv: { running: 1, reserved: 1, maxRunning: 4 } } as never,
+      T0,
+    );
+    r.relay(
+      "w1",
+      "lease.requested",
+      requested("R-tv", { requestSpec: { platform: "tv" } }),
+      T0 + 1,
+    );
+    r.relay(
+      "w1",
+      "device.ready",
+      { deviceId: "d1", bootDuration: 900, platform: "tv" } as never,
+      T0 + 2,
+    );
+
+    const facts = await factsOf(r);
+
+    expect(await count(r, "SELECT count(*) AS n FROM minute_rows WHERE platform = 'tv'")).toBe(0);
+    expect(await count(r, "SELECT count(*) AS n FROM minute_rows WHERE platform = 'ios'")).toBe(0);
+    expect(row(await rowsOf(r), "R-tv").platform).toBe("");
+    expect(facts.map((fact) => [fact.deviceId, fact.durationMs, fact.platform])).toEqual([
+      ["d1", 900, undefined],
+    ]);
+    await r.history.stop();
+  });
+
   it("slotsUsed is running plus reserved and slotsMax per platform and on all; RAM used and limit and queue depth (both lines summed) only on all; no row for a minute with no change", async () => {
     const r = await rig();
     r.emit(
@@ -534,6 +569,11 @@ describe("usage projection: minute rows", () => {
     r.emit("queue.changed", { depth: 2, physical: true });
     r.at(T0 + 3 * MIN);
     r.emit("queue.changed", { depth: 1, physical: true });
+    r.at(T0 + 5 * MIN);
+    r.emit(
+      "capacity.changed",
+      capacity({ android: [0, 0, 3], global: [1, 1, 6], ios: [1, 1, 4], ram: [100, 1_000] }),
+    );
 
     const ios = await buckets(r, { from: T0, platform: "ios", to: T0 + MIN });
     const all = await buckets(r, { from: T0, platform: "all", to: T0 + MIN });
@@ -641,8 +681,10 @@ describe("usage projection: minute rows", () => {
     );
     r.relay("w1", "lease.granted", granted("WL1", "X1"));
     r.relay("w2", "lease.granted", granted("WL2", "X2", { platform: "android" }));
+    r.at(T0 + 10_000);
     r.relay("w1", "queue.changed", { depth: 9 });
     r.relay("w1", "lease.requested", requested("W-req"));
+    r.at(T0 + 20_000);
     r.emit("queue.changed", { depth: 4 });
     r.emit("lease.requested", requested("G1"));
     r.at(T0 + MIN);
@@ -675,19 +717,48 @@ describe("usage projection: minute rows", () => {
     await r.history.stop();
   });
 
+  it("a worker that reconnects after worker.disconnected counts its held leases in the * row again", async () => {
+    const r = await rig({ fleet: true });
+    r.relay("w1", "capacity.changed", capacity({ global: [1, 0, 4], ios: [1, 0, 2] }), T0);
+    r.relay("w1", "lease.granted", granted("WL1", "X1"), T0 + 1_000);
+    r.at(T0 + MIN);
+    r.emit("worker.disconnected", { leaseCount: 1, workerId: "w1" });
+    r.at(T0 + 2 * MIN);
+    r.relay(
+      "w1",
+      "capacity.changed",
+      capacity({ global: [1, 0, 4], ios: [1, 0, 2] }),
+      T0 + 2 * MIN,
+    );
+
+    const star = (minute: number) =>
+      buckets(r, {
+        from: T0 + minute * MIN,
+        platform: "ios",
+        to: T0 + (minute + 1) * MIN,
+        workerId: "*",
+      });
+
+    expect(figure((await star(0))[0], "leasesHeld")).toMatchObject({ peak: 1 });
+    expect(figure((await star(1))[0], "leasesHeld")).toEqual({ integral: 0, peak: 0 });
+    expect(figure((await star(2))[0], "leasesHeld")).toEqual({ integral: MIN, peak: 1 });
+    await r.history.stop();
+  });
+
   it("daemon.stopping, daemon.started and, on a gateway, worker.disconnected each write a gap marker", async () => {
     const r = await rig({ fleet: true });
     r.emit("capacity.changed", capacity({ global: [2, 0, 4], ios: [2, 0, 4] }));
     r.relay("w1", "capacity.changed", capacity({ global: [2, 0, 4], ios: [2, 0, 4] }));
     r.at(T0 + 4 * MIN + 30_000);
     r.emit("lease.requested", requested("R1"));
-    r.at(T0 + 6 * MIN);
+    r.at(T0 + 5 * MIN);
     r.emit("worker.disconnected", { leaseCount: 0, workerId: "w1" });
+    r.at(T0 + 6 * MIN);
     r.emit("daemon.stopping", { reason: "signal" });
     r.at(T0 + 9 * MIN);
     r.emit("daemon.started", { configSnapshot: {}, version: "1" });
     r.emit("capacity.changed", capacity({ global: [2, 0, 4], ios: [2, 0, 4] }));
-    r.at(T0 + 11 * MIN);
+    r.at(T0 + 11 * MIN + 30_000);
     r.emit("daemon.stopping", { reason: "signal" });
 
     const carried = await buckets(r, { from: T0, platform: "ios", to: T0 + 12 * MIN });
@@ -698,10 +769,14 @@ describe("usage projection: minute rows", () => {
       workerId: "w1",
     });
 
-    expect(carried.map((bucket) => (bucket.start - T0) / MIN)).toEqual([0, 1, 2, 3, 4, 5, 9, 10]);
-    expect(carried.every((bucket) => bucket.knownMs === MIN)).toBe(true);
-    expect(worker.map((bucket) => (bucket.start - T0) / MIN)).toEqual([0, 1, 2, 3, 4, 5]);
-    expect(await count(r, "SELECT count(*) AS n FROM gaps")).toBe(3);
+    expect(carried.map((bucket) => (bucket.start - T0) / MIN)).toEqual([
+      0, 1, 2, 3, 4, 5, 9, 10, 11,
+    ]);
+    expect(carried.slice(0, 8).every((bucket) => bucket.knownMs === MIN)).toBe(true);
+    expect(carried[8]).toMatchObject({ knownMs: 30_000 });
+    expect(figure(carried[8], "slotsUsed")).toEqual({ integral: 2 * 30_000, peak: 2 });
+    expect(worker.map((bucket) => (bucket.start - T0) / MIN)).toEqual([0, 1, 2, 3, 4]);
+    expect(await count(r, "SELECT count(*) AS n FROM gaps")).toBe(4);
     await r.history.stop();
   });
 

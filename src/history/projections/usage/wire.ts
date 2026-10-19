@@ -26,6 +26,8 @@ export function oneOf<Allowed extends string>(
   return allowed.find((candidate) => candidate === value);
 }
 
+// why: an enum from a relayed payload is one of the known values or absent, so a hostile worker cannot mint platform keys.
+export const PLATFORMS = ["ios", "android"] as const;
 export const SOURCES = ["warm", "booted", "provisioned"] as const;
 export const END_REASONS = ["explicit", "killed", "device-lost", "expired"] as const;
 
@@ -36,5 +38,5 @@ interface Spec {
 
 export function specOf(value: unknown): Spec {
   const spec = payloadOf(value);
-  return { model: text(spec.model), platform: text(spec.platform) };
+  return { model: text(spec.model), platform: oneOf(spec.platform, PLATFORMS) };
 }

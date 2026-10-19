@@ -296,6 +296,10 @@ describe("loadConfig", () => {
       );
     }
 
+    await expect(
+      loadWith({ eventLog: { retention: 1 }, metrics: { retention: 1.5 } }),
+    ).rejects.toThrow("metrics.retention");
+
     expect(equal.metrics).toEqual({ retention: 7 * DAY });
   });
 

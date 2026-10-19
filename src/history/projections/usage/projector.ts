@@ -6,7 +6,7 @@ import { MinuteRecorder } from "./minutes.js";
 import { recreateTable, tableMatches, USAGE_TABLES } from "./schema.js";
 import { Statements } from "./statements.js";
 import { minuteOf, type UsageValue } from "./types.js";
-import { amount, END_REASONS, oneOf, payloadOf, SOURCES, specOf, text } from "./wire.js";
+import { amount, END_REASONS, oneOf, payloadOf, PLATFORMS, SOURCES, specOf, text } from "./wire.js";
 
 interface Origin {
   readonly relayed: boolean;
@@ -270,7 +270,7 @@ class Projector implements ProjectionHandle {
     requestId: string | undefined,
     origin: Origin,
   ): string {
-    const named = text(payload.platform);
+    const named = oneOf(payload.platform, PLATFORMS);
     if (named !== undefined) return named;
     if (requestId === undefined || origin.relayed) return "";
     return this.#ledger.requestPlatform(requestId) ?? "";
@@ -397,8 +397,8 @@ class Projector implements ProjectionHandle {
   }
 
   #slots(key: string, found: Readonly<Record<string, unknown>>, origin: Origin, at: number): void {
-    const platform = key === "global" ? "all" : text(key);
-    if (platform === undefined || platform === "workerId") return;
+    const platform = key === "global" ? "all" : oneOf(key, PLATFORMS);
+    if (platform === undefined) return;
     const running = amount(found.running);
     const reserved = amount(found.reserved);
     const max = amount(found.maxRunning);
@@ -486,7 +486,9 @@ class Projector implements ProjectionHandle {
       durationMs: amount(duration),
       kind: event,
       platform:
-        event === "device.provisioned" ? specOf(payload.spec).platform : text(payload.platform),
+        event === "device.provisioned"
+          ? specOf(payload.spec).platform
+          : oneOf(payload.platform, PLATFORMS),
       workerId: origin.relayed ? origin.worker : undefined,
     });
   }
