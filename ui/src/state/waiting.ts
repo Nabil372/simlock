@@ -11,6 +11,7 @@ import {
   waitingTable,
 } from "../model/waiting";
 import type { WorkerList } from "../model/workers";
+import { useFigures } from "./figures";
 import { useLiveResource, useNow } from "./live";
 import { usePaging } from "./paging";
 import { loadView, mapView } from "./resource";
@@ -30,6 +31,7 @@ export interface WaitingPage extends WaitingChoice {
 export function useWaiting(): LoadView<WaitingPage> {
   const requests = loadView(useLiveResource<WaitingList>("/v1/lease-requests"));
   const workers = useLiveResource<WorkerList>("/v1/workers").data?.workers ?? [];
+  const figures = useFigures("1h");
   const now = useNow();
   const id = itemIdFrom("/waiting", usePath());
   const keep = listSearch(useSearch());
@@ -49,7 +51,14 @@ export function useWaiting(): LoadView<WaitingPage> {
       named: id !== undefined,
       paging,
       rows,
-      wait: { kind: "loading" },
+      wait:
+        figures.kind === "ready"
+          ? {
+              data: figures.data.wait,
+              kind: "ready",
+              ...(figures.refusal === undefined ? {} : { refusal: figures.refusal }),
+            }
+          : figures,
     };
   });
 }

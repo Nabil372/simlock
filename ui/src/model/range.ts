@@ -7,18 +7,34 @@ export const RANGE_CHOICES: readonly { readonly value: ConsoleRange; readonly la
   { label: "7 days", value: "7d" },
 ];
 
-export function readRange(_search: string): ConsoleRange {
-  return "1h";
+// why: the range lives in the URL as `?range=`, so a reload or a shared link shows the same figures;
+// a value this console does not know is the default hour.
+export function readRange(search: string): ConsoleRange {
+  const asked = new URLSearchParams(search).get("range");
+  return RANGE_CHOICES.find((choice) => choice.value === asked)?.value ?? "1h";
 }
 
-export function writeRange(search: string, _range: ConsoleRange): string {
-  return search;
+// why: any other key of the query (paging) is not the range's to touch, so only `range` is set or
+// dropped.
+export function writeRange(search: string, range: ConsoleRange): string {
+  const params = new URLSearchParams(search);
+  if (range === "1h") params.delete("range");
+  else params.set("range", range);
+  const text = params.toString();
+  return text === "" ? "" : `?${text}`;
 }
 
-export function statsPath(_range: ConsoleRange): string {
-  return "/v1/stats";
+export function statsPath(range: ConsoleRange): `/v1/stats?since=${ConsoleRange}` {
+  return `/v1/stats?since=${range}`;
 }
 
-export function rangeUnit(_range: ConsoleRange): string {
-  return "last hour";
+const UNITS: Readonly<Record<ConsoleRange, string>> = {
+  "1h": "last hour",
+  "24h": "last 24 hours",
+  "6h": "last 6 hours",
+  "7d": "last 7 days",
+};
+
+export function rangeUnit(range: ConsoleRange): string {
+  return UNITS[range];
 }
