@@ -579,6 +579,30 @@ describe("createEventHistory", () => {
     },
   );
 
+  it("a lock another connection holds past 5 s at the check never sets the file aside, and leaves opened false", async () => {
+    const rigged = await rig();
+    const earlier = rigged.history();
+    await earlier.start();
+    const kept = stopping(rigged.bus, "kept");
+    await earlier.stop();
+    const next = await rig({ directory: rigged.directory });
+    const locked = new ProbeSqliteOpener({
+      fault: (call) => {
+        if (call.kind === "prepare" && /quick_check/.test(call.sql)) {
+          throw Object.assign(new Error("database is locked"), { errcode: 5 });
+        }
+      },
+    });
+    const history = next.history({ sqlite: locked });
+
+    await history.start();
+
+    expect(history.status().opened).toBe(false);
+    expect(next.filesystem.renames).toEqual([]);
+    expect(await damagedNames(rigged.directory)).toEqual([]);
+    expect(await readHistoryOf(rigged.directory)).toEqual([kept]);
+  });
+
   it(
     "a lock another connection holds past 5 s at a write never sets the file aside; writing goes false",
     { timeout: 30_000 },
@@ -807,6 +831,37 @@ describe("createEventHistory", () => {
     expect(history.status().writing).toBe(true);
     expect((await history.replay({ sinceTs: 0 })).at(-1)).toEqual(later);
     await history.stop();
+  });
+
+  it("a prune that fails after its age delete committed leaves the stored size true, so the next prune keeps rows under maxBytes", async () => {
+    const rigged = await rig();
+    const retention = 2 * HOUR;
+    const old = [1, 2, 3].map((index) =>
+      relayed(rigged.bus, `evt_old${index}`, NOW - 3 * HOUR + index),
+    );
+    const size = Buffer.byteLength(JSON.stringify(old[0]), "utf8");
+    let attempts = 0;
+    const definition: HistoryProjectionDefinition = {
+      create: () => ({
+        apply: () => undefined,
+        prune: () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("prune failed");
+        },
+      }),
+      name: "fails-once",
+    };
+    const history = rigged.history({ maxBytes: size * 4, projections: [definition], retention });
+    await history.start();
+    const fresh = [1, 2, 3].map((index) => relayed(rigged.bus, `evt_new${index}`, NOW + index));
+
+    rigged.clock.advance(HOUR);
+    await settle();
+    const kept = await history.replay({ sinceTs: 0 });
+    await history.stop();
+
+    expect(attempts).toBe(2);
+    expect(kept).toEqual(fresh);
   });
 
   it("skips on replay a row whose id the envelope schema refuses", async () => {

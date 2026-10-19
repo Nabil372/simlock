@@ -77,6 +77,7 @@ class EventHistory implements EventHistoryHandle {
   #readable = false;
   #setAsideAt: number | undefined;
   #started = false;
+  #settled = false;
   readonly #seenBeforeStart = new Set<string>();
   #stopped = false;
   #timer: ReturnType<Clock["setTimer"]> | undefined;
@@ -85,7 +86,7 @@ class EventHistory implements EventHistoryHandle {
     this.#options = options;
     this.#path = join(options.dataDirectory, HISTORY_DB_NAME);
     options.bus.subscribeAll((envelope) => {
-      if (this.#database === undefined && !this.#stopped) this.#seenBeforeStart.add(envelope.id);
+      if (!this.#settled && !this.#stopped) this.#seenBeforeStart.add(envelope.id);
       this.#write(envelope);
     });
   }
@@ -117,6 +118,15 @@ class EventHistory implements EventHistoryHandle {
   async start(): Promise<void> {
     if (this.#started || this.#stopped) return;
     this.#started = true;
+    try {
+      await this.#start();
+    } finally {
+      this.#settled = true;
+      this.#seenBeforeStart.clear();
+    }
+  }
+
+  async #start(): Promise<void> {
     const database = await this.#openChecked();
     if (database === undefined) return;
     if (this.#stopped) {
@@ -145,7 +155,6 @@ class EventHistory implements EventHistoryHandle {
         this.#write(envelope);
       }
     }
-    this.#seenBeforeStart.clear();
     this.#prune();
     this.#arm();
   }
@@ -290,6 +299,12 @@ class EventHistory implements EventHistoryHandle {
         error: describe(error),
         path: this.#path,
       });
+      // why: a delete that committed before the failure already changed what is stored
+      try {
+        this.#stored = totalEventBytes(database);
+      } catch {
+        // why: the next prune runs on the old count; a write recounts nothing
+      }
     }
   }
 

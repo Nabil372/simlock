@@ -2,7 +2,7 @@
 
 Does: the durable record of every business event, one SQLite file, `history.db`, in the data directory.
 Entry: `index.ts` → `createEventHistory()`, `openHistoryReader()`, `HistoryProjectionDefinition`, `HISTORY_PROJECTIONS`, `HISTORY_DB_NAME`.
-Uses: bus (type, subscription), contract (`EVENT_ID_PATTERN`), ports (`SqliteOpener`, `Filesystem`, `Clock`, `Logger`). Never imports: core, leasing, drivers, gateway. Nothing required imports it.
+Uses: bus (type, subscription), contract (`EVENT_ID_PATTERN`), ports (`SqliteOpener`, `Filesystem`, `Clock`, `Logger`). Never imports: core, leasing, drivers, gateway. Imported by daemon, cli (reader) and gateway (type).
 Flows: [startup](../../docs/internal/flows/startup.md). Catalog: [EVENTS.md](../../docs/internal/EVENTS.md).
 
 ## Files
