@@ -121,24 +121,32 @@ export function createUsageReader(deps: UsageReaderDeps): UsageReader {
     });
 
   const labelled = async (usage: UsageOutput): Promise<UsageOutput> => {
-    if (usage.requesters.length === 0) return usage;
+    if (usage.requesters.length === 0 && (usage.requests ?? []).length === 0) return usage;
     const tokens = await deps.tokenLabels();
     const prefix = deps.fleet?.requesterPrefix;
+    const labelOf = (id: string): string | undefined => {
+      const own = prefix !== undefined && id.startsWith(prefix);
+      return tokens.get(own ? id.slice(prefix.length) : id);
+    };
+    const requests = usage.requests?.map((entry) => {
+      const label = labelOf(entry.requester);
+      return label === undefined ? entry : { ...entry, label };
+    });
     return {
       ...usage,
       requesters: usage.requesters.map((entry) => {
-        const own = prefix !== undefined && entry.id.startsWith(prefix);
-        const label = tokens.get(own ? entry.id.slice(prefix.length) : entry.id);
+        const label = labelOf(entry.id);
         return label === undefined ? entry : { ...entry, label };
       }),
+      ...(requests === undefined ? {} : { requests }),
     };
   };
 
   return {
-    async get({ from, to }) {
+    async get({ from, includeLedger, to }) {
       if (!deps.opened()) return { kind: "unavailable" };
       const bucket = usageBucket(from, to);
-      const key = `${bucket.from}:${to}`;
+      const key = `${bucket.from}:${to}:${includeLedger === true}`;
       let running = inFlight.get(key);
       if (running === undefined) {
         const started = read({
@@ -146,6 +154,7 @@ export function createUsageReader(deps: UsageReaderDeps): UsageReader {
           fleet: deps.fleet !== undefined,
           from: bucket.from,
           historyPath: deps.historyPath,
+          includeLedger: includeLedger === true,
           to,
           workers: deps.workers(),
         });

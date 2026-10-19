@@ -1,4 +1,4 @@
-import type { UsageFigures, UsageOutput } from "../../contract/index.js";
+import type { UsageFigures, UsageLedgerEntry, UsageOutput } from "../../contract/index.js";
 import type { DeviceFactRow, MinuteBucket, RequestRow } from "../../history/index.js";
 
 const MINUTE = 60_000;
@@ -91,6 +91,8 @@ function inScope(
   if (scope.platform !== undefined && row.platform !== scope.platform) return false;
   return scope.worker === undefined || !data.fleet || row.workerId === scope.worker;
 }
+
+export const LEDGER_MAX_ENTRIES = 100_000;
 
 const isRequest = (row: RequestRow): boolean => !row.probe && row.refusedAtAdmission !== true;
 const grantedBy = (row: RequestRow, to: number): boolean =>
@@ -314,4 +316,48 @@ function countFor(entry: Requester | undefined, row: RequestRow, to: number): Re
     rejected: current.rejected + Number(rejectedBy(row, to)),
     requests: current.requests + Number(isRequest(row)),
   };
+}
+
+export function ledgerOf(
+  rows: readonly RequestRow[],
+  to: number,
+): { readonly requests: UsageLedgerEntry[]; readonly truncated: boolean } {
+  const truncated = rows.length > LEDGER_MAX_ENTRIES;
+  const kept = truncated ? rows.slice(rows.length - LEDGER_MAX_ENTRIES) : rows;
+  return { requests: kept.map((row) => entryOf(row, to)), truncated };
+}
+
+const present = (fields: Record<string, string | undefined>): Record<string, string> =>
+  Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Record<
+    string,
+    string
+  >;
+
+function entryOf(row: RequestRow, to: number): UsageLedgerEntry {
+  const granted = grantedBy(row, to);
+  const rejected = row.rejectedAt !== undefined && row.rejectedAt <= to;
+  const [wait] = isRequest(row) ? waitOf(row, to) : [];
+  const [held] = heldOf(row, to);
+  const ended = granted && held !== undefined;
+  return {
+    ...(ended
+      ? { ...present({ endReason: row.endReason }), endedAt: row.endedAt, heldMs: held }
+      : {}),
+    ...(granted ? { grantedAt: row.grantedAt, ...present({ source: row.source }) } : {}),
+    ...(row.model === undefined ? {} : { model: row.model }),
+    outcome: granted ? "granted" : rejected ? (row.probe ? "declined" : "rejected") : "open",
+    platform: row.platform,
+    probe: row.probe,
+    ...(rejected && !granted
+      ? { ...present({ reason: row.reason }), rejectedAt: row.rejectedAt }
+      : {}),
+    requestId: row.requestId,
+    requestedAt: row.requestedAt,
+    requester: row.requester,
+    ...(ended && wait !== undefined ? { turnaroundMs: wait + held } : {}),
+    ...(wait === undefined ? {} : { waitMs: wait }),
+    ...(row.workerId === undefined || (row.grantedAt !== undefined && !granted)
+      ? {}
+      : { workerId: row.workerId }),
+  } as UsageLedgerEntry;
 }

@@ -3,7 +3,7 @@ import { parentPort } from "node:worker_threads";
 import type { UsageOutput } from "../../contract/index.js";
 import { openUsageReads } from "../../history/index.js";
 import { filterSqliteExperimentalWarning, NodeSqliteOpener } from "../../ports/index.js";
-import { computeUsage } from "./compute-usage.js";
+import { computeUsage, ledgerOf } from "./compute-usage.js";
 
 export interface ReadRequest {
   readonly id: number;
@@ -12,6 +12,7 @@ export interface ReadRequest {
   readonly to: number;
   readonly bucketMs: number;
   readonly fleet: boolean;
+  readonly includeLedger?: boolean;
   readonly workers: readonly { readonly id: string; readonly label?: string | undefined }[];
 }
 
@@ -19,6 +20,14 @@ export type ReadResponse =
   | { readonly id: number; readonly figures: UsageOutput }
   | { readonly id: number; readonly notKept: number }
   | { readonly id: number; readonly error: string };
+
+function withLedger(usage: UsageOutput, ledger: ReturnType<typeof ledgerOf>): UsageOutput {
+  return {
+    ...usage,
+    ...(ledger.truncated ? { ledgerTruncated: true as const } : {}),
+    requests: ledger.requests,
+  };
+}
 
 async function read(request: ReadRequest): Promise<ReadResponse> {
   const database = await new NodeSqliteOpener().open(request.historyPath, { readOnly: true });
@@ -34,7 +43,8 @@ async function read(request: ReadRequest): Promise<ReadResponse> {
     const range = { from: request.from, to: request.to };
     // why: the minute still running is stored as if its last value held to the minute's end and cut when the daemon stops, so only complete minutes give the same figures before and after a restart.
     const completeMinutesEnd = Math.floor(request.to / 60_000) * 60_000;
-    const figures = computeUsage({
+    const requestRows = reads.requestRows(range);
+    const computed = computeUsage({
       bucketMs: request.bucketMs,
       deviceFacts: reads.deviceFacts(range),
       fleet: request.fleet,
@@ -47,11 +57,14 @@ async function read(request: ReadRequest): Promise<ReadResponse> {
           workerId,
         }),
       oldestTs,
-      requestRows: reads.requestRows(range),
+      requestRows,
       window: range,
       workers: request.workers,
     });
     database.exec("COMMIT");
+    const figures: UsageOutput = request.includeLedger
+      ? withLedger(computed, ledgerOf(requestRows, request.to))
+      : computed;
     return { figures, id: request.id };
   } finally {
     database.close();
