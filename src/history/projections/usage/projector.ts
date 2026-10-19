@@ -436,8 +436,8 @@ class Projector implements ProjectionHandle {
     this.#minutes.cut(undefined, at);
   }
 
+  // why: convergence emits capacity.changed and queue.changed before daemon.started, so the levels this run holds stay; only rows an earlier run left open are closed.
   #started(at: number): void {
-    this.#minutes.cut(undefined, at);
     this.#minutes.closeOpenRows();
     this.#gap(at, null);
     if (this.#options.fleet) {

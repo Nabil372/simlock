@@ -39,10 +39,11 @@ const COLUMNS = [
 ];
 const SAVE_SQL = `INSERT OR REPLACE INTO minute_rows (${COLUMNS.join(", ")}) VALUES (${COLUMNS.map(() => "?").join(", ")})`;
 const LOAD_SQL = `SELECT ${COLUMNS.join(", ")} FROM minute_rows WHERE workerId = ? AND platform = ? AND minute = ?`;
-const CLOSE_OPEN_SQL = `UPDATE minute_rows SET carryUntil = minute + ${MINUTE_MS}
-  WHERE carryUntil IS NULL AND minute = (
-    SELECT MAX(later.minute) FROM minute_rows later
-    WHERE later.workerId = minute_rows.workerId AND later.platform = minute_rows.platform)`;
+const CLOSE_KEY_SQL = `UPDATE minute_rows SET carryUntil = minute + ${MINUTE_MS}
+  WHERE workerId = ? AND platform = ? AND carryUntil IS NULL AND minute = (
+    SELECT MAX(later.minute) FROM minute_rows later WHERE later.workerId = ? AND later.platform = ?)`;
+const OPEN_KEYS_SQL =
+  "SELECT DISTINCT workerId, platform FROM minute_rows WHERE carryUntil IS NULL";
 
 function foldFigure(
   row: MinuteRowData,
@@ -132,7 +133,9 @@ export class MinuteRecorder {
       if (state.known) carryInto(row, state);
       return row;
     }
-    if (!state.known && stored.carryUntil !== null) stored.knownMs += end - at;
+    if (!state.known && stored.carryUntil !== null) {
+      stored.knownMs = Math.min(MINUTE_MS, stored.knownMs + end - at);
+    }
     return stored;
   }
 
@@ -144,8 +147,17 @@ export class MinuteRecorder {
     }
   }
 
+  // why: a key this run has stepped had its open row closed when its first step came, so only the keys left are closed here.
   closeOpenRows(): void {
-    this.#statements.get(CLOSE_OPEN_SQL).run();
+    for (const open of this.#statements.get(OPEN_KEYS_SQL).all()) {
+      const worker = String(open.workerId);
+      const platform = String(open.platform);
+      if (!this.#states.has(keyOf(worker, platform))) this.#closeKey(worker, platform);
+    }
+  }
+
+  #closeKey(worker: string, platform: string): void {
+    this.#statements.get(CLOSE_KEY_SQL).run(worker, platform, worker, platform);
   }
 
   forget(): void {
@@ -182,9 +194,11 @@ export class MinuteRecorder {
   }
 
   #state(worker: string, platform: string): KeyState {
-    const key = `${worker}\u0000${platform}`;
+    const key = keyOf(worker, platform);
     let state = this.#states.get(key);
     if (state === undefined) {
+      // why: a row left open by an earlier run is closed before this run writes a newer one for the key, so its value is not carried over the downtime.
+      this.#closeKey(worker, platform);
       state = { known: false, lastAt: 0, lastRowMinute: 0, platform, values: new Map(), worker };
       this.#states.set(key, state);
     }
@@ -228,6 +242,10 @@ export class MinuteRecorder {
       }),
     );
   }
+}
+
+function keyOf(worker: string, platform: string): string {
+  return `${worker}\u0000${platform}`;
 }
 
 function carryInto(row: MinuteRowData, state: KeyState): void {

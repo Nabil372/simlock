@@ -806,6 +806,7 @@ describe("usage projection: minute rows", () => {
     await first.history.stop();
 
     const second = await rig({ at: T0 + 10 * MIN, directory: first.directory });
+    second.emit("capacity.changed", capacity({ ios: [2, 0, 4] }));
     second.emit("daemon.started", { configSnapshot: {}, version: "1" });
     second.emit("lease.requested", requested("R2"));
     second.at(T0 + 12 * MIN);
@@ -831,6 +832,8 @@ describe("usage projection: minute rows", () => {
     await first.history.stop();
 
     const second = await rig({ at: T0 + 10 * MIN, directory: first.directory });
+    second.emit("capacity.changed", capacity({ ios: [2, 0, 4], ram: [5, 9] }));
+    second.emit("queue.changed", { depth: 3 });
     second.emit("daemon.started", { configSnapshot: {}, version: "1" });
     second.at(T0 + 10 * MIN + 30_000);
     second.emit("lease.released", released("L1"));
@@ -855,6 +858,19 @@ describe("usage projection: minute rows", () => {
     expect(await buckets(second, { from: T0, platform: "ios", to: T0 + MIN })).toEqual(
       minutesBefore,
     );
+    const after = await buckets(second, {
+      from: T0 + 10 * MIN,
+      platform: "all",
+      to: T0 + 12 * MIN,
+    });
+    expect(after.map((bucket) => figure(bucket, "ramUsedBytes")?.peak)).toEqual([5, 5]);
+    expect(after.map((bucket) => figure(bucket, "queueDepth")?.peak)).toEqual([3, 3]);
+    const slots = await buckets(second, {
+      from: T0 + 10 * MIN,
+      platform: "ios",
+      to: T0 + 12 * MIN,
+    });
+    expect(slots.map((bucket) => figure(bucket, "slotsUsed")?.peak)).toEqual([2, 2]);
     await second.history.stop();
   });
 });
