@@ -32,12 +32,20 @@ async function read(request: ReadRequest): Promise<ReadResponse> {
       return { id: request.id, notKept: oldestTs };
     }
     const range = { from: request.from, to: request.to };
+    // why: the minute still running is stored as if its last value held to the minute's end and cut when the daemon stops, so only complete minutes give the same figures before and after a restart.
+    const completeMinutesEnd = Math.floor(request.to / 60_000) * 60_000;
     const figures = computeUsage({
       bucketMs: request.bucketMs,
       deviceFacts: reads.deviceFacts(range),
       fleet: request.fleet,
       minutes: (workerId, platform) =>
-        reads.minuteBuckets({ ...range, bucketMs: request.bucketMs, platform, workerId }),
+        reads.minuteBuckets({
+          bucketMs: request.bucketMs,
+          from: request.from,
+          platform,
+          to: completeMinutesEnd,
+          workerId,
+        }),
       oldestTs,
       requestRows: reads.requestRows(range),
       window: range,
