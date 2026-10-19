@@ -1883,20 +1883,32 @@ describe(
       expect(beat.result).toMatchObject({ ok: true });
     });
 
-    it("the uplink dropping mid-command answers the command with `workerUnreachable()`", async () => {
+    it("a command answered WORKER_UNREACHABLE after an uplink drop stops renewing its lease after reconnect without releasing it", async () => {
       const rig = await setUp();
       const member = first(rig);
-      await granted(rig, 1);
+      await granted(rig, 1, { ttlMs: 30_000 });
       await listedByGateway(rig, 1);
+      member.fake.keepCommandsAfterAbort();
       const running = await runningCommand(rig, member, 1);
+      const before = await deadlineOf(member, 1);
+      expect(before).toBeTypeOf("number");
+      const tap = tapDispatch(rig.gateway);
 
-      await dropUplink(rig, member);
+      try {
+        await dropUplink(rig, member);
 
-      await vi.waitFor(() => expect(running.done()).toBe(true), { timeout: 5_000 });
-      member.fake.releaseCommand();
-      const answer = await running.promise;
-      expect(answer.status).toBe(503);
-      expectUnreachable(await envelopeOf(answer));
+        await vi.waitFor(() => expect(running.done()).toBe(true), { timeout: 5_000 });
+        const answer = await running.promise;
+        expect(answer.status).toBe(503);
+        expectUnreachable(await envelopeOf(answer));
+        await untilConnected(rig, member);
+        await advance(rig, 20_000, 1_000);
+
+        expect(tap.operations).not.toContain("lease.release");
+        expect(await deadlineOf(member, 1)).toBe(before);
+      } finally {
+        member.fake.releaseCommand();
+      }
     });
 
     it("right after the worker reconnects and before its view is refreshed, a command answers `workerUnreachable()`; once it is refreshed, within the TTL, the next command reaches it, and the next heartbeat renews the lease", async () => {
