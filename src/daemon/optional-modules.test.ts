@@ -262,7 +262,7 @@ describe("optional modules: HTTP routes", () => {
   });
 
   it("a module named like a core route's first segment (status) fails the start, with HTTP off too", async () => {
-    const accepted = await start({ modules: definitions(fakeModule({ name: "stats" })) });
+    const accepted = await start({ modules: definitions(fakeModule({ name: "stat" })) });
     expect(accepted.daemon).toBeDefined();
 
     await expect(start({ modules: definitions(fakeModule({ name: "status" })) })).rejects.toThrow(

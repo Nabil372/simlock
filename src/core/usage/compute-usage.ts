@@ -330,11 +330,14 @@ export function ledgerOf(
   return { requests: kept.map((row) => entryOf(row, to)), truncated };
 }
 
-const present = (fields: Record<string, string | undefined>): Record<string, string> =>
-  Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Record<
-    string,
-    string
-  >;
+function present(fields: Record<string, string | undefined>): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const key in fields) {
+    const value = fields[key];
+    if (value !== undefined) kept[key] = value;
+  }
+  return kept;
+}
 
 function entryOf(row: RequestRow, to: number): UsageLedgerEntry {
   const granted = grantedBy(row, to);
@@ -342,7 +345,7 @@ function entryOf(row: RequestRow, to: number): UsageLedgerEntry {
   const outcome = granted ? "granted" : rejected ? (row.probe ? "declined" : "rejected") : "open";
   return {
     ...present({ model: row.model }),
-    ...(granted ? grantFields(row, to) : unseenGrantFields(row)),
+    ...(granted ? grantFields(row, to) : rejected ? refusalWorker(row) : {}),
     ...(rejected ? { ...present({ reason: row.reason }), rejectedAt: row.rejectedAt } : {}),
     ...timingFields(row, to),
     outcome,
@@ -365,7 +368,7 @@ function grantFields(row: RequestRow, to: number): Record<string, unknown> {
   };
 }
 
-function unseenGrantFields(row: RequestRow): Record<string, unknown> {
+function refusalWorker(row: RequestRow): Record<string, unknown> {
   return row.grantedAt === undefined ? present({ workerId: row.workerId }) : {};
 }
 

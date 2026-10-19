@@ -1497,7 +1497,7 @@ take the host out of rotation or forget it.
 
 ### Operator routes
 
-Role: `operator` for all six. `GET /v1/leases` also answers an `agent`
+Role: `operator` for all seven. `GET /v1/leases` also answers an `agent`
 token, with only its own leases. `GET /v1/lease-requests` and `GET /v1/tokens`
 answer it `403 FORBIDDEN`.
 
@@ -1569,8 +1569,8 @@ an all-or-nothing that leaves the operator guessing.
   show a lease's holder by the token's `label`. The answer never carries a
   secret or a hash. `label` is absent from a token created without one.
 
-On a **gateway** the first five are fleet-wide, which is what makes a single
-console possible: `/v1/leases` and `/v1/devices` return every connected
+On a **gateway** the lease, device, lease-request and event routes are
+fleet-wide, which is what makes a single console possible: `/v1/leases` and `/v1/devices` return every connected
 worker's, each record carrying the `workerId` it lives on,
 `/v1/lease-requests` returns the gateway's queue and every connected
 worker's, and the two event routes carry the workers' republished events

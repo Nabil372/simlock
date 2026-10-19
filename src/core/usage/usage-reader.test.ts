@@ -536,6 +536,23 @@ describe("usage reader: scopes", () => {
   });
 });
 
+describe("usage reader: concurrent reads", () => {
+  it("a ledger read and a plain read of one window, started together, each answer as asked: the ledger has requests, the plain one has none", async () => {
+    const { reader, rig } = await setup();
+    rig.emit("lease.requested", requested("R1"));
+    const window = { from: T0, to: T0 + HOUR };
+
+    const [withLedger, plain] = await Promise.all([
+      reader.get({ ...window, includeLedger: true }),
+      reader.get(window),
+    ]);
+
+    if (withLedger.kind !== "figures" || plain.kind !== "figures") throw new Error("no figures");
+    expect(withLedger.usage.requests).toHaveLength(1);
+    expect(plain.usage).not.toHaveProperty("requests");
+  });
+});
+
 describe("usage reader: the window", () => {
   const OFF = 12_345;
 
@@ -702,11 +719,11 @@ describe("usage reader: the ledger", () => {
     rig.at(T0 + 1_900);
     rig.emit("lease.released", released("LB"));
     rig.at(T0 + 5_000);
-    rig.emit("lease.requested", requested("C"));
+    rig.emit("lease.requested", requested("0-LAST"));
 
     const { requests } = await ledger(T0, T0 + HOUR);
 
-    expect(requests?.map((entry) => entry.requestId)).toEqual(["A", "B", "C"]);
+    expect(requests?.map((entry) => entry.requestId)).toEqual(["A", "B", "0-LAST"]);
     expect(requests?.find((entry) => entry.requestId === "B")).toMatchObject({
       endReason: "explicit",
       endedAt: T0 + 1_900,
@@ -777,6 +794,23 @@ describe("usage reader: the ledger", () => {
       expect(entry("REJ-LATE"), absent).not.toHaveProperty(absent);
     }
     expect(entry("PROBE")).toMatchObject({ outcome: "declined", probe: true, reason: "no-wait" });
+  });
+
+  it("the gateway's ledger shows the workerId of a worker-failed rejection once it is made, and none while the rejection is after to", async () => {
+    const { ledger, rig } = await ledgerSetup({ fleet: true });
+    rig.emit("lease.requested", requested("F-IN"));
+    rig.emit("lease.requested", requested("F-LATE"));
+    rig.at(T0 + 5 * MIN);
+    rig.emit("lease.rejected", rejected("F-IN", "worker-failed", { worker: "w1" }));
+    rig.at(T0 + 61 * MIN);
+    rig.emit("lease.rejected", rejected("F-LATE", "worker-failed", { worker: "w2" }));
+
+    const { requests } = await ledger(T0, T0 + HOUR);
+    const entry = (id: string) => requests?.find((found) => found.requestId === id);
+
+    expect(entry("F-IN")).toMatchObject({ outcome: "rejected", workerId: "w1" });
+    expect(entry("F-LATE")).toMatchObject({ outcome: "open" });
+    expect(entry("F-LATE")).not.toHaveProperty("workerId");
   });
 
   it("usage.get's ledger agrees with its figures: entries granted equal totals.granted, and a request's waitMs is a sample in totals.wait", async () => {
