@@ -2,7 +2,7 @@
 
 Does: one process per data directory — composes a worker or a gateway and serves the contract on a unix socket.
 Entry: `main.ts` → `startDaemon(options)` → a started `DaemonServer`.
-Uses: auth, contract, daemon-protocol, ports, bus, history, link, core, leasing, drivers, http, host-load, modules, module-registry; gateway from `main.ts` only.
+Uses: contract, daemon-protocol, ports, bus, history, link, core, leasing, drivers, http, host-load, modules, module-registry; gateway from `main.ts` only.
 Never imports: gateway outside `main.ts`. `dispatch.ts` imports no core, drivers or http.
 Imported by: http (`dispatcher.ts`, `error-code.ts`, `owner-routed-facts.ts`); gateway (`dispatch.ts` only).
 Started by: cli and mcp spawn `main.ts` as a detached process.
@@ -17,6 +17,8 @@ Flows: [startup](../../docs/internal/flows/startup.md), [device.exec](../../docs
 | `dispatch.ts`           | `runDispatch` pipeline, `DispatchSession`, `DispatchError`             |
 | `dispatcher.ts`         | `Dispatcher`: the worker's handlers                                    |
 | `connection-host.ts`    | `DaemonEndpointHost`: socket claim, stale-socket recovery              |
+| `admin-secret.ts`       | `AdminSecretManager`: per-start secret, `admin.token`                  |
+| `session.ts`            | `createCredentialRoleResolver`: credential → role                      |
 | `owner-routed-facts.ts` | `OwnerRoutedFactBus`: lease facts with their owner                     |
 | `gateway-uplink.ts`     | `GatewayUplink`: a worker's dial to its gateway                        |
 | `relay.ts`              | `RelayTargets`, `RelayConnection`: relays over the uplink              |
@@ -26,16 +28,16 @@ Flows: [startup](../../docs/internal/flows/startup.md), [device.exec](../../docs
 
 ## Composition (`main.ts`)
 
-Both modes: config (`config.json`) → `Logger` → host info → `EventBus` → event history (`createEventHistory`, not yet started) → `createAuth` (`src/auth`, once).
+Both modes: config (`config.json`) → `Logger` → host info → `EventBus` → event history (`createEventHistory`, not yet started).
 `config.mode` then picks one branch; a gateway builds none of the worker's parts.
 
 - **Worker** — `Registry` (`state.json`) → instance id (`instance.json`) →
   `discoverDrivers` (validates each root; a refused root costs that platform only) →
   `ComponentInstaller` → `createCore` → `createLeasing` → `core.connect` →
-  `CleanupReaper`, `Nuke` → `GatewayUplink`
+  `CleanupReaper`, `Nuke`, `TokenStore`, `AdminSecretManager` → `GatewayUplink`
   when `gateway.url` and `gateway.token` are both set → `DaemonServer` with `Dispatcher`.
   HTTP starts only when `http.enabled`.
-- **Gateway** — instance id → `FleetLeaseIndex`
+- **Gateway** — instance id → `TokenStore`, `AdminSecretManager` → `FleetLeaseIndex`
   (requester prefix `gw:<instanceId>:`) → `GatewayService` (uplink listener, `workers.json`)
   → `FleetLeaseCoordinator` → `DaemonServer` with `GatewayDispatcher`. HTTP always
   starts; the uplink upgrades on the same listener.
@@ -51,7 +53,7 @@ An HTTP bind failure after a good start stops the daemon (`http-start-failed`).
    Principal: `hello.principal`, else `SIMLOCK_AGENT_ID`, else the daemon's pid.
    Both are fixed for the connection's life.
 3. **Version** — ranges overlap → highest common version. `PROTOCOL_VERSION_RANGE`
-   is `{ min: 48, max: 48 }` (`src/contract/protocol.ts`). No overlap → the
+   (`src/contract/protocol.ts`) is the daemon's range. No overlap → the
    connection stays open, and every request but `daemon.stop` gets
    `PROTOCOL_VERSION_UNSUPPORTED`.
 4. **Request** — one frame → one `dispatch()` call. While stopping: `DAEMON_STOPPING`.
@@ -94,7 +96,7 @@ Health: `starting` → `running`, or `failed`.
 
 ## Identity and roles
 
-Credential resolution (`Auth.resolveHelloRole`, `src/auth`), at `hello`:
+Credential resolution (`createCredentialRoleResolver`), at `hello`:
 
 1. No credential → `agent`.
 2. An `operator` token in `tokens.json` → `admin`.
