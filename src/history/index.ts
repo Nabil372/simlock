@@ -27,7 +27,7 @@ import { isMarkedRebuilding, migrateProjection } from "./versions.js";
 
 export { HISTORY_DB_NAME } from "./names.js";
 export { HISTORY_PROJECTIONS, openUsageReads } from "./projections/index.js";
-export type { DeviceFactRow, MinuteBucket, RequestRow, UsageReads } from "./projections/index.js";
+export type { DeviceFactRow, MinuteBucket, RequestRow } from "./projections/index.js";
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 

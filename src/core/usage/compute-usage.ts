@@ -93,6 +93,10 @@ function inScope(
 }
 
 const isRequest = (row: RequestRow): boolean => !row.probe && row.refusedAtAdmission !== true;
+const grantedBy = (row: RequestRow, to: number): boolean =>
+  row.grantedAt !== undefined && row.grantedAt <= to;
+const rejectedBy = (row: RequestRow, to: number): boolean =>
+  !row.probe && row.rejectedAt !== undefined && row.rejectedAt <= to;
 
 function figuresFor(
   data: UsageData,
@@ -102,43 +106,23 @@ function figuresFor(
   const to = data.window.to;
   const rows = data.requestRows.filter((row) => inScope(data, row, scope));
   const facts = data.deviceFacts.filter((fact) => inScope(data, fact, scope));
-  const grants = rows.filter((row) => row.grantedAt !== undefined && row.grantedAt <= to);
+  const grants = rows.filter((row) => grantedBy(row, to));
   const waits = rows.flatMap((row) => (isRequest(row) ? waitOf(row, to) : []));
-  const rejections = rows.filter(
-    (row) => !row.probe && row.rejectedAt !== undefined && row.rejectedAt <= to,
-  );
+  const rejections = rows.filter((row) => rejectedBy(row, to));
   const sources = countBy(grants.map((row) => row.source ?? "unknown"));
-  const factsOf = (kind: string) => facts.filter((fact) => fact.kind === kind);
-  const durations = (kind: string) =>
-    summarise(factsOf(kind).flatMap((fact) => fact.durationMs ?? []));
-  const count = (...kinds: string[]) => kinds.reduce((sum, kind) => sum + factsOf(kind).length, 0);
-  const failed = count("device.recovery-failed");
   const worker = scope.worker === undefined ? undefined : data.fleet ? scope.worker : "";
   const buckets = minutes(worker ?? (data.fleet ? "*" : ""), scope.platform ?? "all");
   return {
-    boot: durations("device.ready"),
+    ...deviceFigures(facts),
     bySource: {
       booted: sources.booted ?? 0,
       provisioned: sources.provisioned ?? 0,
       ...(data.fleet ? { unknown: unknownSources(sources) } : {}),
       warm: sources.warm ?? 0,
     },
-    declined: count("lease.declined"),
-    failures: { byEvent: failed === 0 ? {} : { "device.recovery-failed": failed } },
     granted: grants.length,
     held: summarise(grants.flatMap((row) => heldOf(row, to))),
-    incidents: {
-      crashRecovered: count("device.recovered"),
-      lost: count(
-        "device.recovery-failed",
-        "device.quarantine-abandoned",
-        "device.quarantine-stranded",
-      ),
-      quarantineRecovered: count("device.quarantine-recovered"),
-      quarantined: count("device.quarantined"),
-    },
     ...(data.fleet ? {} : { probes: rows.filter((row) => row.probe).length }),
-    provisioning: durations("device.provisioned"),
     queue: scope.platform === undefined ? queueOf(buckets) : { meanDepth: null, peakDepth: null },
     rejected: {
       byReason: countBy(rejections.map((row) => row.reason ?? "unknown")),
@@ -154,6 +138,32 @@ function figuresFor(
     ),
     utilisation: utilisationOf(buckets, scope.platform === undefined),
     wait: summarise(waits),
+  };
+}
+
+function deviceFigures(
+  facts: readonly DeviceFactRow[],
+): Pick<UsageFigures, "boot" | "declined" | "failures" | "incidents" | "provisioning"> {
+  const factsOf = (kind: string) => facts.filter((fact) => fact.kind === kind);
+  const durations = (kind: string) =>
+    summarise(factsOf(kind).flatMap((fact) => fact.durationMs ?? []));
+  const count = (...kinds: string[]) => kinds.reduce((sum, kind) => sum + factsOf(kind).length, 0);
+  const failed = count("device.recovery-failed");
+  return {
+    boot: durations("device.ready"),
+    declined: count("lease.declined"),
+    failures: { byEvent: failed === 0 ? {} : { "device.recovery-failed": failed } },
+    incidents: {
+      crashRecovered: count("device.recovered"),
+      lost: count(
+        "device.recovery-failed",
+        "device.quarantine-abandoned",
+        "device.quarantine-stranded",
+      ),
+      quarantineRecovered: count("device.quarantine-recovered"),
+      quarantined: count("device.quarantined"),
+    },
+    provisioning: durations("device.provisioned"),
   };
 }
 
@@ -221,22 +231,24 @@ function utilisationOf(
   withRam: boolean,
 ): UsageFigures["utilisation"] {
   const slots = fieldOf(buckets, "slotsUsed");
-  const ram = withRam ? fieldOf(buckets, "ramUsedBytes") : undefined;
+  const ram = withRam ? ramOf(buckets) : undefined;
   return {
-    ...(ram === undefined
-      ? {}
-      : {
-          ram: {
-            limitBytes: fieldOf(buckets, "ramLimitBytes")?.peak ?? 0,
-            meanBytes: ram.mean,
-            peakBytes: ram.peak,
-          },
-        }),
+    ...(ram === undefined ? {} : { ram }),
     slots: {
       max: fieldOf(buckets, "slotsMax")?.peak ?? null,
       mean: slots?.mean ?? null,
       peak: slots?.peak ?? null,
     },
+  };
+}
+
+function ramOf(buckets: readonly MinuteBucket[]): UsageFigures["utilisation"]["ram"] {
+  const used = fieldOf(buckets, "ramUsedBytes");
+  if (used === undefined) return undefined;
+  return {
+    limitBytes: fieldOf(buckets, "ramLimitBytes")?.peak ?? 0,
+    meanBytes: used.mean,
+    peakBytes: used.peak,
   };
 }
 
@@ -266,25 +278,28 @@ function requestersOf(data: UsageData): Requester[] {
   const to = data.window.to;
   const byId = new Map<string, Requester>();
   for (const row of data.requestRows) {
-    const granted = row.grantedAt !== undefined && row.grantedAt <= to;
-    if (row.probe && !granted) continue;
-    const entry = byId.get(row.requester) ?? {
-      granted: 0,
-      heldTotalMs: 0,
-      id: row.requester,
-      rejected: 0,
-      requests: 0,
-    };
-    byId.set(row.requester, {
-      ...entry,
-      granted: entry.granted + Number(granted),
-      heldTotalMs: entry.heldTotalMs + (granted ? (heldOf(row, to)[0] ?? 0) : 0),
-      rejected:
-        entry.rejected + Number(!row.probe && row.rejectedAt !== undefined && row.rejectedAt <= to),
-      requests: entry.requests + Number(isRequest(row)),
-    });
+    if (row.probe && !grantedBy(row, to)) continue;
+    byId.set(row.requester, countFor(byId.get(row.requester), row, to));
   }
   return [...byId.values()].sort(
     (left, right) => right.requests - left.requests || (left.id < right.id ? -1 : 1),
   );
+}
+
+function countFor(entry: Requester | undefined, row: RequestRow, to: number): Requester {
+  const current = entry ?? {
+    granted: 0,
+    heldTotalMs: 0,
+    id: row.requester,
+    rejected: 0,
+    requests: 0,
+  };
+  const granted = grantedBy(row, to);
+  return {
+    ...current,
+    granted: current.granted + Number(granted),
+    heldTotalMs: current.heldTotalMs + (granted ? (heldOf(row, to)[0] ?? 0) : 0),
+    rejected: current.rejected + Number(rejectedBy(row, to)),
+    requests: current.requests + Number(isRequest(row)),
+  };
 }
