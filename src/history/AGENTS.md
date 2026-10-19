@@ -63,7 +63,7 @@ Flows: [startup](../../docs/internal/flows/startup.md). Catalog: [EVENTS.md](../
 - The history deletes rows, never files. A set-aside file is renamed, never deleted.
 - Only the socket-claim holder starts it, so a second daemon never opens, checks or renames the file.
 - A failing write never reaches the emitter (events rule 5).
-- The history never names a projection (architecture rule 21); the host hands `HISTORY_PROJECTIONS` in.
+- The history's own code (`database.ts`, `versions.ts`, `rebuild.ts`, `prune.ts` and the write path in `index.ts`) never names a projection (architecture rule 21); the host hands `HISTORY_PROJECTIONS` in. `index.ts` only re-exports that registry and the usage read side (`openUsageReads`, `DeviceFactRow`, `RequestRow`) for the readers.
 
 ## Known gaps
 

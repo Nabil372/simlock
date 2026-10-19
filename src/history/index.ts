@@ -158,7 +158,7 @@ class EventHistory implements EventHistoryHandle {
       closeQuietly(database);
       return;
     }
-    // why: nothing below awaits, so no event can land between the ring's copy and the live writer
+    // why: nothing up to the rebuild awaits, so no event can land between the ring's copy and the live writer
     this.#database = database;
     this.#migrate(database);
     const rebuilding = this.#prepare(database);
