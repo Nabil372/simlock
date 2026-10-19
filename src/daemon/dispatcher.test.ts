@@ -4553,8 +4553,8 @@ describe("Dispatcher: usage.get", () => {
   it("usage.get runs two calls for one window as one read on the read thread and gives both its answer, and two windows as two reads", async () => {
     const { eventHistory, rig } = await historyWithRows();
     const { dispatcher } = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
-    const call = (from: number) =>
-      dispatcher.dispatch("usage.get", { from, to: from + HOUR }, admin);
+    const call = (from: number, to = from + HOUR) =>
+      dispatcher.dispatch("usage.get", { from, to }, admin);
     const readsOf = async (run: () => Promise<unknown>) => {
       const before = threads.posts.length;
       await run();
@@ -4566,12 +4566,31 @@ describe("Dispatcher: usage.get", () => {
     const [first, second] = await Promise.all([call(T0), call(T0)]);
     const sameWindow = await readsOf(() => Promise.all([call(T0), call(T0)]));
     const twoWindows = await readsOf(() => Promise.all([call(T0), call(T0 - HOUR)]));
+    const otherStart = await readsOf(() => Promise.all([call(T0), call(T0 - HOUR, T0 + HOUR)]));
+    const otherEnd = await readsOf(() => Promise.all([call(T0), call(T0, T0 + 2 * HOUR)]));
 
     expect(single).toBeGreaterThan(0);
     expect(sameWindow).toBe(single);
     expect(twoWindows).toBe(2 * single);
+    expect(otherStart).toBe(2 * single);
+    expect(otherEnd).toBe(2 * single);
     expect(first).toEqual(second);
     expect(first.totals.requests).toBe(1);
+  });
+
+  it("dispose ends the read thread", async () => {
+    const { eventHistory, rig } = await historyWithRows();
+    const { dispatcher } = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
+    await dispatcher.dispatch("usage.get", { from: T0, to: T0 + HOUR }, admin);
+    const thread = threads.workers.at(-1) as unknown as import("node:worker_threads").Worker;
+    let exited = false;
+    thread.on("exit", () => {
+      exited = true;
+    });
+
+    dispatcher.dispose();
+
+    await vi.waitFor(() => expect(exited).toBe(true));
   });
 
   it("usage.get answers INTERNAL to a call in flight when the read thread exits, and answers the next call from a new thread", async () => {

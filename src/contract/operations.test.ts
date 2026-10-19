@@ -1618,8 +1618,9 @@ describe("usage.get input", () => {
   it("refuses a bound that is not an integer, is negative, is above 8.64e15 or is a string, and takes the last date a Date holds", () => {
     expect(parse({ from: 8.64e15 - 1, to: 8.64e15 }).success).toBe(true);
     expect(parse({ from: 0.5, to: 10 }).success).toBe(false);
+    expect(parse({ from: 0, to: 10.5 }).success).toBe(false);
     expect(parse({ from: -1, to: 10 }).success).toBe(false);
-    expect(parse({ from: 0, to: 8.64e15 + 1 }).success).toBe(false);
+    expect(parse({ from: 8.64e15, to: 8.64e15 + 2 }).success).toBe(false);
     expect(parse({ from: "0", to: 10 }).success).toBe(false);
     expect(parse({ from: 0 }).success).toBe(false);
   });

@@ -89,7 +89,10 @@ describe("simlock stats", () => {
     ]);
     expect(usage.totals.held.count).toBe(named("lease.released").length);
     expect(usage.totals.provisioning.count).toBe(named("device.provisioned").length);
-    expect(usage.totals.boot.count).toBe(named("device.ready").length);
+    // why: a boot of 0 ms is the registry marking a device ready, not a boot: the history keeps no fact of it.
+    expect(usage.totals.boot.count).toBe(
+      named("device.ready").filter((event) => Number(payload(event).bootDuration) > 0).length,
+    );
     expect(usage.totals.wait.count).toBeGreaterThanOrEqual(3);
 
     await env.restartDaemon();

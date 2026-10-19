@@ -27,6 +27,16 @@ const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2
 
 function parseTime(value: string): number | undefined {
   if (!ISO_TIME.test(value)) return undefined;
+  // why: `Date.parse` rolls 31 February over to March and reads `T24:00` as the next midnight; a typo must not ask for another window.
+  const [year, month, day, hour] = value.split(/[-T:]/, 4).map(Number) as [
+    number,
+    number,
+    number,
+    number,
+  ];
+  const lastDay = new Date(0);
+  lastDay.setUTCFullYear(year, month, 0);
+  if (hour > 23 || day > lastDay.getUTCDate()) return undefined;
   const time = Date.parse(value);
   return Number.isNaN(time) ? undefined : time;
 }

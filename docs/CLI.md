@@ -2361,8 +2361,9 @@ Totals
   back from now. `--from` and `--to` name the ends as ISO 8601 times with a
   `Z` or an offset (`2026-10-15T00:00Z`, `2026-10-15T00:00:00+02:00`); without
   `--to` the window ends now. `--since` with `--from`, `--to` without `--from`,
-  a `--from` that is not earlier than the end, a time with no zone and a
-  duration that is not one are usage errors (exit 2).
+  a `--from` that is not earlier than the end, a time with no zone or one that
+  names a day the month lacks, and a duration that is not one are usage errors
+  (exit 2).
 - A window is at most 90 days (`BAD_REQUEST`, exit 2, when longer). The
   window printed starts at the start of the series bucket that holds `--from`
   (1 minute to 1 day wide, picked so a window has at most 200 points) and ends

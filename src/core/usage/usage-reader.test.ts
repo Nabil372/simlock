@@ -44,7 +44,7 @@ async function setup(options: UsageRigOptions & { readonly deps?: Partial<UsageR
 const NONE = { count: 0, max: null, p50: null, p95: null };
 
 describe("usage reader: requests, grants and samples", () => {
-  it("counts a request granted, held and released as one request, one grant, and one sample each of wait, held and turnaround, with the milliseconds the events were stamped apart", async () => {
+  it("counts a request granted, held and released as one request, one grant, and one sample each of wait, held and turnaround, with the milliseconds the events were stamped apart and no failure", async () => {
     const { rig, usage } = await setup();
     rig.emit("lease.requested", requested("R1"));
     rig.at(T0 + 400);
@@ -55,6 +55,7 @@ describe("usage reader: requests, grants and samples", () => {
     const { totals } = await usage(T0, T0 + HOUR);
 
     expect(totals).toMatchObject({ granted: 1, requests: 1, bySource: { warm: 1 } });
+    expect(totals.failures).toEqual({ byEvent: {} });
     expect(totals.wait).toEqual({ count: 1, max: 400, p50: 400, p95: 400 });
     expect(totals.held).toEqual({ count: 1, max: 1_500, p50: 1_500, p95: 1_500 });
     expect(totals.turnaround).toEqual({ count: 1, max: 1_900, p50: 1_900, p95: 1_900 });
@@ -131,6 +132,34 @@ describe("usage reader: requests, grants and samples", () => {
     expect(totals.wait).toEqual({ count: 2, max: 2_000, p50: 1_000, p95: 2_000 });
     expect(totals.held).toEqual(NONE);
     expect(totals.turnaround).toEqual(NONE);
+  });
+
+  it("takes a rejection's wait as a sample, counts a grant, a rejection and a release stamped exactly at to, and sees a rejection one millisecond after it in no count", async () => {
+    const { rig, usage } = await setup();
+    rig.emit("lease.requested", requested("R1"));
+    rig.at(T0 + 3_000);
+    rig.emit("lease.rejected", rejected("R1", "timeout"));
+    rig.at(T0 + 59 * MIN);
+    for (const id of ["R2", "R3", "G1", "G2"]) rig.emit("lease.requested", requested(id));
+    rig.at(T0 + HOUR - 1_000);
+    rig.emit("lease.granted", granted("L-G1", "G1"));
+    rig.at(T0 + HOUR);
+    rig.emit("lease.rejected", rejected("R2", "timeout"));
+    rig.emit("lease.granted", granted("L-G2", "G2"));
+    rig.emit("lease.released", released("L-G1"));
+    rig.at(T0 + HOUR + 1);
+    rig.emit("lease.rejected", rejected("R3", "timeout"));
+
+    const { totals, requesters } = await usage(T0, T0 + HOUR);
+
+    expect(totals.requests).toBe(5);
+    expect(totals.rejected).toEqual({ byReason: { timeout: 2 }, total: 2 });
+    expect(totals.granted).toBe(2);
+    expect(totals.wait).toEqual({ count: 4, max: 60_000, p50: 59_000, p95: 60_000 });
+    expect(totals.held).toEqual({ count: 1, max: 1_000, p50: 1_000, p95: 1_000 });
+    expect(requesters).toEqual([
+      { granted: 2, heldTotalMs: 1_000, id: "alice", rejected: 2, requests: 5 },
+    ]);
   });
 
   it("counts a refused-at-admission rejection (already-leased) under rejected and not under requests, in the totals and in its requester's entry alike", async () => {
@@ -220,6 +249,27 @@ describe("usage reader: requests, grants and samples", () => {
     expect(answer.totals).not.toHaveProperty("probes");
     expect(answer.workers.length).toBeGreaterThan(0);
     for (const worker of answer.workers) expect(worker).not.toHaveProperty("probes");
+  });
+
+  it("with fleet counts a fleet grant whose worker has not yet told its source under unknown, which a worker never answers", async () => {
+    const fleet = await setup({ deps: { workers: () => [{ id: "w1" }] }, fleet: true });
+    fleet.rig.emit("lease.requested", requested("G1", { requester: "tok_a" }));
+    fleet.rig.at(T0 + 1_000);
+    fleet.rig.emit("request.granted", {
+      leaseId: "G-G1",
+      requestId: "G1",
+      worker: "w1",
+      workerLeaseId: "WL1",
+    });
+    const worker = await setup();
+    worker.rig.emit("lease.requested", requested("R1"));
+    worker.rig.emit("lease.granted", granted("L1", "R1"));
+
+    const gateway = await fleet.usage(T0, T0 + HOUR);
+    const local = await worker.usage(T0, T0 + HOUR);
+
+    expect(gateway.totals.bySource).toEqual({ booted: 0, provisioned: 0, unknown: 1, warm: 0 });
+    expect(local.totals.bySource).toEqual({ booted: 0, provisioned: 0, warm: 1 });
   });
 
   it("lists requesters by request count then id, with the token label of a known token, and none when the daemon has no token store", async () => {
@@ -359,6 +409,20 @@ describe("usage reader: device facts", () => {
 });
 
 describe("usage reader: scopes", () => {
+  it("leaves a device fact stamped before from out of the incidents and the samples", async () => {
+    const { rig, usage } = await setup({ at: T0 - 10 * MIN });
+    rig.at(T0 - 5 * MIN);
+    rig.emit("device.ready", { bootDuration: 20_000, deviceId: "d1", platform: "ios" });
+    rig.emit("device.quarantine-abandoned", { attempts: 3, deviceId: "d6", platform: "ios" });
+    rig.at(T0 + MIN);
+    rig.emit("device.ready", { bootDuration: 10_000, deviceId: "d2", platform: "ios" });
+
+    const { totals } = await usage(T0, T0 + HOUR);
+
+    expect(totals.boot).toEqual({ count: 1, max: 10_000, p50: 10_000, p95: 10_000 });
+    expect(totals.incidents.lost).toBe(0);
+  });
+
   it("splits figures by platform and by worker: on a worker an iOS and an Android request land in their platform entries; on a gateway the platform entries read the * rows of that platform and two workers' devices land in their worker entries", async () => {
     const worker = await setup({ deps: { workers: () => [{ id: "w-self" }] } });
     worker.rig.emit("lease.requested", requested("I1"));
@@ -392,7 +456,7 @@ describe("usage reader: scopes", () => {
     expect(byWorker).toEqual({ w1: 1, w2: 2 });
   });
 
-  it("on a gateway takes the totals' slots peak from the * rows: two workers peaking at 2 each, a minute apart, give 2, not 4", async () => {
+  it("on a gateway takes the totals' slots peak from the * rows: two workers peaking at 2 each, a minute apart, give 2, not 4, in the totals and in the series alike", async () => {
     const { rig, usage } = await setup({
       deps: { workers: () => [{ id: "w1" }, { id: "w2" }] },
       fleet: true,
@@ -405,6 +469,7 @@ describe("usage reader: scopes", () => {
     const answer = await usage(T0, T0 + HOUR);
 
     expect(answer.totals.utilisation.slots.peak).toBe(2);
+    expect(answer.series.slice(0, 3).map((point) => point.slotsUsed)).toEqual([2, 2, 0]);
     expect(Object.fromEntries(answer.workers.map((w) => [w.id, w.utilisation.slots.peak]))).toEqual(
       { w1: 2, w2: 2 },
     );
@@ -447,12 +512,13 @@ describe("usage reader: scopes", () => {
     expect(answer.workers.reduce((sum, entry) => sum + entry.requests, 0)).toBe(2);
   });
 
-  it("the worker answers one worker entry, itself, with its instance id and label, or no label when none is set", async () => {
+  it("the worker answers one worker entry, itself, with its instance id, its label or none, and the slots it used as the totals have them", async () => {
     const labelled = await setup({
       deps: { workers: () => [{ id: "instance-1", label: "lab-a" }] },
     });
     const plain = await setup({ deps: { workers: () => [{ id: "instance-1" }] } });
     labelled.rig.emit("lease.requested", requested("R1"));
+    labelled.rig.emit("capacity.changed", capacity({ global: [2, 0, 8] }));
     plain.rig.emit("lease.requested", requested("R1"));
 
     const named = await labelled.usage(T0, T0 + HOUR);
@@ -461,6 +527,8 @@ describe("usage reader: scopes", () => {
     expect(named.workers.map((entry) => [entry.id, entry.label, entry.requests])).toEqual([
       ["instance-1", "lab-a", 1],
     ]);
+    expect(named.totals.utilisation.slots.peak).toBe(2);
+    expect(named.workers[0]?.utilisation).toEqual(named.totals.utilisation);
     expect(anonymous.workers).toHaveLength(1);
     expect(anonymous.workers[0]).toMatchObject({ id: "instance-1", requests: 1 });
     expect(anonymous.workers[0]).not.toHaveProperty("label");
@@ -550,6 +618,17 @@ describe("usage reader: minute figures", () => {
       waiting: null,
     });
     expect(answer.series[95]).not.toHaveProperty("ramUsedBytes");
+  });
+
+  it("leaves the minute still running at to out of the slots figures", async () => {
+    const { rig, usage } = await setup();
+    rig.emit("capacity.changed", capacity({ global: [1, 0, 8] }));
+    rig.at(T0 + MIN + 10_000);
+    rig.emit("capacity.changed", capacity({ global: [3, 0, 8] }));
+
+    const { totals } = await usage(T0, T0 + MIN + 30_000);
+
+    expect(totals.utilisation.slots.peak).toBe(1);
   });
 
   it("reports a time-weighted slots, RAM and queue mean from the integrals (1 slot for 45 s, 3 for 15 s -> 1.5), ram.limitBytes from ramLimitBytes, and leaves utilisation.ram out when no row in the window has ramUsedBytes", async () => {

@@ -3014,6 +3014,7 @@ describe("CLI: component install on a gateway's workers (ADR 0010 §7)", () => {
     const output = outputCapture();
     await runCli(["--help"], output.environmentWith({}));
     expect(output.stdout).toContain("component install <ios|android> <version>");
+    expect(output.stdout).toContain("events, stats,");
   });
 });
 
