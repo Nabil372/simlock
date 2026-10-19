@@ -1129,19 +1129,26 @@ describe("usage reads", () => {
     try {
       database.exec("BEGIN");
       const before = reads.requestRows({ from: 0, to: ALL }).length;
+      const minutes = { bucketMs: MIN, from: T0, platform: "ios", to: T0 + MIN, workerId: "" };
+      const minutesBefore = reads.minuteBuckets(minutes);
       r.at(T0 + 1_000);
       r.emit("lease.requested", requested("R2"));
       r.emit("device.ready", { bootDuration: 1, deviceId: "d", platform: "ios" });
+      r.emit("capacity.changed", capacity({ ios: [2, 0, 4] }));
       const during = {
         facts: reads.deviceFacts({ from: 0, to: ALL }).length,
         oldest: reads.oldestTs(),
         requests: reads.requestRows({ from: 0, to: ALL }).length,
       };
+      const minutesDuring = reads.minuteBuckets(minutes);
       database.exec("COMMIT");
 
       expect(before).toBe(1);
       expect(during).toEqual({ facts: 0, oldest: T0, requests: 1 });
+      expect(minutesDuring).toEqual(minutesBefore);
+      expect(figure(minutesBefore[0], "slotsUsed")).toBeUndefined();
       expect(reads.requestRows({ from: 0, to: ALL })).toHaveLength(2);
+      expect(figure(reads.minuteBuckets(minutes)[0], "slotsUsed")).toBeDefined();
     } finally {
       database.close();
     }
