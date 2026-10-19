@@ -19,7 +19,7 @@ import type { NameType, ValueType } from "recharts/types/component/DefaultToolti
 export interface MinuteCount {
   readonly at: number;
   readonly label: string;
-  readonly count: number;
+  readonly count: number | null;
 }
 
 const HEIGHT = 240;
@@ -92,6 +92,7 @@ function MinuteTip({
 export function MinuteTable(props: {
   readonly minutes: readonly MinuteCount[];
   readonly heading: string;
+  readonly bucketMs?: number;
 }) {
   const { heading, minutes } = props;
   return (

@@ -133,6 +133,7 @@ test.describe("every view", () => {
       }
 
       await visit(page, host, "/");
+      await expect(page.locator("#main .chart")).toHaveCount(3);
       const chart = page.locator(".chart [tabindex='0']").first();
       await chart.focus();
       await page.keyboard.press("ArrowLeft");
@@ -162,12 +163,15 @@ test.describe("every view", () => {
     const { host } = await hostWithLease();
     try {
       await openSignedIn(page, host);
-      for (const [path, title] of [
-        ["/", "Leases held, last hour"],
-        ["/events", "Events"],
+      for (const [path, title, index] of [
+        ["/", "Leases held, last hour", 0],
+        ["/", "Requests in the queue, last hour", 1],
+        ["/", "Device slots in use, last hour", 2],
+        ["/events", "Events", 0],
       ] as const) {
         await visit(page, host, path);
-        const chart = page.locator("#main .chart").first();
+        if (path === "/") await expect(page.locator("#main .chart")).toHaveCount(3);
+        const chart = page.locator("#main .chart").nth(index);
         const heading = page.getByRole("heading", { name: title, exact: true });
         const ring = () => chart.evaluate((element) => getComputedStyle(element).outlineStyle);
         const focused = () =>
@@ -289,13 +293,30 @@ test.describe("every view", () => {
       await openSignedIn(page, host);
 
       await expect
-        .poll(tiles)
+        .poll(async () => (await tiles()).slice(0, 4))
         .toEqual([
           `Utilisation | ${Math.round((100 * 1) / limit)} | %`,
           `Leases | 1 | of ${limit}`,
           "Waiting | 0 | none",
           "Workers | 1 | of 1 up",
-          "Granted | 1 | last hour",
+        ]);
+      const stats = (await (
+        await fetch(new URL("/v1/stats?since=1h", host.url), {
+          headers: { Authorization: `Bearer ${host.tokens.operator}` },
+        })
+      ).json()) as { totals: { granted: number; wait: { p95: number | null } } };
+      const wait = stats.totals.wait.p95;
+      await expect
+        .poll(async () => (await tiles()).slice(4))
+        .toEqual([
+          `Granted | ${stats.totals.granted} | last hour`,
+          `Wait p95 | ${
+            wait === null
+              ? "—"
+              : wait < 1_000
+                ? `${Math.round(wait)} ms`
+                : `${Math.floor(wait / 1_000)} s`
+          } | last hour`,
         ]);
       await page.getByRole("link", { name: /^Leases 1/ }).click();
       await expect(page.getByRole("heading", { level: 1, name: "Leases" })).toBeVisible();

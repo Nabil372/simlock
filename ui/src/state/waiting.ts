@@ -1,5 +1,6 @@
 import type { LoadView } from "../ds/loaded";
 import type { Paging } from "../ds/pager";
+import type { FigureTile } from "../model/figures";
 import { listSearch, TABLE_SIZES } from "../model/paging";
 import { itemIdFrom } from "../model/paths";
 import {
@@ -23,6 +24,7 @@ export interface WaitingPage extends WaitingChoice {
   readonly count: number;
   readonly paging: Paging;
   readonly named: boolean;
+  readonly wait: LoadView<FigureTile>;
 }
 
 export function useWaiting(): LoadView<WaitingPage> {
@@ -47,6 +49,7 @@ export function useWaiting(): LoadView<WaitingPage> {
       named: id !== undefined,
       paging,
       rows,
+      wait: { kind: "loading" },
     };
   });
 }

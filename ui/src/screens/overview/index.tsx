@@ -18,6 +18,7 @@ import {
   Status,
   StatusDot,
 } from "../../ds";
+import type { ConsoleRange } from "../../state/range";
 import {
   type Gauge,
   type Overview,
@@ -37,7 +38,12 @@ export function OverviewScreen() {
   );
 }
 
-export function OverviewBody({ overview }: { readonly overview: Overview }) {
+export function OverviewBody(props: {
+  readonly overview: Overview;
+  readonly range?: ConsoleRange;
+  readonly onRange?: (range: ConsoleRange) => void;
+}) {
+  const { overview } = props;
   return (
     <>
       <StatRow label="Fleet at a glance">
@@ -47,7 +53,7 @@ export function OverviewBody({ overview }: { readonly overview: Overview }) {
       </StatRow>
       <Row>
         <Panel title="Leases held, last hour">
-          {overview.minutes.length === 0 ? (
+          {(overview.minutes ?? []).length === 0 ? (
             <p className="muted">Not reported.</p>
           ) : (
             <>
@@ -55,10 +61,10 @@ export function OverviewBody({ overview }: { readonly overview: Overview }) {
                 kind="area"
                 title="Leases held, last hour"
                 unit="leases held"
-                minutes={overview.minutes}
+                minutes={overview.minutes ?? []}
               />
-              <p className="chart-summary">{overview.chartSummary}</p>
-              <MinuteTable minutes={overview.minutes} heading="Leases held" />
+              <p className="chart-summary">{overview.chartSummary ?? ""}</p>
+              <MinuteTable minutes={overview.minutes ?? []} heading="Leases held" />
             </>
           )}
         </Panel>

@@ -2,6 +2,7 @@ import { eventSummary, eventTone } from "./activity";
 import { attentionItems, attentionTone } from "./attention";
 import type { ConsoleEvent } from "./events";
 import { type DeviceSlot, slotsLabel, workerHealth, workerSlots } from "./fleet";
+import type { FiguresState } from "./figures";
 import { extremes, leaseHistory, type MinuteCount, minuteLabel } from "./history";
 import { formatBusyPercent, loadGauges } from "./load";
 import { levelOf } from "./load-thresholds";
@@ -65,8 +66,9 @@ export interface OverviewActivity {
 
 export interface Overview {
   readonly tiles: readonly OverviewTile[];
-  readonly minutes: readonly MinuteCount[];
-  readonly chartSummary: string;
+  readonly figures: FiguresState;
+  readonly minutes?: readonly MinuteCount[];
+  readonly chartSummary?: string;
   readonly platforms: readonly PlatformUse[];
   readonly workers: readonly OverviewWorker[];
   readonly attention: readonly OverviewItem[];
@@ -186,9 +188,10 @@ export function overviewOf(input: {
   readonly workers: readonly WorkerView[];
   readonly requests: readonly WaitingRequest[];
   readonly events: readonly ConsoleEvent[];
+  readonly figures?: FiguresState;
   readonly now: number;
 }): Overview {
-  const { events, now, requests, workers } = input;
+  const { events, figures = { kind: "loading" }, now, requests, workers } = input;
   const platforms = [platformUse(workers, "ios"), platformUse(workers, "android")];
   const held = leasesHeld(workers);
   const minutes = held === undefined ? [] : leaseHistory(held, events, now);
@@ -218,6 +221,7 @@ export function overviewOf(input: {
       word: item.condition,
     })),
     chartSummary: historySummary(minutes),
+    figures,
     minutes,
     platforms,
     tiles: tiles(workers, requests, events, platforms, now),
