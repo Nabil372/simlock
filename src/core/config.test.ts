@@ -267,7 +267,11 @@ describe("loadConfig", () => {
     const longer = await loadWith({ eventLog: { retention: 100 * DAY } });
     const shorter = await loadWith({ eventLog: { retention: 30 * DAY } });
     const written = await loadWith({ metrics: { retention: 120 * DAY } });
+    const empty = await loadWith({ eventLog: { retention: 100 * DAY }, metrics: {} });
+    const mistyped = await loadWith({ metrics: { retenton: 5 } });
 
+    expect(empty.metrics).toEqual({ retention: 100 * DAY });
+    expect(mistyped.metrics).toEqual({ retention: 90 * DAY });
     expect(defaulted.metrics).toEqual({ retention: 90 * DAY });
     expect(longer.metrics).toEqual({ retention: 100 * DAY });
     expect(shorter.metrics).toEqual({ retention: 90 * DAY });

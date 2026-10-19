@@ -403,8 +403,10 @@ export async function loadConfig({
   ) as unknown as Omit<Config, "metrics"> & { readonly metrics?: Config["metrics"] };
   const merged: Config = {
     ...mergedWithoutMetrics,
-    metrics: mergedWithoutMetrics.metrics ?? {
-      retention: Math.max(DEFAULT_METRICS_RETENTION_MS, mergedWithoutMetrics.eventLog.retention),
+    metrics: {
+      retention:
+        mergedWithoutMetrics.metrics?.retention ??
+        Math.max(DEFAULT_METRICS_RETENTION_MS, mergedWithoutMetrics.eventLog.retention),
     },
   };
   validateLeaseTtls(merged);
