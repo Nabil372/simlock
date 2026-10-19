@@ -112,6 +112,42 @@ describe("the figures drawn from a stats answer", () => {
     ]);
   });
 
+  it("leaves the day out of a 24 hour window whose start the daemon floored to its bucket", () => {
+    const bucketMs = 15 * MINUTE;
+    const to = local(15, 14, 30);
+    const from = local(14, 14, 30) - 10 * MINUTE;
+    const series = Array.from({ length: 97 }, (_, index) => ({
+      at: Math.min(from + (index + 1) * bucketMs, to),
+      leasesHeld: 1,
+      queueDepth: 1,
+      slotsUsed: 1,
+    }));
+    const stats = statsOf({ bucketMs, from, series, to });
+
+    const { points } = figuresOf(stats, "24h", to).charts[0] ?? { points: [] };
+
+    expect(points.map((point) => point.label).slice(0, 2)).toEqual(["14:20", "14:35"]);
+  });
+
+  it("says Now — in a chart summary when the last bucket has no data", () => {
+    const from = local(15, 12);
+    const stats = statsOf({
+      bucketMs: MINUTE,
+      from,
+      series: [2, 4, null].map((count, index) => ({
+        at: from + (index + 1) * MINUTE,
+        leasesHeld: count,
+        queueDepth: count,
+        slotsUsed: count,
+      })),
+      to: from + 3 * MINUTE,
+    });
+
+    const { charts } = figuresOf(stats, "1h", NOW);
+
+    expect(charts[0]?.summary).toBe("Now —; highest 4 at 12:01; lowest 2 at 12:00.");
+  });
+
   it("carries the day in a label when the window is 7 days", () => {
     const from = local(8, 14);
     const to = local(15, 15);

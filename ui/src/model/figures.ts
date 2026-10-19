@@ -86,7 +86,8 @@ function chartOf(
   now: number,
 ): FigureChart {
   const { bucketMs, window } = stats;
-  const withDay = window.to - window.from > DAY;
+  // why: the daemon floors window.from to a bucket, so a 24h window can run up to one bucket over.
+  const withDay = window.to - window.from >= DAY + bucketMs;
   const points = stats.series.map((point, index): ChartPoint => {
     const start = window.from + index * bucketMs;
     const label = minuteLabel(start);

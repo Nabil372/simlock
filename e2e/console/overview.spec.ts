@@ -45,7 +45,10 @@ async function waitingCount(host: RunningDaemon): Promise<number> {
   return requests.length;
 }
 
+// why: the charts draw complete minutes only, so a run is charted once the minute it started in is
+// over; the Granted tile is the live figure and needs no such wait.
 async function scriptedRun(host: RunningDaemon): Promise<void> {
+  const minute = Math.floor(Date.now() / 60_000);
   const held = await host.cli([...LEASE, "--agent-id", "holder", "--detach"]);
   expect(held.code, held.stderr).toBe(0);
   host.cliBackground([...LEASE, "--agent-id", "waiter"]);
@@ -54,6 +57,15 @@ async function scriptedRun(host: RunningDaemon): Promise<void> {
   const released = await host.cli(["release", (held.json as { lease: { id: string } }).lease.id]);
   expect(released.code, released.stderr).toBe(0);
   await waitFor(async () => (await waitingCount(host)) === 0, { label: "the request granted" });
+  const minuteOver = (minute + 1) * 60_000 + 1_000;
+  await waitFor(() => Date.now() >= minuteOver, { label: "the minute over", timeout: 70_000 });
+  await waitFor(
+    async () => {
+      const stats = await statsOf(host, "1h");
+      return CHARTS.every((key) => stats.series.some((point) => point[key] !== null));
+    },
+    { label: "the run in a completed minute", timeout: 30_000 },
+  );
 }
 
 async function openOverview(page: Page, host: RunningDaemon, path = "/"): Promise<void> {
@@ -94,6 +106,9 @@ function expectedTables(stats: Stats): readonly (readonly string[])[] {
 }
 
 test.describe("the Overview's figures", () => {
+  // why: a run is charted once its minute is over, which can take most of a minute.
+  test.describe.configure({ timeout: 150_000 });
+
   test("picking each of 1 hour, 6 hours, 24 hours and 7 days writes its ?range=, and the two tiles and all three chart tables equal GET /v1/stats", async ({
     page,
   }) => {
@@ -118,7 +133,9 @@ test.describe("the Overview's figures", () => {
         await expect
           .poll(() => tileText(page, "Wait p95"))
           .toBe(`Wait p95 | ${waitText(stats.totals.wait.p95)} | ${range.unit}`);
-        await expect.poll(() => tablesOf(page)).toEqual(expectedTables(stats));
+        const expected = expectedTables(stats);
+        expect(expected.every((rows) => rows.some((row) => row !== "—"))).toBe(true);
+        await expect.poll(() => tablesOf(page)).toEqual(expected);
       }
     } finally {
       await host.dispose();
@@ -163,6 +180,9 @@ test.describe("the Overview's figures", () => {
         rows: (await tablesOf(page)).map((rows) => rows.filter((row) => row !== "—")),
         wait: await tileText(page, "Wait p95"),
       };
+
+      expect(before.rows).toHaveLength(3);
+      expect(before.rows.every((rows) => rows.length > 0)).toBe(true);
 
       await host.stop();
       await new Promise((resolve) => setTimeout(resolve, 6_000));
