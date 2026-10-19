@@ -208,6 +208,49 @@ function conformance(
       }
     });
 
+    it("a rebuild over events that cross a crash gives the rows the runs wrote live", async () => {
+      const database = await openScratch();
+      try {
+        for (const migration of definition.migrations) database.exec(migration);
+        const options = { fleet: false, metricsRetentionMs: 90 * 24 * 3_600_000 };
+        const at = (minutes: number): number => 60_000 * 1_000 + minutes * 60_000;
+        const envelope = (
+          index: number,
+          seq: number,
+          minutes: number,
+          event: EventEnvelope["event"],
+          payload: unknown,
+        ): EventEnvelope =>
+          ({
+            event,
+            id: `evt_${index}`,
+            module: "daemon",
+            payload,
+            seq,
+            timestamp: at(minutes),
+          }) as never;
+        const capacity = { ios: { maxRunning: 4, reserved: 0, running: 1, warm: 0 } };
+        const crashed = [envelope(0, 1, 0, "capacity.changed", capacity)];
+        const next = [
+          envelope(1, 1, 10, "capacity.changed", capacity),
+          envelope(2, 2, 10, "daemon.started", { configSnapshot: {}, version: "1" }),
+          envelope(3, 3, 12, "daemon.stopping", { reason: "signal" }),
+        ];
+        for (const event of crashed) definition.create(database, options).apply(event);
+        const second = definition.create(database, options);
+        for (const event of next) second.apply(event);
+        const live = dumpTables(database);
+        expect(live.length).toBeGreaterThan(0);
+
+        second.rebuild(at(0));
+        for (const event of [...crashed, ...next]) second.apply(event);
+
+        expect(dumpTables(database)).toEqual(live);
+      } finally {
+        database.close();
+      }
+    });
+
     it("a throwing apply writes nothing", async () => {
       const baseline = await run(definition, (bus) => relay(bus, "evt_a"));
       const result = await run(

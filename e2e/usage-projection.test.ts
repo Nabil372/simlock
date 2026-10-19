@@ -2,12 +2,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { type DeviceFactRow, openUsageReads, type RequestRow } from "../src/history/index.js";
+import {
+  type DeviceFactRow,
+  type MinuteBucket,
+  openUsageReads,
+  type RequestRow,
+} from "../src/history/index.js";
 import { NodeSqliteOpener } from "../src/ports/index.js";
 import { type TestEnv, waitFor, withDaemon } from "./helpers/index.js";
 
 const LEASE_ARGS = ["lease", "--platform", "ios", "--device", "iPhone 16", "--os", "18.4"] as const;
 const ALL = Number.MAX_SAFE_INTEGER;
+const MINUTE = 60_000;
 const SEEDED = 300_000;
 
 async function prepare(env: TestEnv): Promise<void> {
@@ -23,6 +29,7 @@ async function prepare(env: TestEnv): Promise<void> {
 async function usageOf(env: TestEnv): Promise<{
   readonly requests: RequestRow[];
   readonly facts: DeviceFactRow[];
+  readonly minutes: MinuteBucket[];
   readonly oldest: number | undefined;
 }> {
   const database = await new NodeSqliteOpener().open(join(env.home, "history.db"), {
@@ -30,8 +37,17 @@ async function usageOf(env: TestEnv): Promise<{
   });
   try {
     const reads = openUsageReads(database);
+    const oldest = reads.oldestTs();
+    const from = oldest === undefined ? 0 : oldest - (oldest % MINUTE);
     return {
       facts: reads.deviceFacts({ from: 0, to: ALL }),
+      minutes: reads.minuteBuckets({
+        bucketMs: MINUTE,
+        from,
+        platform: "ios",
+        to: from + 5 * MINUTE,
+        workerId: "",
+      }),
       oldest: reads.oldestTs(),
       requests: reads.requestRows({ from: 0, to: ALL }),
     };
@@ -105,6 +121,8 @@ describe("usage projection", () => {
       expect.arrayContaining(["device.provisioned", "device.ready"]),
     );
     expect(before.oldest).toBeDefined();
+    expect(before.minutes.length).toBeGreaterThan(0);
+    expect(before.minutes.some((bucket) => (bucket.slotsUsed?.peak ?? 0) >= 1)).toBe(true);
     expect(after.requests).toEqual(before.requests);
     expect(after.facts).toEqual(before.facts);
   }, 90_000);

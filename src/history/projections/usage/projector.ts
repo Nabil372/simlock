@@ -52,6 +52,7 @@ class Projector implements ProjectionHandle {
   readonly #queues = new Map<string, { plain: number; physical: number }>();
   readonly #levels = new Map<string, Map<string, Map<UsageValue, number>>>();
   readonly #connected = new Set<string>();
+  #lastSeq: number | undefined;
 
   readonly #routes = new Map<string, Route>([
     ["lease.requested", (payload, _origin, at) => this.#requested(payload, at)],
@@ -76,6 +77,9 @@ class Projector implements ProjectionHandle {
   }
 
   apply(envelope: EventEnvelope): void {
+    // why: `seq` only orders within one run, so a seq that does not rise is a new run (a replay crosses a crash with no stop between); this run starts with what a fresh process holds.
+    if (this.#lastSeq !== undefined && envelope.seq <= this.#lastSeq) this.#newRun();
+    this.#lastSeq = envelope.seq;
     const at = amount(envelope.timestamp);
     if (at === undefined) return;
     const payload = payloadOf(envelope.payload);
@@ -118,7 +122,15 @@ class Projector implements ProjectionHandle {
     this.#loaded = false;
   }
 
+  #newRun(): void {
+    this.#minutes.forget();
+    this.#levels.clear();
+    this.#connected.clear();
+    this.#queues.clear();
+  }
+
   rebuild(oldestEventAt: number | undefined): void {
+    this.#lastSeq = undefined;
     for (const table of USAGE_TABLES) {
       if (!tableMatches(this.#database, table)) recreateTable(this.#database, table);
     }

@@ -851,6 +851,24 @@ describe("usage projection: minute rows", () => {
     await second.history.stop();
   });
 
+  it("a key the next run has not stepped by its daemon.started is closed there, not carried over the downtime", async () => {
+    const first = await rig();
+    first.emit("capacity.changed", capacity({ android: [1, 0, 3], ios: [2, 0, 4] }));
+    await first.history.stop();
+
+    const second = await rig({ at: T0 + 10 * MIN, directory: first.directory });
+    const { android: _unreported, ...iosOnly } = capacity({ ios: [2, 0, 4] });
+    second.emit("capacity.changed", iosOnly as EventMap["capacity.changed"]);
+    second.emit("daemon.started", { configSnapshot: {}, version: "1" });
+    second.at(T0 + 12 * MIN);
+    second.emit("capacity.changed", iosOnly as EventMap["capacity.changed"]);
+
+    const read = await buckets(second, { from: T0, platform: "android", to: T0 + 13 * MIN });
+
+    expect(read.map((bucket) => (bucket.start - T0) / MIN)).toEqual([0]);
+    await second.history.stop();
+  });
+
   it("after a restart, open requests and held leases are restored, leasesHeld and waiting get a step at daemon.started, and every row written before the stop is unchanged", async () => {
     const first = await rig();
     first.emit("lease.requested", requested("R1"));
@@ -1289,7 +1307,9 @@ describe("usage projection: rebuild", () => {
       bucket.start < T0 + MIN
         ? bucket
         : {
-            ...bucket,
+            // why: the first run was never stopped, so the second run (MID is its first event) carries none of its other levels over the downtime.
+            knownMs: bucket.knownMs,
+            start: bucket.start,
             waiting: {
               integral: (bucket.waiting?.integral ?? 0) + MIN,
               peak: (bucket.waiting?.peak ?? 0) + 1,
