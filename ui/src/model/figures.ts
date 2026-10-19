@@ -43,7 +43,7 @@ const DAY = 86_400_000;
 
 // why: under a second a duration would round to `0 s`, which says "no wait" for a wait that was
 // real.
-export function formatWait(ms: number | null): string {
+function formatWait(ms: number | null): string {
   if (ms === null) return "—";
   return ms < 1_000 ? `${Math.round(ms)} ms` : formatDuration(ms);
 }
