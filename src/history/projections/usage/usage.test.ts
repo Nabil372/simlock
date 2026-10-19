@@ -652,17 +652,19 @@ describe("usage projection: minute rows", () => {
       buckets(r, { from: T0, platform, to: T0 + MIN, workerId });
     const later = (platform: string, workerId = "*") =>
       buckets(r, { from: T0 + MIN, platform, to: T0 + 2 * MIN, workerId });
+    const peakOf = async (query: ReturnType<typeof first>, value: UsageValue) =>
+      figure((await query)[0], value)?.peak;
 
-    expect(figure((await first("all"))[0], "slotsUsed")?.peak).toBe(3);
-    expect(figure((await first("all"))[0], "slotsMax")?.peak).toBe(8);
-    expect(figure((await first("all"))[0], "ramUsedBytes")?.peak).toBe(300);
-    expect(figure((await first("all"))[0], "ramLimitBytes")?.peak).toBe(2_000);
-    expect(figure((await first("all"))[0], "leasesHeld")?.peak).toBe(2);
-    expect(figure((await first("ios"))[0], "slotsUsed")?.peak).toBe(3);
-    expect(figure((await first("ios"))[0], "leasesHeld")?.peak).toBe(1);
-    expect(figure((await first("all"))[0], "queueDepth")?.peak).toBe(4);
-    expect(figure((await first("all"))[0], "waiting")?.peak).toBe(1);
-    expect(figure((await first("all", "w1"))[0], "queueDepth")?.peak).toBe(9);
+    expect(await peakOf(first("all"), "slotsUsed")).toBe(3);
+    expect(await peakOf(first("all"), "slotsMax")).toBe(8);
+    expect(await peakOf(first("all"), "ramUsedBytes")).toBe(300);
+    expect(await peakOf(first("all"), "ramLimitBytes")).toBe(2_000);
+    expect(await peakOf(first("all"), "leasesHeld")).toBe(2);
+    expect(await peakOf(first("ios"), "slotsUsed")).toBe(3);
+    expect(await peakOf(first("ios"), "leasesHeld")).toBe(1);
+    expect(await peakOf(first("all"), "queueDepth")).toBe(4);
+    expect(await peakOf(first("all"), "waiting")).toBe(1);
+    expect(await peakOf(first("all", "w1"), "queueDepth")).toBe(9);
     expect(figure((await later("all"))[0], "slotsUsed")).toEqual({ integral: 2 * MIN, peak: 2 });
     expect(figure((await later("all"))[0], "ramUsedBytes")).toEqual({
       integral: 200 * MIN,

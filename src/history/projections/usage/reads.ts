@@ -133,6 +133,45 @@ export function openUsageReads(database: SqliteDatabase): UsageReads {
   };
 }
 
+function addCarried(
+  buckets: Map<number, Accumulator>,
+  span: Readonly<Record<string, unknown>>,
+  window: {
+    readonly bucketMs: number;
+    readonly firstMinute: number;
+    readonly from: number;
+    readonly to: number;
+  },
+): void {
+  const { bucketMs, firstMinute, from, to } = window;
+  const start = Math.max(Number(span.minute) + MINUTE_MS, firstMinute);
+  const end = Math.min(
+    typeof span.next === "number" ? span.next : Number.POSITIVE_INFINITY,
+    to,
+    typeof span.carryUntil === "number"
+      ? Math.floor(span.carryUntil / MINUTE_MS) * MINUTE_MS
+      : Number.POSITIVE_INFINITY,
+  );
+  if (start >= end) return;
+  const lasts = (value: UsageValue): number | undefined => {
+    const last = span[`${value}Last`];
+    return typeof last === "number" ? last : undefined;
+  };
+  for (
+    let index = Math.floor((start - from) / bucketMs);
+    from + index * bucketMs < end;
+    index += 1
+  ) {
+    const first = Math.max(start, Math.ceil((from + index * bucketMs) / MINUTE_MS) * MINUTE_MS);
+    const minutes = Math.ceil((Math.min(end, from + (index + 1) * bucketMs) - first) / MINUTE_MS);
+    if (minutes <= 0) continue;
+    add(buckets, index, minutes * MINUTE_MS, (value) => {
+      const last = lasts(value);
+      return last === undefined ? undefined : { integral: last * minutes * MINUTE_MS, peak: last };
+    });
+  }
+}
+
 function minuteBuckets(
   database: SqliteDatabase,
   query: Parameters<UsageReads["minuteBuckets"]>[0],
@@ -168,36 +207,7 @@ function minuteBuckets(
     )
     .all(workerId, platform, typeof before === "number" ? before : from, to, MINUTE_MS);
   const firstMinute = Math.ceil(from / MINUTE_MS) * MINUTE_MS;
-  for (const span of spans) {
-    const start = Math.max(Number(span.minute) + MINUTE_MS, firstMinute);
-    const end = Math.min(
-      typeof span.next === "number" ? span.next : Number.POSITIVE_INFINITY,
-      to,
-      typeof span.carryUntil === "number"
-        ? Math.floor(span.carryUntil / MINUTE_MS) * MINUTE_MS
-        : Number.POSITIVE_INFINITY,
-    );
-    if (start >= end) continue;
-    const lasts = (value: UsageValue): number | undefined => {
-      const last = span[`${value}Last`];
-      return typeof last === "number" ? last : undefined;
-    };
-    for (
-      let index = Math.floor((start - from) / bucketMs);
-      from + index * bucketMs < end;
-      index += 1
-    ) {
-      const first = Math.max(start, Math.ceil((from + index * bucketMs) / MINUTE_MS) * MINUTE_MS);
-      const minutes = Math.ceil((Math.min(end, from + (index + 1) * bucketMs) - first) / MINUTE_MS);
-      if (minutes <= 0) continue;
-      add(buckets, index, minutes * MINUTE_MS, (value) => {
-        const last = lasts(value);
-        return last === undefined
-          ? undefined
-          : { integral: last * minutes * MINUTE_MS, peak: last };
-      });
-    }
-  }
+  for (const span of spans) addCarried(buckets, span, { bucketMs, firstMinute, from, to });
   return [...buckets.entries()]
     .sort(([left], [right]) => left - right)
     .map(([index, bucket]) => ({

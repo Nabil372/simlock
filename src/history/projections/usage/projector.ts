@@ -26,6 +26,18 @@ const DEVICE_FACTS: Readonly<Record<string, string | undefined>> = {
   "device.recovery-failed": undefined,
 };
 
+// why: these events are the daemon's own; a worker's copy of one changes no row on the gateway.
+const OWN_ONLY: ReadonlySet<string> = new Set([
+  "lease.requested",
+  "lease.rejected",
+  "request.granted",
+  "daemon.stopping",
+  "daemon.started",
+]);
+
+// why: a gateway builds a lease's rows from the workers' relayed copy, never from its own grant or end.
+const JOINED: ReadonlySet<string> = new Set(["lease.expired", "lease.granted", "lease.released"]);
+
 class Projector implements ProjectionHandle {
   readonly #database: SqliteDatabase;
   readonly #options: HistoryProjectionOptions;
@@ -62,26 +74,36 @@ class Projector implements ProjectionHandle {
       this.#deviceFact(envelope.event, payload, origin, at);
       return;
     }
-    switch (envelope.event) {
+    this.#route(envelope.event, payload, origin, at);
+  }
+
+  #route(
+    event: string,
+    payload: Readonly<Record<string, unknown>>,
+    origin: Origin,
+    at: number,
+  ): void {
+    if (origin.relayed && OWN_ONLY.has(event)) return;
+    if (JOINED.has(event) && this.#options.fleet && !origin.relayed) return;
+    switch (event) {
       case "lease.requested":
-        if (!origin.relayed) this.#requested(payload, at);
+        this.#requested(payload, at);
         return;
       case "lease.rejected":
-        if (!origin.relayed) this.#rejected(payload, at);
+        this.#rejected(payload, at);
         return;
       case "lease.declined":
         this.#declined(payload, origin, at);
         return;
       case "request.granted":
-        if (!origin.relayed) this.#dispatched(payload, at);
+        this.#dispatched(payload, at);
         return;
       case "lease.granted":
-        if (origin.relayed || !this.#options.fleet) this.#granted(payload, origin, at);
+        this.#granted(payload, origin, at);
         return;
       case "lease.released":
       case "lease.expired":
-        if (origin.relayed || !this.#options.fleet)
-          this.#ended(envelope.event, payload, origin, at);
+        this.#ended(event, payload, origin, at);
         return;
       case "capacity.changed":
         this.#capacity(payload, origin, at);
@@ -90,10 +112,10 @@ class Projector implements ProjectionHandle {
         this.#queue(payload, origin, at);
         return;
       case "daemon.stopping":
-        if (!origin.relayed) this.#stopping(at);
+        this.#stopping(at);
         return;
       case "daemon.started":
-        if (!origin.relayed) this.#started(at);
+        this.#started(at);
         return;
       default:
         return;
@@ -249,12 +271,7 @@ class Projector implements ProjectionHandle {
     if (leaseId === undefined) return;
     const requestId = text(payload.requestId);
     const source = oneOf(payload.source, SOURCES) ?? null;
-    const platform =
-      text(payload.platform) ??
-      (requestId === undefined || origin.relayed
-        ? undefined
-        : this.#ledger.requestPlatform(requestId)) ??
-      "";
+    const platform = this.#grantedPlatform(payload, requestId, origin);
     this.#touch(origin, at);
     if (this.#ledger.holdLease(origin.worker, { at, leaseId, platform, source })) {
       this.#bump(this.#heldOf(origin.worker), platform, 1, "leasesHeld", origin, at);
@@ -264,6 +281,17 @@ class Projector implements ProjectionHandle {
     } else if (requestId !== undefined) {
       this.#settle(requestId, () => this.#ledger.grant(requestId, { at, leaseId, source }), at);
     }
+  }
+
+  #grantedPlatform(
+    payload: Readonly<Record<string, unknown>>,
+    requestId: string | undefined,
+    origin: Origin,
+  ): string {
+    const named = text(payload.platform);
+    if (named !== undefined) return named;
+    if (requestId === undefined || origin.relayed) return "";
+    return this.#ledger.requestPlatform(requestId) ?? "";
   }
 
   #ended(
@@ -374,23 +402,28 @@ class Projector implements ProjectionHandle {
     this.#touch(origin, at);
     for (const [key, figures] of Object.entries(payload)) {
       const found = payloadOf(figures);
-      if (key === "ramBudget") {
-        const used = amount(found.usedBytes);
-        const limit = amount(found.limitBytes);
-        if (used !== undefined) this.#level(origin, "all", "ramUsedBytes", used, at);
-        if (limit !== undefined) this.#level(origin, "all", "ramLimitBytes", limit, at);
-        continue;
-      }
-      const platform = key === "global" ? "all" : text(key);
-      if (platform === undefined || platform === "workerId") continue;
-      const running = amount(found.running);
-      const reserved = amount(found.reserved);
-      const max = amount(found.maxRunning);
-      if (running !== undefined && reserved !== undefined) {
-        this.#level(origin, platform, "slotsUsed", running + reserved, at);
-      }
-      if (max !== undefined) this.#level(origin, platform, "slotsMax", max, at);
+      if (key === "ramBudget") this.#ram(found, origin, at);
+      else this.#slots(key, found, origin, at);
     }
+  }
+
+  #ram(found: Readonly<Record<string, unknown>>, origin: Origin, at: number): void {
+    const used = amount(found.usedBytes);
+    const limit = amount(found.limitBytes);
+    if (used !== undefined) this.#level(origin, "all", "ramUsedBytes", used, at);
+    if (limit !== undefined) this.#level(origin, "all", "ramLimitBytes", limit, at);
+  }
+
+  #slots(key: string, found: Readonly<Record<string, unknown>>, origin: Origin, at: number): void {
+    const platform = key === "global" ? "all" : text(key);
+    if (platform === undefined || platform === "workerId") return;
+    const running = amount(found.running);
+    const reserved = amount(found.reserved);
+    const max = amount(found.maxRunning);
+    if (running !== undefined && reserved !== undefined) {
+      this.#level(origin, platform, "slotsUsed", running + reserved, at);
+    }
+    if (max !== undefined) this.#level(origin, platform, "slotsMax", max, at);
   }
 
   #queue(payload: Readonly<Record<string, unknown>>, origin: Origin, at: number): void {

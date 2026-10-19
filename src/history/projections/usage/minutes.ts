@@ -44,6 +44,18 @@ const CLOSE_OPEN_SQL = `UPDATE minute_rows SET carryUntil = minute + ${MINUTE_MS
     SELECT MAX(later.minute) FROM minute_rows later
     WHERE later.workerId = minute_rows.workerId AND later.platform = minute_rows.platform)`;
 
+// why: a level replaced in the same ms it began held for no time, so it is no peak of the minute.
+function settledPeak(
+  figure: Figure | undefined,
+  held: Held | undefined,
+  minute: number,
+  at: number,
+): number {
+  if (held === undefined) return figure?.peak ?? Number.NEGATIVE_INFINITY;
+  const settled = held.settledMinute === minute ? held.settled : Number.NEGATIVE_INFINITY;
+  return at - Math.max(held.since, minute) > 0 ? Math.max(settled, held.level) : settled;
+}
+
 // why: a row's integral is taken through the minute's end as if the last value held, so a reader needs no row for the minutes after; a cut takes the rest back off.
 export class MinuteRecorder {
   readonly #statements: Statements;
@@ -66,22 +78,11 @@ export class MinuteRecorder {
     const at = Math.max(timestamp, state.lastAt);
     const minute = minuteOf(at);
     const end = minute + MINUTE_MS;
-    let row = this.#load(worker, platform, minute);
-    if (row === undefined) {
-      row = { carryUntil: null, figures: new Map(), knownMs: state.known ? MINUTE_MS : end - at };
-      if (state.known) carryInto(row, state);
-    } else if (!state.known && row.carryUntil !== null) {
-      row.knownMs += end - at;
-    }
+    const row = this.#rowFor(state, minute, at);
     const figure = row.figures.get(value);
     const held = state.known ? state.values.get(value) : undefined;
     const previous = state.known ? held?.level : (figure?.last ?? undefined);
-    // why: a level replaced in the same ms it began held for no time, so it is no peak of the minute.
-    let settled = figure?.peak ?? Number.NEGATIVE_INFINITY;
-    if (held !== undefined) {
-      settled = held.settledMinute === minute ? held.settled : Number.NEGATIVE_INFINITY;
-      if (at - Math.max(held.since, minute) > 0) settled = Math.max(settled, held.level);
-    }
+    const settled = settledPeak(figure, held, minute, at);
     if (figure === undefined) {
       row.figures.set(value, { integral: level * (end - at), last: level, peak: level });
     } else {
@@ -95,6 +96,22 @@ export class MinuteRecorder {
     state.values.set(value, { level, settled, settledMinute: minute, since: at });
     state.lastAt = at;
     state.lastRowMinute = minute;
+  }
+
+  #rowFor(state: KeyState, minute: number, at: number): MinuteRowData {
+    const end = minute + MINUTE_MS;
+    const stored = this.#load(state.worker, state.platform, minute);
+    if (stored === undefined) {
+      const row: MinuteRowData = {
+        carryUntil: null,
+        figures: new Map(),
+        knownMs: state.known ? MINUTE_MS : end - at,
+      };
+      if (state.known) carryInto(row, state);
+      return row;
+    }
+    if (!state.known && stored.carryUntil !== null) stored.knownMs += end - at;
+    return stored;
   }
 
   cut(worker: string | undefined, timestamp: number): void {

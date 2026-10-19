@@ -160,31 +160,9 @@ class EventHistory implements EventHistoryHandle {
     }
     // why: nothing below awaits, so no event can land between the ring's copy and the live writer
     this.#database = database;
-    try {
-      for (const projection of this.#options.projections) migrateProjection(database, projection);
-    } catch (error: unknown) {
-      this.#database = undefined;
-      closeQuietly(database);
-      throw error;
-    }
-    let rebuilding: RunningProjection[];
-    try {
-      this.#projectors = this.#options.projections.map((definition) => ({
-        definition,
-        projector: definition.create(database, this.#options.projectionOptions),
-      }));
-      rebuilding = this.#projectors.filter(({ definition }) => needsRebuild(database, definition));
-      for (const { projector } of rebuilding) this.#suspended.add(projector);
-      this.#stored = totalEventBytes(database);
-    } catch (error: unknown) {
-      this.#options.logger.error("History could not be prepared; events are not written", {
-        error: describe(error),
-        path: this.#path,
-      });
-      this.#database = undefined;
-      closeQuietly(database);
-      return;
-    }
+    this.#migrate(database);
+    const rebuilding = this.#prepare(database);
+    if (rebuilding === undefined) return;
     this.#opened = true;
     this.#writing = true;
     this.#readable = true;
@@ -196,6 +174,39 @@ class EventHistory implements EventHistoryHandle {
     this.#prune();
     if (rebuilding.length > 0) await this.#rebuild(database, rebuilding);
     this.#arm();
+  }
+
+  #migrate(database: SqliteDatabase): void {
+    try {
+      for (const projection of this.#options.projections) migrateProjection(database, projection);
+    } catch (error: unknown) {
+      this.#database = undefined;
+      closeQuietly(database);
+      throw error;
+    }
+  }
+
+  #prepare(database: SqliteDatabase): RunningProjection[] | undefined {
+    try {
+      this.#projectors = this.#options.projections.map((definition) => ({
+        definition,
+        projector: definition.create(database, this.#options.projectionOptions),
+      }));
+      const rebuilding = this.#projectors.filter(({ definition }) =>
+        needsRebuild(database, definition),
+      );
+      for (const { projector } of rebuilding) this.#suspended.add(projector);
+      this.#stored = totalEventBytes(database);
+      return rebuilding;
+    } catch (error: unknown) {
+      this.#options.logger.error("History could not be prepared; events are not written", {
+        error: describe(error),
+        path: this.#path,
+      });
+      this.#database = undefined;
+      closeQuietly(database);
+      return undefined;
+    }
   }
 
   async #rebuild(database: SqliteDatabase, targets: RunningProjection[]): Promise<void> {
@@ -310,39 +321,42 @@ class EventHistory implements EventHistoryHandle {
     try {
       const json = JSON.stringify(envelope);
       const size = envelopeSize(json);
-      database.exec("BEGIN");
-      let added = 0;
-      let inProjection = false;
-      try {
-        const result = database
-          .prepare(INSERT_EVENT_SQL)
-          .run(envelope.id, envelope.timestamp, envelope.seq, size, json);
-        if (Number(result.changes) === 1) {
-          added = size;
-          inProjection = true;
-          for (const { projector } of this.#projectors) {
-            if (!this.#suspended.has(projector)) projector.apply(envelope);
-          }
-          inProjection = false;
-        }
-        database.exec("COMMIT");
-      } catch (error: unknown) {
-        try {
-          database.exec("ROLLBACK");
-        } catch {
-          // why: the first error is the one to report
-        }
-        // why: a projection failure rolls back cleanly and leaves the file readable; a failed insert makes replay use the ring
-        if (!inProjection) this.#readable = false;
-        throw error;
-      }
-      this.#stored += added;
+      this.#stored += this.#store(database, envelope, size, json);
     } catch (error: unknown) {
       this.#writing = false;
       this.#options.logger.error("History write failed; events are no longer written", {
         error: describe(error),
         path: this.#path,
       });
+    }
+  }
+
+  #store(database: SqliteDatabase, envelope: EventEnvelope, size: number, json: string): number {
+    database.exec("BEGIN");
+    let inProjection = false;
+    try {
+      const result = database
+        .prepare(INSERT_EVENT_SQL)
+        .run(envelope.id, envelope.timestamp, envelope.seq, size, json);
+      const added = Number(result.changes) === 1;
+      if (added) {
+        inProjection = true;
+        for (const { projector } of this.#projectors) {
+          if (!this.#suspended.has(projector)) projector.apply(envelope);
+        }
+        inProjection = false;
+      }
+      database.exec("COMMIT");
+      return added ? size : 0;
+    } catch (error: unknown) {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        // why: the first error is the one to report
+      }
+      // why: a projection failure rolls back cleanly and leaves the file readable; a failed insert makes replay use the ring
+      if (!inProjection) this.#readable = false;
+      throw error;
     }
   }
 
