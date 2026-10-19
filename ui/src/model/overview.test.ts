@@ -110,7 +110,23 @@ describe("the overview", () => {
       ["Granted", "3", "last hour"],
       ["Wait p95", "38 s", "last hour"],
     ]);
-    expect(tiles.find((tile) => tile.label === "Granted")).not.toHaveProperty("to");
+    expect(tiles.find((tile) => tile.label === "Granted")?.to).toBe("/usage");
+  });
+
+  it("links the Granted tile to /usage from 1h and to /usage?range=6h, 24h and 7d from the others", () => {
+    const links = (["1h", "6h", "24h", "7d"] as const).map((range) => {
+      const stats = statsOf({ bucketMs: 60_000, from: NOW - 60 * 60_000, granted: 3, to: NOW });
+      const { tiles } = overviewOf({
+        events: [],
+        figures: { data: figuresOf(stats, range, NOW), kind: "ready" },
+        now: NOW,
+        requests: [],
+        workers: fleet,
+      });
+      return tiles.find((tile) => tile.label === "Granted")?.to;
+    });
+
+    expect(links).toEqual(["/usage", "/usage?range=6h", "/usage?range=24h", "/usage?range=7d"]);
   });
 
   it("shows only the fleet's four tiles while the daemon's figures are loading or refused", () => {
