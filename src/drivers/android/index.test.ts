@@ -3880,6 +3880,45 @@ describe("AndroidDriver emulator registration", () => {
 });
 
 describe("AndroidDriver console ports across a restart", () => {
+  it("stops a discovered running emulator before deleting its AVD after a restart", async () => {
+    const filesystem = await androidFilesystem();
+    const host = new EmulatorHost(filesystem);
+    const before = await createDriver(filesystem, host.runner(), { ids: ["one"] });
+    const spec = await before.resolveSpec({ model: "Pixel 5", platform: "android" });
+    const running = await before.makeReady(await before.provision(spec));
+    const inner = host.runner();
+    const runningAtDeletion: (string | undefined)[] = [];
+    const runner: ProcessRunner = {
+      ...inner,
+      run: async (command, args, options) => {
+        if (
+          command === binaries.adb &&
+          args[2] === "shell" &&
+          args[3] ===
+            "getprop ro.boot.qemu.avd_name; cat /data/local/tmp/simlock-mark.json 2>/dev/null || true"
+        ) {
+          return ok(`${host.avdAnswering(args[1]) ?? ""}\n`);
+        }
+        if (command === binaries.avdmanager && args[0] === "delete") {
+          runningAtDeletion.push(host.avdAnswering(running.address));
+        }
+        return inner.run(command, args, options);
+      },
+    };
+    const after = await createDriver(filesystem, runner);
+    const reality = await after.listManaged();
+    const orphan = reality.devices[0]!;
+    expect(orphan).toMatchObject({ deviceId: running.deviceId, runState: "running" });
+    expect(host.avdAnswering(running.address)).toBe(running.deviceId);
+
+    await after.destroy(orphan);
+
+    expect(runningAtDeletion, "the emulator must have exited before AVD deletion").toEqual([
+      undefined,
+    ]);
+    expect(await filesystem.exists(`${avdDirectory}/${running.deviceId}.avd`)).toBe(false);
+  });
+
   it("readies a stopped device and one provisioned after a restart each at an address its own emulator answers (#52)", async () => {
     const spec = {
       physical: false,
