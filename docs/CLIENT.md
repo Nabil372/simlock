@@ -260,6 +260,15 @@ It rejects with `HISTORY_NOT_KEPT` (`details.oldestTs`) when the window ends
 before the oldest figure, and with `HISTORY_UNAVAILABLE` when the daemon could
 not open `history.db`.
 
+`usage({ from, to, includeLedger: true })` adds `requests`, one entry per lease
+request in the window by request time then request id (`requestId`,
+`requester`, `label`, `platform`, `model`, `workerId`, `source`, `requestedAt`,
+`grantedAt`, `rejectedAt`, `endedAt`, `waitMs`, `heldMs`, `turnaroundMs`,
+`outcome` of `granted`, `rejected`, `declined` or `open`, `probe`, `reason`,
+`endReason`; a field with no value is absent). It holds the newest 100,000
+requests; when the window has more, `ledgerTruncated` is `true`. A
+non-boolean `includeLedger` rejects with `BAD_REQUEST`.
+
 ## Running a command on the leased device: `exec`
 
 Two methods reach the device a lease names, and which one you want depends on

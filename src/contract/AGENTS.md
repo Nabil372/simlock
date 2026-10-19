@@ -55,7 +55,7 @@ Three identities:
 
 ## Protocol version
 
-- Now `{ min: 45, max: 45 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
+- Now `{ min: 46, max: 46 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
 - Every change to a contract shape bumps it by one in the same PR. Move `min` too, unless
   a compatibility path stays side by side.
 - `hello` picks the highest overlap. None → `PROTOCOL_VERSION_UNSUPPORTED` with both ranges.
@@ -66,7 +66,7 @@ Three identities:
 
 - `SimlockErrorCode` is a closed union (`ErrorDetailsMap`). `ERROR_TABLE` gives each code
   `kind` (`transport` | `protocol` | `domain`), `cliExitCode` and `httpStatus`.
-- `HISTORY_NOT_KEPT` (exit 12, 422, `details.oldestTs`) and `HISTORY_UNAVAILABLE` (exit 1, 503) are `usage.get`'s; the window it takes is bounded by `usageWindowSchema` (integers to 8.64e15, `from < to`, 90 days at most) and `usageWindow` (`usage-window.ts`) parses the CLI's flags once for every surface.
+- `HISTORY_NOT_KEPT` (exit 12, 422, `details.oldestTs`) and `HISTORY_UNAVAILABLE` (exit 1, 503) are `usage.get`'s; `includeLedger` adds `requests[]` (at most 100,000, newest; `ledgerTruncated` when cut); the window it takes is bounded by `usageWindowSchema` (integers to 8.64e15, `from < to`, 90 days at most) and `usageWindow` (`usage-window.ts`) parses the CLI's flags once for every surface.
 - `fromWireError` wraps an unknown code as `UNKNOWN_DAEMON_ERROR`. That code and `CANCELLED`
   are built client side only.
 - `CODES_WITH_DECLARED_DETAILS`: codes whose `details` are contract. The compiler keeps it

@@ -2336,7 +2336,7 @@ gateway's order. A replay (`simlock events`, `--since`) prints events by
 millisecond. `--follow` prints each live push as it arrives, so a relayed event
 from a worker whose clock is behind prints after a later gateway event.
 
-## `simlock stats [--since <duration> | --from <ISO> [--to <ISO>]] [--json]`
+## `simlock stats [--since <duration> | --from <ISO> [--to <ISO>]] [--json | --csv]`
 
 Print how the fleet was used over a window: requests, how each grant was
 served, waits, held time, rejections, incidents and use per platform, per
@@ -2385,6 +2385,16 @@ Totals
 - `--json` prints the answer as one JSON object (the same `usage` the
   [programmatic client](CLIENT.md) returns), with a series of up to 200 points
   for charting.
+- `--csv` writes one row per lease request in the window instead of the
+  figures, a file a spreadsheet opens: a header row, then `requestId`,
+  `requester`, `label`, `platform`, `model`, `workerId`, `source`,
+  `requestedAt`, `grantedAt`, `rejectedAt`, `endedAt`, `waitMs`, `heldMs`,
+  `turnaroundMs`, `outcome`, `probe`, `reason`, `endReason`. Rows end in CRLF;
+  times are ISO 8601 in UTC, durations whole milliseconds, an absent value an
+  empty cell. A cell that starts with `=`, `+`, `-` or `@` gets a leading `'`
+  so a spreadsheet does not run it. The ledger holds the newest 100,000
+  requests of the window; a longer window is cut and a notice on stderr says
+  so (exit 0). `--csv` with `--json` is a usage error (exit 2).
 
 ## `simlock daemon <start|stop|status|logs [--follow]>`
 

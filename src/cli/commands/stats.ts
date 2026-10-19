@@ -1,6 +1,11 @@
-import { usageWindow, type UsageWindowRefusal } from "../../contract/index.js";
+import {
+  USAGE_LEDGER_MAX_ENTRIES,
+  usageWindow,
+  type UsageWindowRefusal,
+} from "../../contract/index.js";
 import { commandArgs, UsageError, writeResult } from "../args.js";
 import { connectDaemonClient } from "../connect.js";
+import { ledgerCsv } from "../csv.js";
 import { formatUsage } from "../stats.js";
 import type { CommandContext } from "../tree.js";
 
@@ -9,6 +14,7 @@ async function run(
   { environment, token }: CommandContext,
 ): Promise<number> {
   const values = commandArgs(argv, {
+    csv: { type: "boolean" },
     from: { type: "string" },
     help: { type: "boolean", short: "h" },
     json: { type: "boolean" },
@@ -17,7 +23,7 @@ async function run(
   });
   if (values.help) {
     environment.stdout.write(
-      "Usage: simlock stats [--since <duration> | --from <ISO> [--to <ISO>]] [--json]\n",
+      "Usage: simlock stats [--since <duration> | --from <ISO> [--to <ISO>]] [--json | --csv]\n",
     );
     return 0;
   }
@@ -30,10 +36,20 @@ async function run(
     environment.clock.now(),
   );
   if ("refused" in asked) throw new UsageError(statsRefusal(asked.refused));
+  if (values.csv && values.json) throw new UsageError("stats takes --csv or --json, not both");
   const client = await connectDaemonClient(environment, token);
   try {
-    const usage = await client.usage(asked.window);
-    if (values.json) writeResult((value) => environment.stdout.write(value), usage);
+    const usage = await client.usage(
+      values.csv ? { ...asked.window, includeLedger: true } : asked.window,
+    );
+    if (values.csv) {
+      environment.stdout.write(ledgerCsv(usage.requests ?? []));
+      if (usage.ledgerTruncated) {
+        environment.stderr.write(
+          `${JSON.stringify({ notice: `The ledger holds the newest ${USAGE_LEDGER_MAX_ENTRIES} requests of the window; ask for a shorter window for the rest.` })}\n`,
+        );
+      }
+    } else if (values.json) writeResult((value) => environment.stdout.write(value), usage);
     else environment.stdout.write(`${formatUsage(usage)}\n`);
     return 0;
   } finally {

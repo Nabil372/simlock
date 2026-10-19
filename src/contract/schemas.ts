@@ -1376,6 +1376,8 @@ const usageFiguresSchema = z.object({
   wait: usageSamplesSchema,
 });
 
+export const USAGE_LEDGER_MAX_ENTRIES = 100_000;
+
 const usageLedgerEntrySchema = z.object({
   endReason: z.string().optional(),
   endedAt: z.number().optional(),

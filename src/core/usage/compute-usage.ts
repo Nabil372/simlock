@@ -1,4 +1,9 @@
-import type { UsageFigures, UsageLedgerEntry, UsageOutput } from "../../contract/index.js";
+import {
+  USAGE_LEDGER_MAX_ENTRIES,
+  type UsageFigures,
+  type UsageLedgerEntry,
+  type UsageOutput,
+} from "../../contract/index.js";
 import type { DeviceFactRow, MinuteBucket, RequestRow } from "../../history/index.js";
 
 const MINUTE = 60_000;
@@ -91,8 +96,6 @@ function inScope(
   if (scope.platform !== undefined && row.platform !== scope.platform) return false;
   return scope.worker === undefined || !data.fleet || row.workerId === scope.worker;
 }
-
-export const LEDGER_MAX_ENTRIES = 100_000;
 
 const isRequest = (row: RequestRow): boolean => !row.probe && row.refusedAtAdmission !== true;
 const grantedBy = (row: RequestRow, to: number): boolean =>
@@ -322,8 +325,8 @@ export function ledgerOf(
   rows: readonly RequestRow[],
   to: number,
 ): { readonly requests: UsageLedgerEntry[]; readonly truncated: boolean } {
-  const truncated = rows.length > LEDGER_MAX_ENTRIES;
-  const kept = truncated ? rows.slice(rows.length - LEDGER_MAX_ENTRIES) : rows;
+  const truncated = rows.length > USAGE_LEDGER_MAX_ENTRIES;
+  const kept = truncated ? rows.slice(rows.length - USAGE_LEDGER_MAX_ENTRIES) : rows;
   return { requests: kept.map((row) => entryOf(row, to)), truncated };
 }
 

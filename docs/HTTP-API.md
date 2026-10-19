@@ -1530,6 +1530,29 @@ an all-or-nothing that leaves the operator guessing.
   the same millisecond. On a gateway, a worker's event keeps the `id` and
   `timestamp` it has on the worker and gains `payload.workerId`; its time is
   when it happened on the worker.
+- `GET /v1/stats` — how the fleet was used over a window: the figures
+  `simlock stats --json` prints, as one JSON object (`totals`, `platforms`,
+  `workers`, `requesters`, `series`, `window`, `coversFrom`, `partial`,
+  `bucketMs`). An operator token is required; an agent token gets
+  `403 FORBIDDEN`. With no parameter the window is the last 24 hours;
+  `since=<duration>` (`1h`, `7d`) is that long back from now;
+  `from=<time>` and `to=<time>` name the ends as ISO 8601 times with `Z` or an
+  offset (`2026-10-15T00:00Z`), and without `to` the window ends now. A `+` in
+  an offset must be sent as `%2B`. `ledger=1` adds `requests[]`, one entry per
+  lease request in the window, by request time then request id:
+  `requestId`, `requester`, `label`, `platform`, `model`, `workerId`, `source`,
+  `requestedAt`, `grantedAt`, `rejectedAt`, `endedAt`, `waitMs`, `heldMs`,
+  `turnaroundMs`, `outcome` (`granted`, `rejected`, `declined` for a probe a
+  worker declined, or `open`), `probe`, `reason`, `endReason`; a field with no
+  value is left out. The ledger holds the newest 100,000 requests of the
+  window; a longer window is cut and the answer carries
+  `"ledgerTruncated": true`. A grant, rejection or end after `to` is not seen.
+  Errors: `400 BAD_REQUEST` for `since` with `from`, `to` without `from`, a
+  `from` not earlier than `to` (or than now), a duration or time that does not
+  parse, a window over 90 days, or a `ledger` other than `1`;
+  `422 HISTORY_NOT_KEPT` (the body carries `oldestTs`) for a window that ends
+  before the oldest figure kept; `503 HISTORY_UNAVAILABLE` while `history.db`
+  could not be opened.
 - `GET /v1/events/stream` — Server-Sent Events follow of the event bus
   (`simlock events --follow`). Each event carries the same `id` as in
   `GET /v1/events`, and a relayed one the same `timestamp` too. A worker event
@@ -1799,10 +1822,10 @@ Every failure is the same shape the daemon protocol uses:
 | 403 | `FORBIDDEN` (role doesn't permit the route — including a `worker` token on any `/v1` route other than `/v1/uplink`, and an `agent`/`operator` token at `/v1/uplink`; a `/v1/lease-requests/*` route whose request another token sent; or `POST /v1/leases/{id}/renew`/`DELETE /v1/leases/{id}`/`POST /v1/leases/{id}/exec` naming another requester's still-live lease), `DOWNLOADS_DISABLED` (`POST /v1/components/install` under `downloads.policy: "never"`) |
 | 404 | `UNKNOWN_WORKER` (`POST`/`DELETE /v1/workers/{id}/drain` naming a worker the gateway does not know), `UNKNOWN_LEASE_REQUEST` (unknown request id), `UNKNOWN_LEASE` (unknown lease id, expired/released, **or `GET /v1/leases/{id}`/`GET /v1/leases/{id}/events` naming another requester's lease** — see [`GET /v1/leases/{id}`](#get-v1leasesid); also `GET /v1/stream/leases/{leaseId}` naming a lease unknown, released, or another requester's — a stream reveals no lease that asking could not already list), `UNKNOWN_DEVICE` (`DELETE /v1/devices/{id}` naming a device that is not enrolled) |
 | 409 | `REQUESTER_ALREADY_LEASED` (body names the existing lease id; fleet-wide on a gateway), `LEASE_ID_TAKEN` (a `leaseId` an active lease or a waiting request holds; body carries `leaseId`; on a gateway, one of the gateway's own leases or requests, or a worker that refused it), `IDEMPOTENCY_CONFLICT` (an `Idempotency-Key` repeated with a different device or `leaseId`), `REQUEST_NOT_CANCELLABLE` (body names the lease id if the request had already been granted), `WORKER_CONNECTED` (`DELETE /v1/workers/{id}` while its uplink is open), `COMPONENT_NOT_OWNED`, `COMPONENT_IN_USE` (body carries `devices` and `foreignDevices`), `COMPONENT_BUSY` (the three refusals of `DELETE /v1/components/{platform}/{version}`), `DEVICE_BUSY` (`POST /v1/devices`, `DELETE /v1/devices/{id}` of a leased, reclaiming or held device; body carries `id` and `reason`) |
-| 422 | `UNKNOWN_MODEL`, `RUNTIME_MISSING`, `NO_DRIVER`, `CAPABILITY_MISSING` (a request required capabilities no worker able to serve it has available; body carries `capabilities`), `DEVICE_NOT_ENROLLABLE` (`POST /v1/devices`; body carries `id`, `platform`, `reason`, and `canonicalId` when known), `PASSTHROUGH_REFUSED` (a refused `exec` verb or `devicectl` command, a caller-supplied `--set`/`-P`, a bare `adb shell`), `UNKNOWN_PASSTHROUGH_TOOL` |
+| 422 | `HISTORY_NOT_KEPT` (`GET /v1/stats` for a window that ends before the oldest figure kept; body carries `oldestTs`), `UNKNOWN_MODEL`, `RUNTIME_MISSING`, `NO_DRIVER`, `CAPABILITY_MISSING` (a request required capabilities no worker able to serve it has available; body carries `capabilities`), `DEVICE_NOT_ENROLLABLE` (`POST /v1/devices`; body carries `id`, `platform`, `reason`, and `canonicalId` when known), `PASSTHROUGH_REFUSED` (a refused `exec` verb or `devicectl` command, a caller-supplied `--set`/`-P`, a bare `adb shell`), `UNKNOWN_PASSTHROUGH_TOOL` |
 | 500 | `PROVISION_FAILED` (creating a device for the request failed twice; the message is the driver's error) |
 | 501 | `UNSUPPORTED_IN_GATEWAY_MODE` (an operation that acts on one machine, asked of a gateway: `POST /v1/components/install`, `GET /v1/components`, `DELETE /v1/components/{platform}/{version}`, `POST /v1/devices`, `DELETE /v1/devices/{id}`), `UNSUPPORTED_IN_WORKER_MODE` (an operation on a gateway's workers, asked of a single host: `POST`/`DELETE /v1/workers/{id}/drain`, `DELETE /v1/workers/{id}`, `POST /v1/components/install` with `workers`) |
-| 503 | `NO_CAPACITY` (with `noWait: true`, or, on a gateway, when no worker that takes requests can serve the request; response carries `Retry-After`), `WORKER_UNREACHABLE` (a gateway could not reach the worker holding this lease or request) |
+| 503 | `HISTORY_UNAVAILABLE` (`GET /v1/stats` while `history.db` could not be opened), `NO_CAPACITY` (with `noWait: true`, or, on a gateway, when no worker that takes requests can serve the request; response carries `Retry-After`), `WORKER_UNREACHABLE` (a gateway could not reach the worker holding this lease or request) |
 | 504 | `EXEC_TIMEOUT` (a `device.exec` command outlived `exec.timeoutMs`), `DOWNLOAD_TIMEOUT` (a runtime download, waiting for another download included, outlived `downloads.timeoutMs`) |
 
 Four notes on these codes.

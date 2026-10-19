@@ -7618,7 +7618,7 @@ describe("CLI: stats", () => {
     expect(exitCode).toBe(0);
     expect(connected).toBe(false);
     expect(output.stdout).toBe(
-      "Usage: simlock stats [--since <duration> | --from <ISO> [--to <ISO>]] [--json]\n",
+      "Usage: simlock stats [--since <duration> | --from <ISO> [--to <ISO>]] [--json | --csv]\n",
     );
   });
 });

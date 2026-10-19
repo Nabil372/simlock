@@ -74,7 +74,7 @@ Surface: [CLI.md](../../docs/CLI.md) — every command, flag and exit code.
    with none running it reads `history.db` itself (read-only; no file is empty, an unreadable
    one is an error, exit 1). `simlock status` adds a `History:` line for a history that is not
    written, one for a set-aside file, one after a rebuild of the usage figures and one after a failed rebuild. `simlock config set` drops `eventLog.rotateBytes` and says so on stderr.
-   6a. **`simlock stats`** — `usageWindow` (contract) turns `--since`, `--from`, `--to` into a window; each refusal is a usage error (exit 2) worded here. Asks `usage.get` and prints `formatUsage` (`stats.ts`) or the answer as `--json`; computes no figure.
+   6a. **`simlock stats`** — `usageWindow` (contract) turns `--since`, `--from`, `--to` into a window; each refusal is a usage error (exit 2) worded here. Asks `usage.get` and prints `formatUsage` (`stats.ts`) or the answer as `--json`; computes no figure. `--csv` asks with `includeLedger` and writes `ledgerCsv` (`csv.ts`, RFC 4180, CRLF, a leading `'` before `=`, `+`, `-`, `@`); `--csv` with `--json` is a usage error; a `ledgerTruncated` answer adds a stderr notice.
 7. **`simlock daemon logs --follow`** — `followLog` polls every 250 ms from a byte offset.
    A new identity on `daemon.log.1` is a rotation: print its rest, restart at offset 0.
 8. **`simlock config set`** — validates the merged file with `loadConfig`, writes
