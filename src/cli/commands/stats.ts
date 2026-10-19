@@ -3,10 +3,12 @@ import {
   usageWindow,
   type UsageWindowRefusal,
 } from "../../contract/index.js";
+import type { SimlockAdminClient } from "../../admin/index.js";
 import { commandArgs, UsageError, writeResult } from "../args.js";
 import { connectDaemonClient } from "../connect.js";
 import { ledgerCsv } from "../csv.js";
 import { formatUsage } from "../stats.js";
+import type { CliEnvironment } from "../types.js";
 import type { CommandContext } from "../tree.js";
 
 async function run(
@@ -42,18 +44,26 @@ async function run(
     const usage = await client.usage(
       values.csv ? { ...asked.window, includeLedger: true } : asked.window,
     );
-    if (values.csv) {
-      environment.stdout.write(ledgerCsv(usage.requests ?? []));
-      if (usage.ledgerTruncated) {
-        environment.stderr.write(
-          `${JSON.stringify({ notice: `The ledger holds the newest ${USAGE_LEDGER_MAX_ENTRIES} requests of the window; ask for a shorter window for the rest.` })}\n`,
-        );
-      }
-    } else if (values.json) writeResult((value) => environment.stdout.write(value), usage);
-    else environment.stdout.write(`${formatUsage(usage)}\n`);
+    writeStats(environment, usage, { csv: values.csv === true, json: values.json === true });
     return 0;
   } finally {
     await client.close();
+  }
+}
+
+function writeStats(
+  environment: CliEnvironment,
+  usage: Awaited<ReturnType<SimlockAdminClient["usage"]>>,
+  values: { readonly csv?: boolean | undefined; readonly json?: boolean | undefined },
+): void {
+  if (values.json) writeResult((value) => environment.stdout.write(value), usage);
+  else if (!values.csv) environment.stdout.write(`${formatUsage(usage)}\n`);
+  else {
+    environment.stdout.write(ledgerCsv(usage.requests ?? []));
+    if (usage.ledgerTruncated) {
+      const notice = `The ledger holds the newest ${USAGE_LEDGER_MAX_ENTRIES} requests of the window; ask for a shorter window for the rest.`;
+      environment.stderr.write(`${JSON.stringify({ notice })}\n`);
+    }
   }
 }
 

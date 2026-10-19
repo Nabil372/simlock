@@ -338,29 +338,42 @@ const present = (fields: Record<string, string | undefined>): Record<string, str
 
 function entryOf(row: RequestRow, to: number): UsageLedgerEntry {
   const granted = grantedBy(row, to);
-  const rejected = row.rejectedAt !== undefined && row.rejectedAt <= to;
-  const [wait] = isRequest(row) ? waitOf(row, to) : [];
-  const [held] = heldOf(row, to);
-  const ended = granted && held !== undefined;
+  const rejected = !granted && row.rejectedAt !== undefined && row.rejectedAt <= to;
+  const outcome = granted ? "granted" : rejected ? (row.probe ? "declined" : "rejected") : "open";
   return {
-    ...(ended
-      ? { ...present({ endReason: row.endReason }), endedAt: row.endedAt, heldMs: held }
-      : {}),
-    ...(granted ? { grantedAt: row.grantedAt, ...present({ source: row.source }) } : {}),
-    ...(row.model === undefined ? {} : { model: row.model }),
-    outcome: granted ? "granted" : rejected ? (row.probe ? "declined" : "rejected") : "open",
+    ...present({ model: row.model }),
+    ...(granted ? grantFields(row, to) : unseenGrantFields(row)),
+    ...(rejected ? { ...present({ reason: row.reason }), rejectedAt: row.rejectedAt } : {}),
+    ...timingFields(row, to),
+    outcome,
     platform: row.platform,
     probe: row.probe,
-    ...(rejected && !granted
-      ? { ...present({ reason: row.reason }), rejectedAt: row.rejectedAt }
-      : {}),
     requestId: row.requestId,
     requestedAt: row.requestedAt,
     requester: row.requester,
-    ...(ended && wait !== undefined ? { turnaroundMs: wait + held } : {}),
-    ...(wait === undefined ? {} : { waitMs: wait }),
-    ...(row.workerId === undefined || (row.grantedAt !== undefined && !granted)
-      ? {}
-      : { workerId: row.workerId }),
   } as UsageLedgerEntry;
+}
+
+function grantFields(row: RequestRow, to: number): Record<string, unknown> {
+  const [held] = heldOf(row, to);
+  return {
+    grantedAt: row.grantedAt,
+    ...present({ source: row.source, workerId: row.workerId }),
+    ...(held === undefined
+      ? {}
+      : { ...present({ endReason: row.endReason }), endedAt: row.endedAt, heldMs: held }),
+  };
+}
+
+function unseenGrantFields(row: RequestRow): Record<string, unknown> {
+  return row.grantedAt === undefined ? present({ workerId: row.workerId }) : {};
+}
+
+function timingFields(row: RequestRow, to: number): Record<string, number> {
+  const [wait] = isRequest(row) ? waitOf(row, to) : [];
+  const [held] = grantedBy(row, to) ? heldOf(row, to) : [];
+  return {
+    ...(held !== undefined && wait !== undefined ? { turnaroundMs: wait + held } : {}),
+    ...(wait === undefined ? {} : { waitMs: wait }),
+  };
 }
