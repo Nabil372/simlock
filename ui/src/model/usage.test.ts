@@ -148,8 +148,8 @@ describe("the Usage view", () => {
     expect(
       view().workers.map((row) => [row.name, row.requests, row.granted, row.rejected, row.waitP95]),
     ).toEqual([
-      ["zeta-mini-01", "125", "120", "5", "33 s"],
-      ["w2", "89", "89", "5", "—"],
+      ["zeta-mini-01", "85", "80", "5", "33 s"],
+      ["w2", "125", "120", "5", "—"],
     ]);
     expect(view(host).workers.map((row) => [row.name, row.requests])).toEqual([["host", "214"]]);
   });

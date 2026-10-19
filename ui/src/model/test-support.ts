@@ -108,15 +108,15 @@ export function usageStatsFullOf(over: Partial<UsageOutput> = {}): UsageOutput {
     workers: [
       {
         ...usageFiguresOf({
-          granted: 120,
-          requests: 125,
-          wait: samples(120, 1_000, 33_000, 60_000),
+          granted: 80,
+          requests: 85,
+          wait: samples(80, 1_000, 33_000, 60_000),
         }),
-        id: "w1",
+        id: "w9",
         label: "zeta-mini-01",
       },
       {
-        ...usageFiguresOf({ granted: 89, requests: 89, wait: samples(89, 1_000, null, 60_000) }),
+        ...usageFiguresOf({ granted: 120, requests: 125, wait: samples(120, 1_000, null, 60_000) }),
         id: "w2",
       },
     ],
