@@ -900,7 +900,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
         await this.#grant(waiter, plan.device, plan.kind);
       } catch (error: unknown) {
         this.#logFailure("granting a ready device failed", waiter, plan.device, "grant", error);
-        this.#defer(waiter);
+        this.#defer(waiter, "waiting-for-device");
       }
       return undefined;
     }
@@ -1187,7 +1187,7 @@ export class LeaseAcquisitionCoordinator implements AcquisitionMaintenance {
           "grant",
           error,
         );
-        this.#defer(waiter);
+        this.#defer(waiter, "waiting-for-device");
       } finally {
         capacityReservation?.release();
         handoff.claim.release();
