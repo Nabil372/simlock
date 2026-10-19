@@ -36,8 +36,8 @@ Every list of workers, leases, requests or attention items shows 25 at a time.
 Under it, the pager says which ones you see, such as `26–50 of 1,240`, and
 has **Previous**, **Next**, the page number, and **Per page**: 25, 50 or 100.
 When everything fits on one page, there is no pager. Tables on a page, such
-as a worker's devices, page the same way. (The **Minute by minute** table
-under a chart always lists its 60 minutes.)
+as a worker's devices, page the same way. (The table under a
+chart, such as **Minute by minute**, always lists every point of the chart.)
 
 The page you are on is in the address, such as `/leases?page=3&size=50`, so a
 reload or a link you share opens the same page. A page with two tables, such
@@ -137,18 +137,32 @@ tab may still be signed in.
 
 The console opens on **Overview**: the whole fleet on one page.
 
+- **Range**: **1 hour**, **6 hours**, **24 hours** or **7 days**. It decides
+  the tiles after Workers and the three charts, and it is in the address as
+  `?range=`, such as `/?range=7d`, so a reload or a link you share shows the
+  same range. Any other value is read as 1 hour. The daemon works the
+  figures out from what it has recorded, so a reload, or a daemon stop and
+  start, shows the same numbers, also for events the Events page no longer
+  holds. When the daemon's records start later than the range does, the line
+  `Figures cover from <day> <HH:MM>.` says from when they cover.
 - **Tiles**: how full the fleet is (leases held, as a share of every running
   slot on connected workers), the leases held, the requests waiting and the
-  longest wait, the workers connected of all, and the leases granted in the
-  last hour. A tile that has a page of its own opens it. While a
-  worker's devices and leases are not known, the first two show a dash.
-- **Leases held, last hour**: a chart of how many leases were held at the end
-  of each minute. It starts from the leases held now and counts back through
-  the lease events of the last hour, the same events the Events page shows, so
-  it can only go back as far as those. A lease that ends with no event, such
-  as one on a worker removed from a gateway, is not counted back. The line
-  under it says now, the highest and the lowest, and **Minute by minute**
-  lists each minute's number. It says "Not reported." in the same case.
+  longest wait, and the workers connected of all. A tile that has a page of
+  its own opens it. While a worker's devices and leases are not known, the
+  first two show a dash. After them, for the range: **Granted**, the requests made
+  in the range that were granted by its end (not the leases granted in it),
+  and **Wait p95**, how long the slowest 1 in 20 of the requests that ended
+  their wait in the range had waited, in milliseconds below a second and
+  `—` when no request ended its wait.
+- **Charts**: **Leases held**, **Requests in the queue** and **Device slots
+  in use** for the range. A point is the highest value in its bucket: a
+  minute for 1 hour, 5 minutes for 6 hours, 15 minutes for 24 hours and an
+  hour for 7 days. A bucket with no record is a gap, not zero. The line under
+  a chart says now, the highest and the lowest, and the table under it
+  (**Minute by minute**, **Every 5 minutes**, **Every 15 minutes** or **Hour
+  by hour**) lists each bucket's number, `—` where there is none.
+  If the daemon refuses the figures, the tile after Workers and the chart
+  panel show its message and the rest of the page stays.
 - **Capacity**: per platform, the devices running of the limit, and a bar
   split into leased, ready and booting. A dash stands in for the figures in
   the same case.
@@ -296,7 +310,8 @@ directly shows its holder's id as that worker reports it.
 ## Waiting
 
 **Waiting** lists every request waiting for a device, as `simlock list
---requests` does. Each row is its place in its queue, the agent that asked,
+--requests` does. Above the list, **Wait p95** shows how long requests waited
+in the last hour, as on the Overview; the page has no range picker. Each row is its place in its queue, the agent that asked,
 how long it has waited, the device it asked for, and its stage: `queued`
 while it waits its turn, `starting` while the daemon is working on it
 (placing it as it arrives, or finding, creating, booting or downloading a

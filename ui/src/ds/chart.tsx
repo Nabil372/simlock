@@ -42,6 +42,7 @@ export function MinuteChart(props: {
       <Tooltip
         cursor={kind === "area" ? true : { className: "chart-cursor" }}
         isAnimationActive={false}
+        filterNull={false}
         content={(content) => <MinuteTip content={content} unit={unit} />}
       />
     </>
@@ -81,10 +82,11 @@ function MinuteTip({
 }) {
   const { active, label, payload } = content;
   const value = payload[0]?.value;
-  if (active !== true || value === undefined || value === null) return null;
+  if (active !== true) return null;
   return (
     <div className="chart-tip">
-      <span className="chart-tip-label">{label}</span> {value} {unit}
+      <span className="chart-tip-label">{label}</span>{" "}
+      {value === null || value === undefined ? `${unit}: no data` : `${value} ${unit}`}
     </div>
   );
 }

@@ -175,7 +175,7 @@ put together from them and draws nothing of its own that one of them already dra
   between them. Numbers, durations included, are mono and right-aligned.
   Every table of a page's items is the one table component
   (`ui/src/ds/table.tsx`), so every such table pages the same way. A chart's
-  "Minute by minute" table is not one: it always has its 60 rows.
+  table is not one: it has one row per bucket, always.
 - **Pager.** Under a table, edge to edge in its panel, with a 1px `--border`
   line above it like a row's: the rows shown of how many in mono (`26–50 of
   1,240`), **Per page** as a select, then **Previous**, the page number in
@@ -208,7 +208,7 @@ put together from them and draws nothing of its own that one of them already dra
   `--accent`, an area with a faint fill of it (8%), horizontal grid lines in
   `--border`, axis labels in Geist Mono `--text-muted`. Every colour comes from
   the stylesheet by class. Nothing moves: animation is off. Every chart has a
-  title saying what it counts, its numbers as a line of text under it, and every minute as a table behind a "Minute by minute" disclosure, so
+  title saying what it counts, its numbers as a line of text under it, and every bucket as a table behind a disclosure named by the bucket width ("Minute by minute", "Every 5 minutes", "Hour by hour"), so
   nothing is visible only in the picture. A chart can be focused, and the
   arrow keys step through it. Its focus ring goes round the whole chart, for
   keyboard focus only: a click on a chart draws none.

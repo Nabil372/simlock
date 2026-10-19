@@ -62,10 +62,21 @@ const CHARTS: readonly {
   readonly key: FigureChart["key"];
   readonly title: string;
   readonly heading: string;
+  readonly noun: string;
 }[] = [
-  { heading: "Leases held", key: "leasesHeld", title: "Leases held" },
-  { heading: "Requests in the queue", key: "queueDepth", title: "Requests in the queue" },
-  { heading: "Device slots in use", key: "slotsUsed", title: "Device slots in use" },
+  { heading: "Leases held", key: "leasesHeld", noun: "leases held", title: "Leases held" },
+  {
+    heading: "Requests in the queue",
+    key: "queueDepth",
+    noun: "requests queued",
+    title: "Requests in the queue",
+  },
+  {
+    heading: "Device slots in use",
+    key: "slotsUsed",
+    noun: "slots in use",
+    title: "Device slots in use",
+  },
 ];
 
 function chartOf(
@@ -98,7 +109,7 @@ function chartOf(
     points,
     summary,
     title: `${spec.title}, ${unit}`,
-    unit,
+    unit: spec.noun,
   };
 }
 

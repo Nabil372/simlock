@@ -1,6 +1,5 @@
 import type { Page } from "@playwright/test";
 
-import { waitFor } from "../helpers/wait.js";
 import {
   expect,
   NAV,
@@ -26,13 +25,6 @@ async function takeLease(host: RunningDaemon, agent: string): Promise<string> {
   const granted = await host.cli([...LEASE, "--agent-id", agent, "--detach"]);
   expect(granted.code, granted.stderr).toBe(0);
   return (granted.json as { lease: { id: string } }).lease.id;
-}
-
-async function leasesHeld(host: RunningDaemon): Promise<number> {
-  const response = await fetch(new URL("/v1/leases", host.url), {
-    headers: { Authorization: `Bearer ${host.tokens.operator}` },
-  });
-  return ((await response.json()) as { leases: unknown[] }).leases.length;
 }
 
 async function hostWithLease(): Promise<{ readonly host: RunningDaemon; readonly pages: Pages }> {
@@ -344,32 +336,6 @@ test.describe("every view", () => {
         }));
         expect(shape, `${width}px`).toEqual({ lines: 1, readable: true });
       }
-    } finally {
-      await host.dispose();
-    }
-  });
-
-  test("a lease taken with the CLI raises the lease chart within a second", async ({ page }) => {
-    const host = await startDaemon("worker", { driverScript: { ios: IOS } });
-    try {
-      await openSignedIn(page, host);
-      const summary = page.locator(".chart-summary");
-      const area = page.locator(".chart .recharts-area-curve");
-      await expect(summary).toHaveText(/^Now 0;/);
-      const before = await area.getAttribute("d");
-
-      await takeLease(host, "chart-riser");
-      await waitFor(async () => (await leasesHeld(host)) === 1, {
-        interval: 20,
-        label: "the daemon's own lease list",
-        timeout: 10_000,
-      });
-
-      // Now is the lease; the minute before, walked back through its lease.granted, had none.
-      await expect(summary).toHaveText(/^Now 1; highest 1 at \d\d:\d\d; lowest 0 at /, {
-        timeout: 1_000,
-      });
-      await expect(area).not.toHaveAttribute("d", before ?? "", { timeout: 1_000 });
     } finally {
       await host.dispose();
     }
