@@ -7355,14 +7355,17 @@ describe("CLI: stats", () => {
     const run = runCli(
       ["stats", ...argv],
       output.environmentWith({
+        adminTokenFromEnv: "admin-token",
         clock: new FakeClock(NOW),
-        connectAdmin: async () =>
-          fakeClient({
+        connectAdmin: async (resolveCredential) => {
+          await resolveCredential();
+          return fakeClient({
             usage: async (window) => {
               asked.push(window);
               return usage(window);
             },
-          }),
+          });
+        },
       }),
     );
     return { asked, output, run };
