@@ -36,6 +36,7 @@ export interface EventMap {
     readonly source: "warm" | "booted" | "provisioned";
     /** ADR 0021: the gateway's request id, when this grant served a gateway dispatch. */
     readonly fleetRequestId?: string;
+    // why: events stored before this field existed lack it, and a rebuild replays them; every emitter now sets it.
     readonly platform?: "ios" | "android";
   };
   "lease.renewed": { readonly leaseId: string; readonly newDeadline: number };

@@ -260,6 +260,7 @@ export class QuarantineCoordinator {
         attempts,
         deviceId: device.id,
         strategy: result.strategy,
+        platform: device.spec.platform,
         ...(result.missingApps === undefined ? {} : { missingApps: result.missingApps }),
       },
       "quarantine-coordinator",
@@ -370,7 +371,12 @@ export class QuarantineCoordinator {
       claim.release();
       this.options.eventBus.emit(
         "device.quarantine-stranded",
-        { attempts, deviceId: device.id, error: stableError(error) },
+        {
+          attempts,
+          deviceId: device.id,
+          error: stableError(error),
+          platform: device.spec.platform,
+        },
         "quarantine-coordinator",
       );
       return;
@@ -397,7 +403,7 @@ export class QuarantineCoordinator {
     claim.release();
     this.options.eventBus.emit(
       "device.quarantine-abandoned",
-      { attempts, deviceId: device.id },
+      { attempts, deviceId: device.id, platform: device.spec.platform },
       "quarantine-coordinator",
     );
     this.options.notifyAvailability();

@@ -73,7 +73,7 @@ Surface: [CLI.md](../../docs/CLI.md) — every command, flag and exit code.
    already replayed (by `eventKey`). `--since` without `--follow` never launches a daemon;
    with none running it reads `history.db` itself (read-only; no file is empty, an unreadable
    one is an error, exit 1). `simlock status` adds a `History:` line for a history that is not
-   written and one for a set-aside file. `simlock config set` drops `eventLog.rotateBytes` and says so on stderr.
+   written, one for a set-aside file, one after a rebuild of the usage figures and one after a failed rebuild. `simlock config set` drops `eventLog.rotateBytes` and says so on stderr.
 7. **`simlock daemon logs --follow`** — `followLog` polls every 250 ms from a byte offset.
    A new identity on `daemon.log.1` is a rotation: print its rest, restart at offset 0.
 8. **`simlock config set`** — validates the merged file with `loadConfig`, writes

@@ -88,6 +88,7 @@ function config(overrides: Partial<Config["health"]> = {}): Config {
       retention: 7 * 24 * 60 * 60 * 1000,
       maxBytes: 256 * 1024 * 1024,
     },
+    metrics: { retention: 90 * 24 * 60 * 60 * 1000 },
     stalledTransition: { thresholdMultiplier: 3, minimumThresholdMs: 60_000 },
     downloads: { policy: "on-request", acceptAndroidLicenses: false, timeoutMs: 1_200_000 },
     http: { enabled: false, host: "127.0.0.1", port: 4700 },

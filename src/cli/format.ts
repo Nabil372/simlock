@@ -146,6 +146,14 @@ function historyLines(history: StatusGetOutput["history"]): string[] {
       `History: the event history was damaged and set aside at ${formatLocalMinute(history.setAsideAt)}; a fresh one was started.`,
     );
   }
+  if (history.rebuiltAt !== undefined) {
+    lines.push(
+      `History: figures were rebuilt from the event history at ${formatLocalMinute(history.rebuiltAt)}.`,
+    );
+  }
+  if (history.rebuildFailed === true) {
+    lines.push("History: figures could not be rebuilt; see daemon.log.");
+  }
   return lines;
 }
 

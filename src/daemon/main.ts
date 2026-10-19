@@ -585,7 +585,11 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
     // what let a stale "Daemon started" log/event follow "Daemon stopping" (review finding B6).
     onSocketClaimed: () => {
       socketClaimed = true;
-      startHistory(eventHistory, logger);
+      startHistory(
+        eventHistory,
+        logger,
+        stopForRefusedHistory({ stop: (reason) => daemon.stop(reason) }),
+      );
       moduleHost.afterSocketClaimed();
       // why: dialled here, once the socket is claimed and `#readyPromise` is set. The gateway's first
       // `status.get` never parks (it still answers `starting` during convergence), but its
@@ -906,7 +910,11 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
     },
     onSocketClaimed: () => {
       socketClaimed = true;
-      startHistory(eventHistory, logger);
+      startHistory(
+        eventHistory,
+        logger,
+        stopForRefusedHistory({ stop: (reason) => daemon.stop(reason) }),
+      );
       void startHttpFrontend().then(
         () => resolveHttpStarted?.(),
         (error: unknown) => {
@@ -1376,15 +1384,28 @@ function openEventHistory(options: {
     // why: node:sqlite writes the real disk, so the history never goes through a daemon's injected filesystem
     filesystem: new NodeFilesystem(),
     logger: options.logger.child("events"),
+    projectionOptions: {
+      fleet: options.config.mode === "gateway",
+      metricsRetentionMs: options.config.metrics.retention,
+    },
     projections: Object.values(HISTORY_PROJECTIONS),
     sqlite: new NodeSqliteOpener(),
   });
 }
 
-function startHistory(history: EventHistoryHandle, logger: Logger): void {
+/** why: a history that refuses to start is one a newer simlock wrote or a migration could not fix; the daemon stops rather than run without the figures it promises. */
+function startHistory(history: EventHistoryHandle, logger: Logger, refused: () => void): void {
   void history.start().catch((error: unknown) => {
     logger.error("The event history could not start", { message: errorMessage(error) });
+    refused();
   });
+}
+
+function stopForRefusedHistory(daemon: { stop(reason: string): Promise<void> }): () => void {
+  return () => {
+    process.exitCode = 1;
+    void daemon.stop("history-refused").catch(() => undefined);
+  };
 }
 
 /**

@@ -19,7 +19,7 @@ import {
   type HistoryProjectionDefinition,
   openHistoryReader,
 } from "./index.js";
-import { ProbeSqliteOpener } from "./testing.js";
+import { plainProjection, ProbeSqliteOpener } from "./testing.js";
 
 const NOW = 1_760_605_920_000;
 const HOUR = 3_600_000;
@@ -94,6 +94,7 @@ async function rig(
         dataDirectory: directory,
         filesystem,
         logger: new JsonLinesLogger({ clock, sink: logs }),
+        projectionOptions: { fleet: false, metricsRetentionMs: 90 * 24 * HOUR },
         projections: overrides.projections ?? [],
         sqlite: overrides.sqlite ?? sqlite,
       }),
@@ -133,17 +134,14 @@ function recordingProjection(): {
   const pruned: number[] = [];
   return {
     applied,
-    definition: {
-      create: () => ({
-        apply: (envelope) => {
-          applied.push(envelope.id);
-        },
-        prune: (now) => {
-          pruned.push(now);
-        },
-      }),
-      name: "recording",
-    },
+    definition: plainProjection("recording", () => ({
+      apply: (envelope) => {
+        applied.push(envelope.id);
+      },
+      prune: (now) => {
+        pruned.push(now);
+      },
+    })),
     pruned,
   };
 }
@@ -254,23 +252,20 @@ describe("createEventHistory", () => {
   it("a projection that throws leaves neither its rows nor the event row, and stops writing", async () => {
     const rigged = await rig();
     const applied: string[] = [];
-    const definition: HistoryProjectionDefinition = {
-      create: (database) => {
-        database.exec("CREATE TABLE IF NOT EXISTS projected (id TEXT PRIMARY KEY)");
-        const insert = database.prepare("INSERT INTO projected (id) VALUES (?)");
-        return {
-          apply: (envelope) => {
-            insert.run(envelope.id);
-            applied.push(envelope.id);
-            if ((envelope.payload as { reason?: string }).reason === "boom") {
-              throw new Error("projection failed");
-            }
-          },
-          prune: () => undefined,
-        };
-      },
-      name: "throwing",
-    };
+    const definition = plainProjection("throwing", (database) => {
+      database.exec("CREATE TABLE IF NOT EXISTS projected (id TEXT PRIMARY KEY)");
+      const insert = database.prepare("INSERT INTO projected (id) VALUES (?)");
+      return {
+        apply: (envelope) => {
+          insert.run(envelope.id);
+          applied.push(envelope.id);
+          if ((envelope.payload as { reason?: string }).reason === "boom") {
+            throw new Error("projection failed");
+          }
+        },
+        prune: () => undefined,
+      };
+    });
     const history = rigged.history({ projections: [definition] });
     await history.start();
 
@@ -802,16 +797,13 @@ describe("createEventHistory", () => {
   it("a prune step that throws logs one warning, writing goes on, and the next prune tries again", async () => {
     const rigged = await rig();
     let attempts = 0;
-    const definition: HistoryProjectionDefinition = {
-      create: () => ({
-        apply: () => undefined,
-        prune: () => {
-          attempts += 1;
-          throw new Error("prune failed");
-        },
-      }),
-      name: "failing-prune",
-    };
+    const definition = plainProjection("failing-prune", () => ({
+      apply: () => undefined,
+      prune: () => {
+        attempts += 1;
+        throw new Error("prune failed");
+      },
+    }));
     const history = rigged.history({ projections: [definition] });
     await history.start();
     const attemptsAtStart = attempts;
@@ -841,16 +833,13 @@ describe("createEventHistory", () => {
     );
     const size = Buffer.byteLength(JSON.stringify(old[0]), "utf8");
     let attempts = 0;
-    const definition: HistoryProjectionDefinition = {
-      create: () => ({
-        apply: () => undefined,
-        prune: () => {
-          attempts += 1;
-          if (attempts === 1) throw new Error("prune failed");
-        },
-      }),
-      name: "fails-once",
-    };
+    const definition = plainProjection("fails-once", () => ({
+      apply: () => undefined,
+      prune: () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("prune failed");
+      },
+    }));
     const history = rigged.history({ maxBytes: size * 4, projections: [definition], retention });
     await history.start();
     const fresh = [1, 2, 3].map((index) => relayed(rigged.bus, `evt_new${index}`, NOW + index));

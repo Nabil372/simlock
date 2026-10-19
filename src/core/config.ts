@@ -199,7 +199,7 @@ export interface Config {
     readonly retention: number;
     readonly maxBytes: number;
   };
-  readonly metrics?: { readonly retention: number };
+  readonly metrics: { readonly retention: number };
   readonly http: {
     readonly enabled: boolean;
     readonly host: string;
@@ -397,12 +397,19 @@ export async function loadConfig({
     warn,
   );
 
-  const merged = mergeConfig(
+  const mergedWithoutMetrics = mergeConfig(
     mergeConfig(defaultConfig(systemStats, strategy, mode, modules), fileConfig),
     overrideConfig,
-  ) as unknown as Config;
+  ) as unknown as Omit<Config, "metrics"> & { readonly metrics?: Config["metrics"] };
+  const merged: Config = {
+    ...mergedWithoutMetrics,
+    metrics: mergedWithoutMetrics.metrics ?? {
+      retention: Math.max(DEFAULT_METRICS_RETENTION_MS, mergedWithoutMetrics.eventLog.retention),
+    },
+  };
   validateLeaseTtls(merged);
   validateEventLogBounds(merged);
+  validateMetricsRetention(merged);
   // why: a gateway reads a module's gateway keys, so a bad value stops it too.
   runModuleChecks(merged, modules);
   if (mode === "gateway") {
@@ -444,11 +451,19 @@ function validateLeaseTtls(config: Config): void {
   }
 }
 
+const DEFAULT_METRICS_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
 const MIN_EVENT_LOG_MAX_BYTES = 16 * 1024 * 1024;
 
 function validateEventLogBounds(config: Config): void {
   if (config.eventLog.maxBytes < MIN_EVENT_LOG_MAX_BYTES) {
     throw invalidValue("eventLog.maxBytes", "at least 16 MiB");
+  }
+}
+
+function validateMetricsRetention(config: Config): void {
+  if (config.metrics.retention < config.eventLog.retention) {
+    throw invalidValue("metrics.retention", "at least eventLog.retention");
   }
 }
 
@@ -465,6 +480,7 @@ const GATEWAY_CONFIG_KEYS: readonly string[] = [
   "lease",
   "eventBuffer",
   "eventLog",
+  "metrics",
   "gateway",
   "capabilities",
 ];
@@ -693,7 +709,7 @@ function defaultConfig(
   strategy: CapacityStrategyName,
   mode: DaemonMode,
   modules: readonly ModuleConfigEntry[],
-): Config {
+): Omit<Config, "metrics"> {
   return {
     mode,
     capabilities: Object.fromEntries(
@@ -895,6 +911,7 @@ function configValidators(
       retention: positiveInteger,
       maxBytes: positiveInteger,
     }),
+    metrics: objectValidator({ retention: positiveInteger }),
     http: objectValidator({
       enabled: booleanValue,
       host: stringValue,

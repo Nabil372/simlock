@@ -842,7 +842,7 @@ describe("QuarantineCoordinator for a physical device (ADR 0022 §4)", () => {
       initiator: "quarantine",
       physical: true,
     });
-    expect(events[1]?.payload).toEqual({ attempts: 2, deviceId: "dev_physical" });
+    expect(events[1]?.payload).toEqual({ attempts: 2, deviceId: "dev_physical", platform: "ios" });
     expect(harness.notifyAvailability).toHaveBeenCalledOnce();
   });
 

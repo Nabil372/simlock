@@ -159,7 +159,9 @@ is on its entry in `workers`.
 `history` says how the event history is doing: `opened` (the daemon has
 opened `history.db`), `writing` (events are being written to it) and, only
 when this start found `history.db` damaged and renamed it aside,
-`setAsideAt` (epoch ms). The daemon sends it, on a worker and on a gateway,
+`setAsideAt` (epoch ms), when this start rebuilt the usage figures from the
+event history, `rebuiltAt` (epoch ms), and when that rebuild failed,
+`rebuildFailed: true`. The daemon sends it, on a worker and on a gateway,
 in the `starting` answer too.
 
 While the daemon is starting (`daemon.health` is `starting`), the answer is

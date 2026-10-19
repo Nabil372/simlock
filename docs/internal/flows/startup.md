@@ -37,7 +37,8 @@ Entry: `src/daemon/main.ts` `startDaemon` → `DaemonServer.start` (`src/daemon/
 14. Converge starts. Health `starting`. From here `hello` and `status.get` answer;
     every other request parks.
 15. `onSocketClaimed`, nothing awaited: the event history starts (opens `history.db`, sets a
-    damaged one aside, writes the ring, prunes); agent-device starts; the uplink dials once
+    damaged one aside, migrates the projections, writes the ring, prunes, rebuilds a projection whose
+    check failed; a newer stored version or a failed migration stops the daemon, exit 1); agent-device starts; the uplink dials once
     the first host load reading is in; HTTP starts when `http.enabled`.
 
 Converge (`src/daemon/main.ts` `convergeStartup`), one step after another. Once a stop

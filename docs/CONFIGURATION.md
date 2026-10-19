@@ -65,6 +65,7 @@ edit yourself keeps the mode you give it until the next `config set`; run
 | `eventBuffer.capacity`            | Number of recent business events kept in memory, which `simlock events` without `--since` replays.                                                                                                                                          | `1000`                                                           |
 | `eventLog.retention` | How long the event history is kept, in milliseconds, counted back from the moment of the prune and compared with each event's own time. Every business event is written to `~/.simlock/history.db` and survives a daemon restart. Older events are deleted once the daemon holds its socket and every hour after; the freed space goes back to the disk. | `604800000` (7 days) |
 | `eventLog.maxBytes` | Cap on the stored size of the events in `history.db` (the size of each event as written, not the file), the backstop for when events arrive faster than `eventLog.retention` ages them out. When they exceed it, the oldest events are deleted first, whatever their age. At least `16 MiB`; a smaller value is refused when the config loads. | `256 MiB` |
+| `metrics.retention` | How long the usage figures in `history.db` are kept, in milliseconds, counted back from the moment of the prune: one row per lease request (by when it was requested), per-minute levels (by the minute) and one row per device boot, provision or recovery (by when it happened). They outlive the events behind them. It may not be shorter than `eventLog.retention`, and must be a positive whole number of milliseconds; either is refused when the config loads. | the larger of `7776000000` (90 days) and `eventLog.retention` |
 | `log.level`                       | Lowest level written to `daemon.log`: `debug`, `info`, `warn`, or `error`. `debug` adds a line for every request that only reads (such as `simlock status`) and for every device command Simlock runs (`simctl`, `adb`, …) with its arguments and exit code. | `info`                                                           |
 | `log.rotateBytes`                 | Size at which `daemon.log` is rotated to `daemon.log.1`. One rotated file is kept.                                                                                                                                          | `5 MiB`                                                          |
 | `health.enabled`                  | Master switch for leased-device crash detection and recovery. Physical devices are watched whatever it says.                                                                                                                                                                | `true`                                                           |
@@ -166,7 +167,7 @@ local agents whether or not its gateway is reachable, and `http.enabled` stays
 off by default.
 
 **A gateway reads a deliberately small slice of this file**: `mode`, `http.*`,
-`log.*`, `lease.*`, `eventBuffer.*`, `eventLog.*`, `gateway.*` and
+`log.*`, `lease.*`, `eventBuffer.*`, `eventLog.*`, `metrics.*`, `gateway.*` and
 `capabilities.*` (`enabled`, and `leaseTtlCapMs` for agent-device). Every other key —
 capacity, drivers, downloads, idle, warmPool, health, ios, android, stalledTransition —
 configures devices, which a gateway does not have; each one present in a
@@ -234,7 +235,7 @@ does not apply to it. It reads:
 | `gateway.routing`, `gateway.disconnectedRetentionMs`, `gateway.execTimeoutMs`, `gateway.leaseRequestTimeoutMs` | how to run the fleet |
 | `http.*` | it is the fleet's contact point |
 | `lease.*` | `defaultTtlMs`/`maxTtlMs` bound what its own clients may ask for, before a request is dispatched — see below |
-| `log.*`, `eventBuffer.*`, `eventLog.*` | logging and the event history, as anywhere |
+| `log.*`, `eventBuffer.*`, `eventLog.*`, `metrics.*` | logging, the event history and the usage figures kept beside it, as anywhere |
 
 **A worker's `downloads.policy` does not apply to requests through a
 gateway.** The gateway sends a request only to a worker whose catalog already

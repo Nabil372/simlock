@@ -53,7 +53,7 @@ An HTTP bind failure after a good start stops the daemon (`http-start-failed`).
    Principal: `hello.principal`, else `SIMLOCK_AGENT_ID`, else the daemon's pid.
    Both are fixed for the connection's life.
 3. **Version** — ranges overlap → highest common version. `PROTOCOL_VERSION_RANGE`
-   is `{ min: 43, max: 43 }` (`src/contract/protocol.ts`). No overlap → the
+   is `{ min: 44, max: 44 }` (`src/contract/protocol.ts`). No overlap → the
    connection stays open, and every request but `daemon.stop` gets
    `PROTOCOL_VERSION_UNSUPPORTED`.
 4. **Request** — one frame → one `dispatch()` call. While stopping: `DAEMON_STOPPING`.
@@ -133,8 +133,10 @@ Security model: cooperative identity, not a hostile-process boundary.
 - At `log.level: debug`, `LoggingProcessRunner` logs one `process` line per command.
 - Events: ring of `eventBuffer.capacity` (1000) in memory; `history.db` via the
   [history](../history/AGENTS.md), kept `eventLog.retention` (7 days), event rows capped at
-  `eventLog.maxBytes` (256 MiB). `onSocketClaimed` starts it in both modes; `dispose` stops it
-  last. A file that fails costs only history. `status.get` carries its `history`, also while starting.
+  `eventLog.maxBytes` (256 MiB); the usage rows beside it are kept `metrics.retention` (90 days). `onSocketClaimed`
+  starts it in both modes with `config.mode` and `metrics.retention`; `dispose` stops it
+  last. A file that fails costs only history. A start the history refuses (a newer stored projection version, a
+  failed migration) stops the daemon with reason `history-refused` and exit 1. `status.get` carries its `history`, also while starting.
 - A start that throws is logged by a fallback logger to the default `daemon.log`; exit 1.
 
 ## Rules

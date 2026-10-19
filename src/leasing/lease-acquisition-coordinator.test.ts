@@ -117,6 +117,7 @@ function config(maxDevices = 1, maxRunning = 1): Config {
       retention: 7 * 24 * 60 * 60 * 1000,
       maxBytes: 256 * 1024 * 1024,
     },
+    metrics: { retention: 90 * 24 * 60 * 60 * 1000 },
     warmPool: {
       enabled: true,
       maxConcurrentBoots: 1,
@@ -3208,7 +3209,7 @@ describe("LeaseAcquisitionCoordinator: what lease.granted reports", () => {
     seed: (harness: Awaited<ReturnType<typeof createHarness>>) => Promise<{ id: string } | void>;
     evictedLeavesReady?: boolean;
   }>)(
-    "emits lease.granted with exactly the grant's device, lease, requester and request, and source $name",
+    "emits lease.granted with exactly the grant's device, lease, requester, request and platform, and source $name",
     async ({ source, limits, seed, evictedLeavesReady }) => {
       const harness = await createHarness(limits);
       const evicted = await seed(harness);
@@ -3221,6 +3222,7 @@ describe("LeaseAcquisitionCoordinator: what lease.granted reports", () => {
         {
           deviceId: grant.device.id,
           leaseId: grant.lease.id,
+          platform: grant.device.spec.platform,
           requester: "agent",
           requestId: requested[0],
           source,

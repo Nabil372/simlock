@@ -1070,7 +1070,11 @@ export class Registry implements LeaseRequestStore<LeaseGrant> {
   #emitDeviceEvent(event: RegistryDeviceEvent, device: DeviceRecord): void {
     switch (event.event) {
       case "device.ready":
-        this.options.eventBus.emit(event.event, event.payload, "registry");
+        this.options.eventBus.emit(
+          event.event,
+          { ...event.payload, platform: device.spec.platform },
+          "registry",
+        );
         return;
       case "device.reclaimed":
         this.options.eventBus.emit(event.event, event.payload, "registry");

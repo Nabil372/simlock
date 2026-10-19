@@ -13,8 +13,23 @@ import {
   createEventHistory,
   type EventHistoryHandle,
   type EventHistoryStatus,
+  type HistoryProjectionDefinition,
   openHistoryReader,
+  type ProjectionHandle,
 } from "./index.js";
+
+export function plainProjection(
+  name: string,
+  create: (database: SqliteDatabase) => Omit<ProjectionHandle, "rebuild">,
+): HistoryProjectionDefinition {
+  return {
+    check: () => true,
+    create,
+    migrations: [],
+    name,
+    version: 0,
+  };
+}
 
 export function readHistoryEvents(dataDirectory: string, sinceTs = 0): Promise<EventEnvelope[]> {
   return openHistoryReader({
@@ -112,6 +127,7 @@ export async function seedHistory(
     dataDirectory,
     filesystem: new NodeFilesystem(),
     logger: new NoopLogger(),
+    projectionOptions: { fleet: false, metricsRetentionMs: Number.MAX_SAFE_INTEGER },
     projections: [],
     sqlite: new NodeSqliteOpener(),
   });
@@ -131,6 +147,7 @@ export function ringEventHistory(bus: EventBus): EventHistoryHandle {
     dataDirectory: "/unused",
     filesystem: new MemoryFilesystem(),
     logger: new NoopLogger(),
+    projectionOptions: { fleet: false, metricsRetentionMs: Number.MAX_SAFE_INTEGER },
     projections: [],
     sqlite: new NodeSqliteOpener(),
   });

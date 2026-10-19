@@ -85,6 +85,7 @@ export function testConfig(
       retention: 604_800_000,
       maxBytes: 268_435_456,
     },
+    metrics: { retention: 90 * 24 * 60 * 60 * 1000 },
     stalledTransition: { minimumThresholdMs: 60_000, thresholdMultiplier: 3 },
     warmPool: {
       enabled: true,

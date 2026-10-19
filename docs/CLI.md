@@ -1462,9 +1462,14 @@ being written (a write failed, or the file could not be opened), it says
 start found `history.db` damaged and renamed it aside, it says `History: the
 event history was damaged and set aside at 2026-10-16 09:12; a fresh one was
 started.` (local time); the damaged file stays beside the new one as
-`history.db.damaged-<epoch ms>`. Both lines can appear together. In `--json`
-the block is `history`: `opened`, `writing` and, after a set-aside,
-`setAsideAt` (epoch ms); the daemon sends it while starting too.
+`history.db.damaged-<epoch ms>`. If a start found the usage figures kept
+beside the events out of shape and rebuilt them from the event history, it says
+`History: figures were rebuilt from the event history at 2026-10-16 09:12.`
+(local time); if that rebuild failed, `History: figures could not be rebuilt;
+see daemon.log.` The lines can appear together. In `--json` the block is
+`history`: `opened`, `writing` and, after a set-aside, `setAsideAt` (epoch ms),
+after a rebuild `rebuiltAt` (epoch ms), after a failed one `rebuildFailed:
+true`; the daemon sends it while starting too.
 
 `--json` prints the answer as the daemon sent it, with `devices`, `leases`,
 `capacity`, `queueDepth` and `physicalQueueDepth` absent. On a gateway, a worker that is still starting

@@ -21,7 +21,9 @@ import {
 } from "./database.js";
 import { HISTORY_DB_NAME } from "./names.js";
 import { pruneHistory, totalEventBytes } from "./prune.js";
+import { rebuildProjections } from "./rebuild.js";
 import { setAsideDamagedHistory } from "./set-aside.js";
+import { isMarkedRebuilding, migrateProjection } from "./versions.js";
 
 export { HISTORY_DB_NAME } from "./names.js";
 export { HISTORY_PROJECTIONS, openUsageReads } from "./projections/index.js";
@@ -31,16 +33,16 @@ const PRUNE_INTERVAL_MS = 3_600_000;
 
 export interface HistoryProjectionDefinition {
   readonly name: string;
-  readonly version?: number;
-  readonly migrations?: readonly string[];
-  check?(database: SqliteDatabase): boolean;
-  create(
-    database: SqliteDatabase,
-    options?: HistoryProjectionOptions,
-  ): {
-    apply(envelope: EventEnvelope): void;
-    prune(now: number): void;
-  };
+  readonly version: number;
+  readonly migrations: readonly string[];
+  check(database: SqliteDatabase): boolean;
+  create(database: SqliteDatabase, options: HistoryProjectionOptions): ProjectionHandle;
+}
+
+export interface ProjectionHandle {
+  apply(envelope: EventEnvelope): void;
+  prune(now: number): void;
+  rebuild?(oldestEventAt: number | undefined): void;
 }
 
 export interface HistoryProjectionOptions {
@@ -72,10 +74,13 @@ export interface EventHistoryOptions {
   readonly dataDirectory: string;
   readonly config: { readonly retention: number; readonly maxBytes: number };
   readonly projections: readonly HistoryProjectionDefinition[];
-  readonly projectionOptions?: HistoryProjectionOptions;
+  readonly projectionOptions: HistoryProjectionOptions;
 }
 
-type Projector = ReturnType<HistoryProjectionDefinition["create"]>;
+interface RunningProjection {
+  readonly definition: HistoryProjectionDefinition;
+  readonly projector: ProjectionHandle;
+}
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -85,7 +90,10 @@ class EventHistory implements EventHistoryHandle {
   readonly #options: EventHistoryOptions;
   readonly #path: string;
   #database: SqliteDatabase | undefined;
-  #projectors: Projector[] = [];
+  #projectors: RunningProjection[] = [];
+  readonly #suspended = new Set<ProjectionHandle>();
+  #rebuiltAt: number | undefined;
+  #rebuildFailed = false;
   #stored = 0;
   #opened = false;
   #writing = false;
@@ -111,6 +119,8 @@ class EventHistory implements EventHistoryHandle {
       opened: this.#opened,
       writing: this.#writing,
       ...(this.#setAsideAt === undefined ? {} : { setAsideAt: this.#setAsideAt }),
+      ...(this.#rebuiltAt === undefined ? {} : { rebuiltAt: this.#rebuiltAt }),
+      ...(this.#rebuildFailed ? { rebuildFailed: true as const } : {}),
     };
   }
 
@@ -151,7 +161,20 @@ class EventHistory implements EventHistoryHandle {
     // why: nothing below awaits, so no event can land between the ring's copy and the live writer
     this.#database = database;
     try {
-      this.#projectors = this.#options.projections.map((projection) => projection.create(database));
+      for (const projection of this.#options.projections) migrateProjection(database, projection);
+    } catch (error: unknown) {
+      this.#database = undefined;
+      closeQuietly(database);
+      throw error;
+    }
+    let rebuilding: RunningProjection[];
+    try {
+      this.#projectors = this.#options.projections.map((definition) => ({
+        definition,
+        projector: definition.create(database, this.#options.projectionOptions),
+      }));
+      rebuilding = this.#projectors.filter(({ definition }) => needsRebuild(database, definition));
+      for (const { projector } of rebuilding) this.#suspended.add(projector);
       this.#stored = totalEventBytes(database);
     } catch (error: unknown) {
       this.#options.logger.error("History could not be prepared; events are not written", {
@@ -171,7 +194,33 @@ class EventHistory implements EventHistoryHandle {
       }
     }
     this.#prune();
+    if (rebuilding.length > 0) await this.#rebuild(database, rebuilding);
     this.#arm();
+  }
+
+  async #rebuild(database: SqliteDatabase, targets: RunningProjection[]): Promise<void> {
+    try {
+      const outcome = await rebuildProjections({
+        database,
+        isStopped: () => this.#stopped,
+        resume: () => {
+          for (const { projector } of targets) this.#suspended.delete(projector);
+          this.#rebuiltAt = this.#options.clock.now();
+        },
+        targets,
+      });
+      if (outcome === "done") {
+        this.#options.logger.info("History figures were rebuilt from the event history", {
+          projections: targets.map(({ definition }) => definition.name),
+        });
+      }
+    } catch (error: unknown) {
+      this.#rebuildFailed = true;
+      this.#options.logger.error("History figures could not be rebuilt; they are not written", {
+        error: describe(error),
+        path: this.#path,
+      });
+    }
   }
 
   async stop(): Promise<void> {
@@ -271,7 +320,9 @@ class EventHistory implements EventHistoryHandle {
         if (Number(result.changes) === 1) {
           added = size;
           inProjection = true;
-          for (const projector of this.#projectors) projector.apply(envelope);
+          for (const { projector } of this.#projectors) {
+            if (!this.#suspended.has(projector)) projector.apply(envelope);
+          }
           inProjection = false;
         }
         database.exec("COMMIT");
@@ -304,7 +355,9 @@ class EventHistory implements EventHistoryHandle {
         {
           maxBytes: this.#options.config.maxBytes,
           now: this.#options.clock.now(),
-          projections: this.#projectors,
+          projections: this.#projectors
+            .filter(({ projector }) => !this.#suspended.has(projector))
+            .map(({ projector }) => projector),
           retention: this.#options.config.retention,
         },
         this.#stored,
@@ -331,6 +384,15 @@ class EventHistory implements EventHistoryHandle {
       this.#prune();
       this.#arm();
     });
+  }
+}
+
+function needsRebuild(database: SqliteDatabase, definition: HistoryProjectionDefinition): boolean {
+  try {
+    return isMarkedRebuilding(database, definition.name) || !definition.check(database);
+  } catch {
+    // why: a table too damaged to inspect is one the rebuild recreates
+    return true;
   }
 }
 

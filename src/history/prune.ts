@@ -1,4 +1,5 @@
 import type { SqliteDatabase } from "../ports/index.js";
+import { inTransaction } from "./database.js";
 
 const SIZE_STEP_ROWS = 1_000;
 
@@ -13,22 +14,6 @@ export function totalEventBytes(database: SqliteDatabase): number {
   return Number(
     database.prepare("SELECT COALESCE(SUM(size), 0) AS total FROM events").get()?.total,
   );
-}
-
-function inTransaction<T>(database: SqliteDatabase, work: () => T): T {
-  database.exec("BEGIN");
-  try {
-    const result = work();
-    database.exec("COMMIT");
-    return result;
-  } catch (error: unknown) {
-    try {
-      database.exec("ROLLBACK");
-    } catch {
-      // why: the connection may already have ended the transaction; the first error is the one to report
-    }
-    throw error;
-  }
 }
 
 export function pruneHistory(

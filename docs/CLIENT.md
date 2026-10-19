@@ -575,7 +575,7 @@ const { host } = await client.getStatus();
 ## A daemon that is still starting: `getStatus()`
 
 While a daemon is starting (`daemon.health` is `"starting"`), `getStatus()`
-returns `daemon`, `history` (whether the event history is open and being written; `setAsideAt` after a damaged file was renamed aside), `host` and, once read, `load`, and nothing else. `devices`, `leases`, `capacity`,
+returns `daemon`, `history` (whether the event history is open and being written; `setAsideAt` after a damaged file was renamed aside, `rebuiltAt` after the usage figures were rebuilt, `rebuildFailed` after a rebuild failed), `host` and, once read, `load`, and nothing else. `devices`, `leases`, `capacity`,
 `warmPool`, `queueDepth`, `physicalQueueDepth`, `installs`, `waiting` and `workers` are `undefined`, not empty,
 because the daemon has not yet checked what it holds. The same is true of a
 worker's entry in `workers` and in `listWorkers()`: a worker that is starting has

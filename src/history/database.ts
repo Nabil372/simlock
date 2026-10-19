@@ -28,6 +28,29 @@ export function configureDatabase(database: SqliteDatabase): void {
      )`,
   );
   database.exec("CREATE INDEX IF NOT EXISTS events_timestamp ON events (timestamp, seq)");
+  database.exec(
+    `CREATE TABLE IF NOT EXISTS projection_versions (
+       name TEXT PRIMARY KEY,
+       version INTEGER NOT NULL,
+       rebuilding INTEGER NOT NULL DEFAULT 0
+     )`,
+  );
+}
+
+export function inTransaction<T>(database: SqliteDatabase, work: () => T): T {
+  database.exec("BEGIN");
+  try {
+    const result = work();
+    database.exec("COMMIT");
+    return result;
+  } catch (error: unknown) {
+    try {
+      database.exec("ROLLBACK");
+    } catch {
+      // why: the connection may already have ended the transaction; the first error is the one to report
+    }
+    throw error;
+  }
 }
 
 export function passesQuickCheck(database: SqliteDatabase): boolean {
@@ -58,7 +81,7 @@ export function selectEventsSince(database: SqliteDatabase, sinceTs: number): Ev
   return events;
 }
 
-function parseEnvelope(stored: unknown): EventEnvelope | undefined {
+export function parseEnvelope(stored: unknown): EventEnvelope | undefined {
   if (typeof stored !== "string") return undefined;
   let value: unknown;
   try {

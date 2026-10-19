@@ -106,6 +106,7 @@ function config(): Config {
       retention: 7 * 24 * 60 * 60 * 1000,
       maxBytes: 256 * 1024 * 1024,
     },
+    metrics: { retention: 90 * 24 * 60 * 60 * 1000 },
     warmPool: {
       enabled: true,
       maxConcurrentBoots: 1,

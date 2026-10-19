@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { EventBus } from "../../bus/index.js";
+import { EventBus, type EventEnvelope } from "../../bus/index.js";
 import {
   FakeClock,
   JsonLinesLogger,
   MemoryLogSink,
   NodeFilesystem,
   NodeSqliteOpener,
+  type SqliteDatabase,
 } from "../../ports/index.js";
 import { createEventHistory, HISTORY_DB_NAME, type HistoryProjectionDefinition } from "../index.js";
 import { HISTORY_PROJECTIONS } from "./index.js";
@@ -57,8 +58,9 @@ async function run(
   const bus = new EventBus(clock);
   const applied: string[] = [];
   const wrapped: HistoryProjectionDefinition = {
-    create: (database) => {
-      const inner = definition.create(database);
+    ...definition,
+    create: (database, projectionOptions) => {
+      const inner = definition.create(database, projectionOptions);
       return {
         apply: (envelope) => {
           applied.push(envelope.id);
@@ -66,9 +68,9 @@ async function run(
           if (options.throwOn === envelope.id) throw new Error("apply failed");
         },
         prune: (now) => inner.prune(now),
+        rebuild: (oldest) => inner.rebuild?.(oldest),
       };
     },
-    name: definition.name,
   };
   const history = createEventHistory({
     bus,
@@ -77,6 +79,7 @@ async function run(
     dataDirectory: directory,
     filesystem: new NodeFilesystem(),
     logger: new JsonLinesLogger({ clock, sink: new MemoryLogSink() }),
+    projectionOptions: { fleet: false, metricsRetentionMs: 90 * 24 * 3_600_000 },
     projections: [wrapped],
     sqlite: new NodeSqliteOpener(),
   });
@@ -91,6 +94,26 @@ async function run(
     rows: await projectionRows(join(directory, HISTORY_DB_NAME)),
     writing,
   };
+}
+
+async function openScratch(): Promise<SqliteDatabase> {
+  const directory = await mkdtemp(join(tmpdir(), "simlock-projection-"));
+  directories.push(directory);
+  return new NodeSqliteOpener().open(join(directory, "scratch.db"), { readOnly: false });
+}
+
+function dumpTables(database: SqliteDatabase): string[] {
+  const tables = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .all()
+    .map((row) => String(row.name));
+  return tables.flatMap((name) =>
+    database
+      .prepare(`SELECT * FROM "${name}"`)
+      .all()
+      .map((row) => `${name} ${JSON.stringify(row)}`)
+      .sort(),
+  );
 }
 
 function conformance(
@@ -118,6 +141,48 @@ function conformance(
       expect(result.events).toBe(1);
     });
 
+    it("its migrations from version 0 reach its version, and the check holds there", async () => {
+      const database = await openScratch();
+      try {
+        for (const migration of definition.migrations) database.exec(migration);
+
+        expect(definition.migrations).toHaveLength(definition.version);
+        expect(definition.check(database)).toBe(true);
+      } finally {
+        database.close();
+      }
+    });
+
+    it("a rebuild over the events apply saw gives the same rows", async () => {
+      const database = await openScratch();
+      try {
+        for (const migration of definition.migrations) database.exec(migration);
+        const projector = definition.create(database, {
+          fleet: false,
+          metricsRetentionMs: 90 * 24 * 3_600_000,
+        });
+        const envelopes = ["evt_a", "evt_b"].map(
+          (id, index): EventEnvelope => ({
+            event: "daemon.stopping",
+            id,
+            module: "daemon",
+            payload: { reason: id },
+            seq: index,
+            timestamp: 1_000 + index,
+          }),
+        );
+        for (const envelope of envelopes) projector.apply(envelope);
+        const live = dumpTables(database);
+
+        projector.rebuild?.(1_000);
+        for (const envelope of envelopes) projector.apply(envelope);
+
+        expect(dumpTables(database)).toEqual(live);
+      } finally {
+        database.close();
+      }
+    });
+
     it("a throwing apply writes nothing", async () => {
       const baseline = await run(definition, (bus) => relay(bus, "evt_a"));
       const result = await run(
@@ -140,12 +205,19 @@ describe("the history projection conformance suite", () => {
   conformance("registered", HISTORY_PROJECTIONS);
   conformance("test", {
     counter: {
+      check: () => true,
       create: (database) => {
         database.exec("CREATE TABLE IF NOT EXISTS counted (id TEXT PRIMARY KEY)");
         const insert = database.prepare("INSERT INTO counted (id) VALUES (?)");
-        return { apply: (envelope) => void insert.run(envelope.id), prune: () => undefined };
+        return {
+          apply: (envelope) => void insert.run(envelope.id),
+          prune: () => undefined,
+          rebuild: () => database.exec("DELETE FROM counted"),
+        };
       },
+      migrations: [],
       name: "counter",
+      version: 0,
     },
   });
 });
