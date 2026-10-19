@@ -48,6 +48,7 @@ Each layer imports only the layers below it. `.dependency-cruiser.mjs` enforces 
 | `/waiting[/<id>]`   | Waiting   | Wait p95 tile, list + inspector                                                      |
 | `/attention[/<id>]` | Attention | list + inspector                                                                     |
 | `/events[/<id>]`    | Events    | list + inspector with the payload                                                    |
+| `/usage`            | Usage     | range picker, stat tiles, panels of tables (workers, requesters page in the URL)     |
 
 On a list page the URL names the chosen item; with none, the first item shows on a wide screen
 and the list alone on a phone. Lists page in the URL (`state/paging.ts`, `model/paging.ts`).

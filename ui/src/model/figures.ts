@@ -2,13 +2,14 @@ import type { UsageOutput } from "../../../src/contract/index";
 import { dayWord } from "./event-list";
 import { extremes, minuteLabel } from "./history";
 import { formatCount } from "./paging";
-import { type ConsoleRange, rangeUnit } from "./range";
+import { type ConsoleRange, rangeUnit, usagePath } from "./range";
 import { formatDuration } from "./time";
 
 export interface FigureTile {
   readonly label: string;
   readonly value: string;
   readonly unit: string;
+  readonly to?: string;
 }
 
 export interface ChartPoint {
@@ -43,7 +44,7 @@ const DAY = 86_400_000;
 
 // why: under a second a duration would round to `0 s`, which says "no wait" for a wait that was
 // real.
-function formatWait(ms: number | null): string {
+export function formatWait(ms: number | null): string {
   if (ms === null) return "—";
   return ms < 1_000 ? `${Math.round(ms)} ms` : formatDuration(ms);
 }
@@ -114,15 +115,24 @@ function chartOf(
   };
 }
 
+export function partialNote(stats: UsageOutput, now: number): string | undefined {
+  if (!stats.partial) return undefined;
+  const covers = stats.coversFrom;
+  return `Figures cover from ${dayWord(covers, now)} ${minuteLabel(covers)}.`;
+}
+
 export function figuresOf(stats: UsageOutput, range: ConsoleRange, now: number): Figures {
   const unit = rangeUnit(range);
-  const covers = stats.coversFrom;
+  const note = partialNote(stats, now);
   return {
     charts: CHARTS.map((spec) => chartOf(stats, spec, unit, now)),
-    granted: { label: "Granted", unit, value: formatCount(stats.totals.granted) },
+    granted: {
+      label: "Granted",
+      to: usagePath(range),
+      unit,
+      value: formatCount(stats.totals.granted),
+    },
     wait: waitTile(stats, range),
-    ...(stats.partial
-      ? { note: `Figures cover from ${dayWord(covers, now)} ${minuteLabel(covers)}.` }
-      : {}),
+    ...(note === undefined ? {} : { note }),
   };
 }

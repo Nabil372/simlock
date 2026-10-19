@@ -38,3 +38,9 @@ const UNITS: Readonly<Record<ConsoleRange, string>> = {
 export function rangeUnit(range: ConsoleRange): string {
   return UNITS[range];
 }
+
+// why: the Overview's Granted tile opens the Usage page on the range it shows, so the same figures
+// are one click away; the default hour adds nothing to the path.
+export function usagePath(range: ConsoleRange): string {
+  return `/usage${writeRange("", range)}`;
+}

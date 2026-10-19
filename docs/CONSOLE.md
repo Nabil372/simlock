@@ -11,7 +11,7 @@ Coding agents keep using the CLI, the MCP server, the client and the HTTP API.
 ## Finding your way
 
 A sidebar on the left leads to every page: **Overview**, **Workers**,
-**Leases**, **Waiting**, **Attention** and **Events**. **Attention** shows how
+**Leases**, **Waiting**, **Attention**, **Events** and **Usage**. **Attention** shows how
 many items need you, on every page. At the bottom of the sidebar are the
 connection (see [Live updates](#live-updates)), **Sign out**, and the button
 that collapses the sidebar to its icons and widens it again. The console
@@ -153,7 +153,8 @@ The console opens on **Overview**: the whole fleet on one page.
   in the range that were granted by its end (not the leases granted in it),
   and **Wait p95**, how long the slowest 1 in 20 of the requests that ended
   their wait in the range had waited, in milliseconds below a second and
-  `—` when no request ended its wait.
+  `—` when no request ended its wait. **Granted** opens **Usage** on the same
+  range.
 - **Charts**: **Leases held**, **Requests in the queue** and **Device slots
   in use** for the range. A point is the highest value in its bucket: a
   minute for 1 hour, 5 minutes for 6 hours, 15 minutes for 24 hours and an
@@ -406,6 +407,34 @@ already shows is never shown twice, also after the daemon restarts.
 
 The console shows what the daemon sends. The daemon keeps secrets, such as a
 worker's join token, out of its events.
+
+## Usage
+
+**Usage** shows the full figures for a range: the same numbers
+`simlock stats --json` and `GET /v1/stats` give for it. Choose **1 hour**,
+**6 hours**, **24 hours** or **7 days**; the choice is in the address as
+`?range=`, such as `/usage?range=7d`, and any other value is read as 1 hour.
+When the daemon's records start later than the range does, the line
+`Figures cover from <day> <HH:MM>.` says from when they cover.
+
+Tiles show **Requests**, **Granted**, **Rejected**, **Wait p95** and **Held
+p50**. Under them:
+
+- **Grants by source**: how many grants were served warm, booted or
+  provisioned.
+- **Durations**: count, p50, p95 and max of the wait, the time a lease was
+  held, the turnaround, provisioning and boot; `—` where there is none.
+- **Rejections by reason**: one row per reason, as the daemon spells it,
+  largest count first.
+- **Use over the range**: device slots (peak, mean and the limit), the RAM
+  in use when the host reports it, and the queue (peak and mean).
+- **Device incidents**: quarantined, recovered from quarantine, recovered
+  after a crash and lost.
+- **Per platform**, **Per worker** and **Per requester**: requests, granted,
+  rejected and the wait p95, and for a requester the time it held devices in
+  total. A requester with a token label shows the label and its id; one
+  without shows its id. On a single host the worker table has one row, the
+  host. The worker and requester tables page in the address.
 
 ## Live updates
 
