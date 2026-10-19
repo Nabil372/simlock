@@ -8,6 +8,7 @@ import { type TestEnv, waitFor, withDaemon } from "./helpers/index.js";
 
 const LEASE_ARGS = ["lease", "--platform", "ios", "--device", "iPhone 16", "--os", "18.4"] as const;
 const ALL = Number.MAX_SAFE_INTEGER;
+const SEEDED = 300_000;
 
 async function prepare(env: TestEnv): Promise<void> {
   await env.driverScript.set({
@@ -146,19 +147,39 @@ describe("usage projection", () => {
     expect((await env.cli([...LEASE_ARGS, "--agent-id", "a", "--detach"])).code).toBe(0);
     const before = (await usageOf(env)).requests;
     await stopDaemon(env);
-    await editHistory(env, "ALTER TABLE request_rows DROP COLUMN heldMs");
+    // why: enough kept events that the rebuild is still running when the daemon answers and a lease is granted.
+    const now = Date.now();
+    await editHistory(
+      env,
+      "ALTER TABLE request_rows DROP COLUMN heldMs",
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${SEEDED})
+       INSERT INTO events (id, timestamp, seq, size, envelope)
+       SELECT 'evt_seed_' || i, ${now - 60_000} + i % 1000, i, 200,
+         json_object('id', 'evt_seed_' || i, 'event', 'lease.requested', 'module', 'leasing',
+           'seq', i, 'timestamp', ${now - 60_000} + i % 1000,
+           'payload', json_object('requestId', 'seed_' || i,
+             'requestSpec', json_object('platform', 'ios'), 'requester', 'seed',
+             'waitPolicy', 'wait'))
+       FROM n`,
+    );
 
     await env.startDaemon();
     expect((await env.cli([...LEASE_ARGS, "--agent-id", "b", "--detach"])).code).toBe(0);
+    const meanwhile = await env.cli(["status"]);
 
+    expect(meanwhile.stdout).not.toContain("History: figures were rebuilt");
+    await waitFor(async () => (await env.cli(["status"])).stdout.includes("figures were rebuilt"), {
+      label: "history rebuilt",
+      timeout: 60_000,
+    });
     const status = await env.cli(["status"]);
     const after = (await usageOf(env)).requests;
     expect(status.stdout).toContain("History: figures were rebuilt from the event history at ");
     expect(after.map((row) => row.requestId)).toEqual(
       expect.arrayContaining(before.map((row) => row.requestId)),
     );
-    expect(after).toHaveLength(2);
-  }, 90_000);
+    expect(after).toHaveLength(SEEDED + 2);
+  }, 120_000);
 
   it("a history.db with a newer stored projection version makes simlock daemon start fail with exit 1 and leaves the file's rows unchanged", async () => {
     const env = await withDaemon();
