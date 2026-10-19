@@ -144,8 +144,7 @@ Persisted: `workers.json` (drained ids), `tokens.json`, `instance.json`. Nothing
   `NO_CAPACITY`; the request waits for another worker. `simlock worker drain` leaves it to its owner.
 - **A worker's claimed id is never verified against its join token.** Any `worker`-token holder can
   claim any id and take over that worker's link, view, drain flag and forwarded calls. Ids cut to 128 chars.
-- **`device.exec` backpressure through a gateway does not slow the worker's own process.**
-  Output is relayed with `void session.onOutput(...)`; a slow fleet client is buffered in the gateway.
+- **`device.exec` backpressure through a gateway does not slow the worker's own process.** Output is relayed with `void session.onOutput(...)`; a slow fleet client is buffered in the gateway.
 - **Three gaps in gateway warm hits.** A slim-pool device that failed its slim pass reports `full`
   and counts for `full`; a default-slim worker's full device on an unslimmable runtime is no hit for
   a mode-less request; a `--mode slim` request on an unslimmable runtime is no hit on a ready full device.
