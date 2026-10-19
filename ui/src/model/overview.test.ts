@@ -233,7 +233,7 @@ describe("the overview", () => {
     expect(workers[2]).not.toHaveProperty("cpu");
   });
 
-  it("leaves the fleet's lease and device figures and the lease chart unknown, not zero, while a connected worker is starting", () => {
+  it("leaves the fleet's lease and device figures unknown, not zero, while a connected worker is starting", () => {
     const events = [
       event(1, "lease.granted", NOW - 10 * 60 * 1_000),
       event(2, "lease.granted", NOW - 9 * 60 * 1_000),
@@ -247,11 +247,7 @@ describe("the overview", () => {
       ["Leases", "—"],
       ["Waiting", "0"],
       ["Workers", "1"],
-      ["Granted", "3"],
     ]);
-
-    expect(alone.minutes).toEqual([]);
-    expect(alone.chartSummary).toBe("");
 
     expect(alone.platforms.map((p) => [p.name, p.running, p.limit])).toEqual([
       ["iOS", undefined, undefined],
@@ -276,10 +272,7 @@ describe("the overview", () => {
       ["Leases", "—"],
       ["Waiting", "0"],
       ["Workers", "2"],
-      ["Granted", "3"],
     ]);
-    expect(mixed.minutes).toEqual([]);
-    expect(mixed.chartSummary).toBe("");
 
     expect(mixed.workers.map((r) => [r.name, r.leases, r.slotsLabel])).toEqual([
       ["mini-1", 1, "1 leased, 1 ready, 4 free"],

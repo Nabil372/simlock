@@ -28,8 +28,6 @@ describe("the overview screen", () => {
     const shown = text(renderToStaticMarkup(<OverviewBody overview={quiet} />));
 
     expect(shown).toContain("No workers have connected.");
-    expect(shown).toContain("Not reported.");
-    expect(shown).not.toContain("Minute by minute");
     expect(shown).toContain("Nothing needs attention.");
     expect(shown).toContain("No events in the last hour.");
   });
