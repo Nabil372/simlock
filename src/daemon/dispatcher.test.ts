@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   capacityChangedPayload,
   FakeDriver,
@@ -8,7 +8,15 @@ import {
 
 import { EventBus, type EventEnvelope } from "../bus/index.js";
 import type { EventHistoryHandle } from "../history/index.js";
-import { fixedEventHistory, ringEventHistory } from "../history/testing.js";
+import {
+  fixedEventHistory,
+  HOUR,
+  removeUsageRigs,
+  requested,
+  ringEventHistory,
+  T0,
+  usageRig,
+} from "../history/testing.js";
 import {
   CleanupReaper,
   ComponentInstaller,
@@ -49,6 +57,29 @@ import type { DispatcherOptions, DispatchSession } from "./dispatcher.js";
 import { Dispatcher, DispatchError } from "./dispatcher.js";
 import { classifyError } from "./error-code.js";
 import { createTestEngine, type TestEngine } from "../leasing/testing.js";
+
+const threads = vi.hoisted(() => ({
+  crashOnPost: false,
+  posts: [] as unknown[],
+  workers: [] as { terminate(): Promise<number> }[],
+}));
+
+vi.mock("node:worker_threads", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:worker_threads")>();
+  class CountingWorker extends actual.Worker {
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      super(...args);
+      threads.workers.push(this);
+    }
+
+    override postMessage(...args: Parameters<InstanceType<typeof actual.Worker>["postMessage"]>) {
+      threads.posts.push(args[0]);
+      super.postMessage(...args);
+      if (threads.crashOnPost) void this.terminate();
+    }
+  }
+  return { ...actual, Worker: CountingWorker };
+});
 
 const gibibyte = 1024 ** 3;
 const HOST_SYSTEM = { arch: "arm64", os: "macOS", osVersion: "15.5" };
@@ -197,6 +228,8 @@ async function buildDispatcher(
     readonly execEnv?: NodeJS.ProcessEnv;
     /** Stands in for the event history, so `events.replay` can be checked against it. */
     readonly eventHistory?: Pick<EventHistoryHandle, "replay" | "status">;
+    readonly historyPath?: string;
+    readonly withoutTokens?: boolean;
     /** `status.get`'s host block; a fixed machine with no tools by default. */
     readonly hostFacts?: () => HostFacts;
     /** Replaces the capacity block, for a test about one strategy's options. */
@@ -326,6 +359,7 @@ async function buildDispatcher(
     doctor,
     eventBus,
     eventHistory: resolveEventHistoryOverride(eventBus, overrides.eventHistory),
+    ...(overrides.historyPath === undefined ? {} : { historyPath: overrides.historyPath }),
     health: () => overrides.health ?? "running",
     hostFacts: overrides.hostFacts ?? (() => ({ ...HOST_SYSTEM, tools: [] })),
     instanceId: "instance-1",
@@ -341,7 +375,7 @@ async function buildDispatcher(
     reaper,
     registry,
     stalls: stallOptions(engine, driver, overrides),
-    tokens,
+    ...(overrides.withoutTokens === true ? {} : { tokens }),
     version: "1.2.3",
   });
   return {
@@ -4423,5 +4457,144 @@ describe("Dispatcher: lease.request requires", () => {
     const requested = eventBus.replay().find((event) => event.event === "lease.requested");
     expect(requested?.payload).toMatchObject({ requestSpec: IOS });
     expect(JSON.stringify(requested?.payload)).not.toContain("requires");
+  });
+});
+
+describe("Dispatcher: usage.get", () => {
+  afterEach(removeUsageRigs);
+
+  const admin = session({ role: "admin" });
+
+  async function historyWithRows(options: { readonly gatewayLabel?: string } = {}) {
+    const rig = await usageRig();
+    rig.emit("lease.requested", requested("R1"));
+    const gate = { open: true };
+    const eventHistory = {
+      replay: (input?: { readonly sinceTs?: number }) => rig.history.replay(input),
+      status: () => ({ ...rig.history.status(), opened: gate.open && rig.history.status().opened }),
+    };
+    return { eventHistory, gate, rig, ...options };
+  }
+
+  it("the worker handler answers HISTORY_NOT_KEPT with oldestTs and the message naming when the figures start when to is 1 ms before the oldest row, and figures when to is that row's time", async () => {
+    const { eventHistory, rig } = await historyWithRows();
+    const { dispatcher } = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
+
+    await expect(
+      dispatcher.dispatch("usage.get", { from: T0 - 2 * HOUR, to: T0 - 1 }, admin),
+    ).rejects.toMatchObject({
+      code: "HISTORY_NOT_KEPT",
+      details: { oldestTs: T0 },
+      message: `The history does not reach back to the end of that window; its figures start at ${new Date(T0).toISOString()}.`,
+    });
+    await expect(
+      dispatcher.dispatch("usage.get", { from: T0 - 2 * HOUR, to: T0 }, admin),
+    ).resolves.toMatchObject({ window: { to: T0 } });
+  });
+
+  it("the worker handler answers HISTORY_UNAVAILABLE with the message naming daemon.log while history.status().opened is false, after answering figures while it was true", async () => {
+    const { eventHistory, gate, rig } = await historyWithRows();
+    const { dispatcher } = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
+    const window = { from: T0, to: T0 + HOUR };
+
+    await expect(dispatcher.dispatch("usage.get", window, admin)).resolves.toMatchObject({
+      totals: { requests: 1 },
+    });
+    gate.open = false;
+
+    await expect(dispatcher.dispatch("usage.get", window, admin)).rejects.toMatchObject({
+      code: "HISTORY_UNAVAILABLE",
+      message: "The history could not be opened, so no figures can be read; see daemon.log.",
+    });
+  });
+
+  it("the worker handler answers one worker entry, itself, with its instance id and gateway.label, or no label when none is set", async () => {
+    const { eventHistory, rig } = await historyWithRows();
+    const labelled = await buildDispatcher({
+      eventHistory,
+      gatewayLabel: "lab-a",
+      historyPath: rig.historyPath,
+    });
+    const plain = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
+    const window = { from: T0, to: T0 + HOUR };
+
+    const named = await labelled.dispatcher.dispatch("usage.get", window, admin);
+    const anonymous = await plain.dispatcher.dispatch("usage.get", window, admin);
+
+    expect(named.workers).toMatchObject([{ id: "instance-1", label: "lab-a", requests: 1 }]);
+    expect(anonymous.workers).toHaveLength(1);
+    expect(anonymous.workers[0]).toMatchObject({ id: "instance-1", requests: 1 });
+    expect(anonymous.workers[0]).not.toHaveProperty("label");
+  });
+
+  it("the worker handler labels a requester from the token store, and leaves the label out when the daemon has no token store", async () => {
+    const { eventHistory, rig } = await historyWithRows();
+    const withStore = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
+    const withoutStore = await buildDispatcher({
+      eventHistory,
+      historyPath: rig.historyPath,
+      withoutTokens: true,
+    });
+    const { record } = await withStore.tokens.create("agent", "ci-bot");
+    rig.emit("lease.requested", requested("R2", { requester: record.id }));
+    const window = { from: T0, to: T0 + HOUR };
+
+    const labelled = await withStore.dispatcher.dispatch("usage.get", window, admin);
+    const unlabelled = await withoutStore.dispatcher.dispatch("usage.get", window, admin);
+
+    expect(labelled.requesters).toEqual([
+      { granted: 0, heldTotalMs: 0, id: "alice", rejected: 0, requests: 1 },
+      { granted: 0, heldTotalMs: 0, id: record.id, label: "ci-bot", rejected: 0, requests: 1 },
+    ]);
+    expect(unlabelled.requesters.map((entry) => entry.id)).toEqual(["alice", record.id]);
+    expect(unlabelled.requesters.every((entry) => !("label" in entry))).toBe(true);
+  });
+
+  it("usage.get runs two calls for one window as one read on the read thread and gives both its answer, and two windows as two reads", async () => {
+    const { eventHistory, rig } = await historyWithRows();
+    const { dispatcher } = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
+    const call = (from: number) =>
+      dispatcher.dispatch("usage.get", { from, to: from + HOUR }, admin);
+    const readsOf = async (run: () => Promise<unknown>) => {
+      const before = threads.posts.length;
+      await run();
+      return threads.posts.length - before;
+    };
+    await call(T0);
+    const single = await readsOf(() => call(T0));
+
+    const [first, second] = await Promise.all([call(T0), call(T0)]);
+    const sameWindow = await readsOf(() => Promise.all([call(T0), call(T0)]));
+    const twoWindows = await readsOf(() => Promise.all([call(T0), call(T0 - HOUR)]));
+
+    expect(single).toBeGreaterThan(0);
+    expect(sameWindow).toBe(single);
+    expect(twoWindows).toBe(2 * single);
+    expect(first).toEqual(second);
+    expect(first.totals.requests).toBe(1);
+  });
+
+  it("usage.get answers INTERNAL to a call in flight when the read thread exits, and answers the next call from a new thread", async () => {
+    const { eventHistory, rig } = await historyWithRows();
+    const { dispatcher } = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
+    const window = { from: T0, to: T0 + HOUR };
+    await expect(dispatcher.dispatch("usage.get", window, admin)).resolves.toMatchObject({
+      totals: { requests: 1 },
+    });
+    const started = threads.workers.length;
+    threads.crashOnPost = true;
+
+    try {
+      await expect(dispatcher.dispatch("usage.get", window, admin)).rejects.toMatchObject({
+        code: "INTERNAL",
+      });
+    } finally {
+      threads.crashOnPost = false;
+    }
+
+    await expect(dispatcher.dispatch("usage.get", window, admin)).resolves.toMatchObject({
+      totals: { requests: 1 },
+    });
+    expect(threads.workers.length).toBe(started + 1);
   });
 });

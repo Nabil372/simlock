@@ -118,6 +118,7 @@ export interface CapabilitySource {
 }
 
 export interface DispatcherOptions {
+  readonly historyPath?: string;
   readonly capabilitySources?: readonly CapabilitySource[];
   readonly capacity: CapacityReader;
   /** The warm pool as its last pass left it, for `status.get`. */
@@ -291,6 +292,7 @@ export class Dispatcher {
       "nuke.run": this.#nukeRun,
       "config.get": this.#configGet,
       "events.replay": this.#eventsReplay,
+      "usage.get": this.#usageGet,
       "events.subscribe": this.#eventsSubscribe,
       "events.unsubscribe": this.#eventsUnsubscribe,
       "token.create": this.#tokenCreate,
@@ -780,6 +782,10 @@ export class Dispatcher {
   #nukeRun: Handler<"nuke.run"> = async (input) => {
     if (this.options.nuke === undefined) throw new NukeUnavailableError();
     return this.options.nuke.run({ deleteDevices: input.deleteDevices ?? false });
+  };
+
+  #usageGet: Handler<"usage.get"> = () => {
+    throw new Error("usage.get is not implemented");
   };
 
   #eventsReplay: Handler<"events.replay"> = (input) =>

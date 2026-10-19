@@ -1077,6 +1077,12 @@ export class DaemonServer {
           frame.payload ?? {},
           this.#session(connection),
         );
+      case "usage.get":
+        return this.#dispatcher.dispatch(
+          "usage.get",
+          frame.payload ?? {},
+          this.#session(connection),
+        );
       case "events.subscribe":
         return this.#dispatcher.dispatch(
           "events.subscribe",

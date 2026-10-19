@@ -1308,3 +1308,92 @@ export const statusLeaseSchema = leaseRecordSchema.extend({
   /** Which worker holds this lease; absent on a worker's own answer, set by a gateway. */
   workerId: z.string().optional(),
 });
+
+export const usageWindowSchema = z.object({ from: z.number(), to: z.number() });
+
+const usageSamplesSchema = z.object({
+  count: z.number().int().nonnegative(),
+  max: z.number().nullable(),
+  p50: z.number().nullable(),
+  p95: z.number().nullable(),
+});
+
+const usageCountsSchema = z.record(z.string(), z.number().int().nonnegative());
+
+const usageFiguresSchema = z.object({
+  bySource: z.object({
+    booted: z.number().int().nonnegative(),
+    provisioned: z.number().int().nonnegative(),
+    unknown: z.number().int().nonnegative().optional(),
+    warm: z.number().int().nonnegative(),
+  }),
+  boot: usageSamplesSchema,
+  declined: z.number().int().nonnegative(),
+  failures: z.object({ byEvent: usageCountsSchema }),
+  granted: z.number().int().nonnegative(),
+  held: usageSamplesSchema,
+  incidents: z.object({
+    crashRecovered: z.number().int().nonnegative(),
+    lost: z.number().int().nonnegative(),
+    quarantineRecovered: z.number().int().nonnegative(),
+    quarantined: z.number().int().nonnegative(),
+  }),
+  probes: z.number().int().nonnegative().optional(),
+  provisioning: usageSamplesSchema,
+  queue: z.object({ meanDepth: z.number().nullable(), peakDepth: z.number().nullable() }),
+  rejected: z.object({
+    byReason: usageCountsSchema,
+    total: z.number().int().nonnegative(),
+  }),
+  requests: z.number().int().nonnegative(),
+  turnaround: usageSamplesSchema,
+  utilisation: z.object({
+    ram: z
+      .object({
+        limitBytes: z.number(),
+        meanBytes: z.number(),
+        peakBytes: z.number(),
+      })
+      .optional(),
+    slots: z.object({
+      max: z.number().nullable(),
+      mean: z.number().nullable(),
+      peak: z.number().nullable(),
+    }),
+  }),
+  wait: usageSamplesSchema,
+});
+
+export const usageOutputSchema = z.object({
+  bucketMs: z.number().int().positive(),
+  coversFrom: z.number(),
+  partial: z.boolean(),
+  platforms: z.object({ android: usageFiguresSchema, ios: usageFiguresSchema }),
+  requesters: z.array(
+    z.object({
+      granted: z.number().int().nonnegative(),
+      heldTotalMs: z.number().nonnegative(),
+      id: z.string(),
+      label: z.string().optional(),
+      rejected: z.number().int().nonnegative(),
+      requests: z.number().int().nonnegative(),
+    }),
+  ),
+  series: z.array(
+    z.object({
+      at: z.number(),
+      leasesHeld: z.number().nullable(),
+      queueDepth: z.number().nullable(),
+      ramUsedBytes: z.number().optional(),
+      slotsMax: z.number().nullable(),
+      slotsUsed: z.number().nullable(),
+      waiting: z.number().nullable(),
+    }),
+  ),
+  totals: usageFiguresSchema,
+  window: z.object({ from: z.number(), to: z.number() }),
+  workers: z.array(usageFiguresSchema.extend({ id: z.string(), label: z.string().optional() })),
+});
+
+export type UsageFigures = z.infer<typeof usageFiguresSchema>;
+export type UsageOutput = z.infer<typeof usageOutputSchema>;

@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { EventBus, type EventEnvelope } from "../bus/index.js";
 import type { EventHistoryHandle } from "../history/index.js";
-import { fixedEventHistory, ringEventHistory } from "../history/testing.js";
+import {
+  fixedEventHistory,
+  granted,
+  HOUR,
+  removeUsageRigs,
+  requested,
+  ringEventHistory,
+  T0,
+  usageRig,
+} from "../history/testing.js";
 import { OPERATIONS, type OperationName } from "../contract/index.js";
 import { DispatchError, runDispatch, type DispatchSession } from "../daemon/dispatch.js";
 import { FakeClock, JsonLinesLogger, MemoryLogSink } from "../ports/index.js";
@@ -79,6 +88,8 @@ const gatewayConfig = {
 };
 
 class FakeTokens implements GatewayTokenStore {
+  constructor(private readonly records: readonly { id: string; label?: string }[] = []) {}
+
   readonly created: string[] = [];
   readonly revoked: string[] = [];
 
@@ -91,7 +102,10 @@ class FakeTokens implements GatewayTokenStore {
   }
 
   async list() {
-    return [{ createdAt: 1, id: "tok_1", role: "worker" as const }];
+    return [
+      { createdAt: 1, id: "tok_1", role: "worker" as const },
+      ...this.records.map((record) => ({ createdAt: 1, role: "agent" as const, ...record })),
+    ];
   }
 
   async revoke(id: string) {
@@ -128,6 +142,9 @@ class FakeDirectory implements WorkerDirectory {
 function harness(
   options: {
     readonly eventHistory?: Pick<EventHistoryHandle, "replay" | "status">;
+    readonly historyPath?: string;
+    readonly tokenRecords?: readonly { id: string; label?: string }[];
+    readonly withoutTokens?: boolean;
     /** The gateway's `http` block; enabled on 127.0.0.1:4700 by default. */
     readonly http?: (typeof gatewayConfig)["http"];
     /** The gateway's own health; `running` by default. */
@@ -145,7 +162,7 @@ function harness(
     leaseMaxTtlMs: gatewayConfig.lease.maxTtlMs,
     retentionMs: 24 * 60 * 60_000,
   });
-  const tokens = new FakeTokens();
+  const tokens = new FakeTokens(options.tokenRecords);
   /** C-2: every id `closeUplinksForToken` was actually called with, in call order. */
   const closedUplinkTokens: string[] = [];
   const directory = new FakeDirectory();
@@ -181,6 +198,7 @@ function harness(
     coordinator,
     directory,
     eventHistory: options.eventHistory ?? ringEventHistory(eventBus),
+    ...(options.historyPath === undefined ? {} : { historyPath: options.historyPath }),
     health: () => options.health ?? "running",
     host: GATEWAY_HOST,
     ...(options.load === undefined ? {} : { load: options.load }),
@@ -188,7 +206,7 @@ function harness(
     // `classifyError`'s answer for the errors this dispatcher throws itself.
     errorCode: (error) => (error instanceof DispatchError ? error.code : undefined),
     logger: new JsonLinesLogger({ clock, module: "gateway", sink: logSink }),
-    tokens,
+    ...(options.withoutTokens === true ? {} : { tokens }),
     workers,
   });
   return {
@@ -1649,5 +1667,106 @@ describe("GatewayDispatcher: the fleet queue's physical line", () => {
       queuePosition: 1,
     });
     expect(changed).toContainEqual(expect.objectContaining({ depth: 1, physical: true }));
+  });
+});
+
+describe("GatewayDispatcher: usage.get", () => {
+  afterEach(removeUsageRigs);
+
+  const window = { from: T0, to: T0 + HOUR };
+
+  async function fleetHistory() {
+    const rig = await usageRig({ fleet: true });
+    const gate = { open: true };
+    const eventHistory = {
+      replay: (input?: { readonly sinceTs?: number }) => rig.history.replay(input),
+      status: () => ({ ...rig.history.status(), opened: gate.open && rig.history.status().opened }),
+    };
+    return { eventHistory, gate, rig };
+  }
+
+  it("the gateway handler answers HISTORY_UNAVAILABLE with the message naming daemon.log while history.status().opened is false, after answering figures while it was true", async () => {
+    const { eventHistory, gate, rig } = await fleetHistory();
+    rig.emit("lease.requested", requested("G1"));
+    const { dispatcher } = harness({ eventHistory, historyPath: rig.historyPath });
+
+    await expect(dispatcher.dispatch("usage.get", window, session())).resolves.toMatchObject({
+      totals: { requests: 1 },
+    });
+    gate.open = false;
+
+    await expect(dispatcher.dispatch("usage.get", window, session())).rejects.toMatchObject({
+      code: "HISTORY_UNAVAILABLE",
+      message: "The history could not be opened, so no figures can be read; see daemon.log.",
+    });
+  });
+
+  it("the gateway handler strips its own gw: prefix before the label lookup and leaves another prefix alone, and labels nothing when it has no token store", async () => {
+    const { eventHistory, rig } = await fleetHistory();
+    for (const [index, requester] of [
+      `${GATEWAY_REQUESTER_PREFIX}tok_a`,
+      "gw:other-instance:tok_a",
+      "tok_a",
+    ].entries()) {
+      rig.emit("lease.requested", requested(`R${index}`, { requester }));
+    }
+    const labelled = harness({
+      eventHistory,
+      historyPath: rig.historyPath,
+      tokenRecords: [{ id: "tok_a", label: "ci-bot" }],
+    });
+    const unlabelled = harness({
+      eventHistory,
+      historyPath: rig.historyPath,
+      withoutTokens: true,
+    });
+
+    const answer = await labelled.dispatcher.dispatch("usage.get", window, session());
+    const bare = await unlabelled.dispatcher.dispatch("usage.get", window, session());
+
+    expect(
+      Object.fromEntries(answer.requesters.map((requester) => [requester.id, requester.label])),
+    ).toEqual({
+      "gw:instance-1:tok_a": "ci-bot",
+      "gw:other-instance:tok_a": undefined,
+      tok_a: "ci-bot",
+    });
+    expect(bare.requesters).toHaveLength(3);
+    expect(bare.requesters.every((requester) => !("label" in requester))).toBe(true);
+  });
+
+  it("the gateway handler lists every registry worker with its label and a worker id the rows name that the registry lacks, and counts a fleet request with no worker in totals and its platform only", async () => {
+    const { eventHistory, rig } = await fleetHistory();
+    rig.emit("lease.requested", requested("G1"));
+    rig.emit("lease.requested", requested("G2"));
+    rig.emit("lease.requested", requested("G3"));
+    rig.relay("wrk_1", "lease.granted", granted("WL1", "G1"), T0 + 1_000);
+    rig.relay("wrk_9", "lease.granted", granted("WL9", "G3"), T0 + 1_000);
+    rig.at(T0 + 2_000);
+    rig.emit("request.granted", {
+      leaseId: "GL1",
+      requestId: "G1",
+      worker: "wrk_1",
+      workerLeaseId: "WL1",
+    });
+    rig.emit("request.granted", {
+      leaseId: "GL3",
+      requestId: "G3",
+      worker: "wrk_9",
+      workerLeaseId: "WL9",
+    });
+    const { dispatcher, workers } = harness({ eventHistory, historyPath: rig.historyPath });
+    workers.connected("wrk_1", "mac-mini-1", "0.3.0");
+    workers.connected("wrk_2", undefined, "0.3.0");
+
+    const answer = await dispatcher.dispatch("usage.get", window, session());
+
+    expect(answer.workers.map((entry) => [entry.id, entry.label, entry.requests])).toEqual([
+      ["wrk_1", "mac-mini-1", 1],
+      ["wrk_2", undefined, 0],
+      ["wrk_9", undefined, 1],
+    ]);
+    expect(answer.totals.requests).toBe(3);
+    expect(answer.platforms.ios.requests).toBe(3);
   });
 });

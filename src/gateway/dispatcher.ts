@@ -94,6 +94,7 @@ export interface GatewayTokenStore {
 }
 
 export interface GatewayDispatcherOptions {
+  readonly historyPath?: string;
   /** The gateway's own config -- what `config.get` returns (ADR 0005 §34). */
   readonly config: GatewayConfig;
   readonly eventHistory: Pick<EventHistoryHandle, "replay" | "status">;
@@ -136,7 +137,10 @@ export interface GatewayDispatcherOptions {
     | "pendingRequestOwner"
     | "waitingRequests"
   >;
-  readonly leaseIndex: Pick<FleetLeaseIndex, "project" | "all" | "isGatewayRequester">;
+  readonly leaseIndex: Pick<
+    FleetLeaseIndex,
+    "project" | "all" | "isGatewayRequester" | "requesterPrefix"
+  >;
 }
 
 export class GatewayDispatcher {
@@ -152,6 +156,7 @@ export class GatewayDispatcher {
       "status.get": this.#statusGet,
       "config.get": this.#configGet,
       "events.replay": this.#eventsReplay,
+      "usage.get": this.#usageGet,
       "events.subscribe": this.#eventsSubscribe,
       "events.unsubscribe": this.#eventsUnsubscribe,
       "token.create": this.#tokenCreate,
@@ -263,6 +268,10 @@ export class GatewayDispatcher {
     aggregateCatalog(this.options.workers.views(), input.platform);
 
   #configGet: Handler<"config.get"> = () => this.options.config;
+
+  #usageGet: Handler<"usage.get"> = () => {
+    throw new Error("usage.get is not implemented");
+  };
 
   #eventsReplay: Handler<"events.replay"> = (input) =>
     this.options.eventHistory.replay(input.sinceTs === undefined ? {} : { sinceTs: input.sinceTs });

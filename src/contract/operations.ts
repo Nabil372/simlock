@@ -42,6 +42,8 @@ import {
   statusLeaseSchema,
   tokenRecordSchema,
   tokenRoleSchema,
+  usageOutputSchema,
+  usageWindowSchema,
   waitingRequestSchema,
   capabilityListSchema,
   workerViewSchema,
@@ -647,6 +649,15 @@ export const eventsReplay = defineOperation({
   output: z.array(eventEnvelopeSchema),
 });
 
+// fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
+export const usageGet = defineOperation({
+  name: "usage.get",
+  role: "admin",
+  effect: "read",
+  input: usageWindowSchema,
+  output: usageOutputSchema,
+});
+
 // ---- events.subscribe ---------------------------------------------------------------------
 
 // fallow-ignore-next-line unused-export -- consumed only through the OPERATIONS registry, not by name; still public contract surface.
@@ -1037,6 +1048,7 @@ export const OPERATIONS = {
   "events.replay": eventsReplay,
   "events.subscribe": eventsSubscribe,
   "events.unsubscribe": eventsUnsubscribe,
+  "usage.get": usageGet,
   "token.create": tokenCreate,
   "token.list": tokenList,
   "token.revoke": tokenRevoke,

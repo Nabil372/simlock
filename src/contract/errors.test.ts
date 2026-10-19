@@ -7,6 +7,8 @@ import {
   isSimlockError,
 } from "./errors.js";
 
+const TABLE: Readonly<Record<string, unknown>> = ERROR_TABLE;
+
 describe("SimlockError", () => {
   it("narrows details by code", () => {
     const error = fromWireError("REQUESTER_ALREADY_LEASED", "already leased", {
@@ -21,6 +23,29 @@ describe("SimlockError", () => {
     } else {
       throw new Error("expected REQUESTER_ALREADY_LEASED");
     }
+  });
+
+  it("HISTORY_NOT_KEPT is domain, exit 12, HTTP 422 with oldestTs, and HISTORY_UNAVAILABLE domain, exit 1, HTTP 503 with no details", () => {
+    expect(TABLE.HISTORY_NOT_KEPT).toEqual({
+      cliExitCode: 12,
+      code: "HISTORY_NOT_KEPT",
+      httpStatus: 422,
+      kind: "domain",
+    });
+    expect(TABLE.HISTORY_UNAVAILABLE).toEqual({
+      cliExitCode: 1,
+      code: "HISTORY_UNAVAILABLE",
+      httpStatus: 503,
+      kind: "domain",
+    });
+
+    const notKept = fromWireError("HISTORY_NOT_KEPT", "not kept", { oldestTs: 42 });
+    const unavailable = fromWireError("HISTORY_UNAVAILABLE", "no history");
+
+    expect(notKept.code).toBe("HISTORY_NOT_KEPT");
+    expect(notKept).toMatchObject({ details: { oldestTs: 42 } });
+    expect(unavailable.code).toBe("HISTORY_UNAVAILABLE");
+    expect(unavailable).not.toHaveProperty("details.oldestTs");
   });
 
   it("wraps an unrecognized code as UNKNOWN_DAEMON_ERROR instead of throwing", () => {

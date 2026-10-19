@@ -1,4 +1,8 @@
-import { EventBus, type EventEnvelope } from "../bus/index.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { EventBus, type EventEnvelope, type EventMap, type EventName } from "../bus/index.js";
 import {
   FakeClock,
   MemoryFilesystem,
@@ -11,6 +15,8 @@ import {
 } from "../ports/index.js";
 import {
   createEventHistory,
+  HISTORY_DB_NAME,
+  HISTORY_PROJECTIONS,
   type EventHistoryHandle,
   type EventHistoryStatus,
   type HistoryProjectionDefinition,
@@ -152,3 +158,163 @@ export function ringEventHistory(bus: EventBus): EventHistoryHandle {
     sqlite: new NodeSqliteOpener(),
   });
 }
+
+export interface UsageRigDeps {
+  readonly historyPath: string;
+  opened(): boolean;
+  tokenLabels(): Promise<ReadonlyMap<string, string>>;
+  workers(): readonly { readonly id: string; readonly label?: string | undefined }[];
+  readonly fleet?: { readonly requesterPrefix: string };
+}
+
+export const MIN = 60_000;
+export const HOUR = 3_600_000;
+export const DAY = 24 * HOUR;
+export const T0 = 1_760_605_920_000;
+
+const directories: string[] = [];
+
+export async function removeUsageRigs(): Promise<void> {
+  await Promise.all(
+    directories.splice(0).map((path) => rm(path, { force: true, recursive: true })),
+  );
+}
+
+export interface UsageRig {
+  readonly directory: string;
+  readonly historyPath: string;
+  readonly clock: FakeClock;
+  readonly bus: EventBus;
+  readonly history: EventHistoryHandle;
+  at(timestamp: number): void;
+  emit<Event extends EventName>(event: Event, payload: EventMap[Event]): void;
+  relay(workerId: string, event: string, payload: Record<string, unknown>, at?: number): void;
+  deps(overrides?: Partial<UsageRigDeps>): UsageRigDeps;
+  close(): Promise<void>;
+}
+
+export interface UsageRigOptions {
+  readonly fleet?: boolean;
+  readonly at?: number;
+  readonly eventRetention?: number;
+  readonly directory?: string;
+}
+
+export async function usageRig(options: UsageRigOptions = {}): Promise<UsageRig> {
+  const made = options.directory === undefined;
+  const directory = options.directory ?? (await mkdtemp(join(tmpdir(), "simlock-usage-read-")));
+  if (made) directories.push(directory);
+  const start = options.at ?? T0;
+  const clock = new FakeClock(start);
+  let nextId = 0;
+  const bus = new EventBus(clock, 10_000, undefined, {
+    generate: () => `${start}_${(nextId += 1)}`,
+  });
+  const history = createEventHistory({
+    bus,
+    clock,
+    config: { maxBytes: 256 * 1024 * 1024, retention: options.eventRetention ?? 7 * DAY },
+    dataDirectory: directory,
+    filesystem: new NodeFilesystem(),
+    logger: new NoopLogger(),
+    projectionOptions: { fleet: options.fleet ?? false, metricsRetentionMs: 90 * DAY },
+    projections: Object.values(HISTORY_PROJECTIONS),
+    sqlite: new NodeSqliteOpener(),
+  });
+  await history.start();
+  const historyPath = join(directory, HISTORY_DB_NAME);
+  let relayed = 0;
+  return {
+    at: (timestamp) => clock.advance(timestamp - clock.now()),
+    bus,
+    clock,
+    close: () => history.stop(),
+    deps: (overrides = {}): UsageRigDeps => ({
+      historyPath,
+      opened: () => history.status().opened,
+      tokenLabels: async () => new Map(),
+      workers: () => [],
+      ...(options.fleet === true ? { fleet: { requesterPrefix: "gw:gw-1:" } } : {}),
+      ...overrides,
+    }),
+    directory,
+    emit: (event, payload) => {
+      bus.emit(event, payload, "test");
+    },
+    history,
+    historyPath,
+    relay: (workerId, event, payload, at) => {
+      relayed += 1;
+      bus.republish({
+        event: event as EventName,
+        id: `evt_relay_${start}_${relayed}`,
+        module: "gateway",
+        payload: { ...payload, workerId } as never,
+        timestamp: at ?? clock.now(),
+      });
+    },
+  };
+}
+
+export const requested = (requestId: string, over: Partial<EventMap["lease.requested"]> = {}) => ({
+  requestId,
+  requestSpec: { model: "iPhone 16", platform: "ios" },
+  requester: "alice",
+  waitPolicy: "wait" as const,
+  ...over,
+});
+
+export const granted = (
+  leaseId: string,
+  requestId: string,
+  over: Partial<EventMap["lease.granted"]> = {},
+): EventMap["lease.granted"] => ({
+  deviceId: `dev-${leaseId}`,
+  leaseId,
+  platform: "ios",
+  requestId,
+  requester: "alice",
+  source: "warm",
+  ...over,
+});
+
+export const released = (leaseId: string, requester = "alice") => ({
+  deviceId: `dev-${leaseId}`,
+  leaseId,
+  ownerId: requester,
+  reason: "explicit" as const,
+});
+
+export const rejected = (
+  requestId: string,
+  reason: EventMap["lease.rejected"]["reason"],
+  over: Partial<EventMap["lease.rejected"]> = {},
+): EventMap["lease.rejected"] => ({
+  reason,
+  requestId,
+  requestSpec: { platform: "ios" },
+  requester: "alice",
+  ...over,
+});
+
+export const capacity = (input: {
+  readonly ios?: readonly [number, number, number];
+  readonly android?: readonly [number, number, number];
+  readonly global?: readonly [number, number, number];
+  readonly ram?: readonly [number, number];
+}): EventMap["capacity.changed"] => {
+  const figures = ([running, reserved, maxRunning]: readonly [number, number, number]) => ({
+    maxRunning,
+    reserved,
+    running,
+    warm: 0,
+  });
+  return {
+    android: figures(input.android ?? [0, 0, 4]),
+    global: figures(input.global ?? [0, 0, 8]),
+    ios: figures(input.ios ?? [0, 0, 4]),
+    ...(input.ram === undefined
+      ? {}
+      : { ramBudget: { limitBytes: input.ram[1], usedBytes: input.ram[0] } }),
+  };
+};
