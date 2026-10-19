@@ -103,27 +103,40 @@ function figuresFor(
   minutes: (workerId: string, platform: string) => readonly MinuteBucket[],
   scope: Scope,
 ): UsageFigures {
-  const to = data.window.to;
   const rows = data.requestRows.filter((row) => inScope(data, row, scope));
   const facts = data.deviceFacts.filter((fact) => inScope(data, fact, scope));
-  const grants = rows.filter((row) => grantedBy(row, to));
-  const waits = rows.flatMap((row) => (isRequest(row) ? waitOf(row, to) : []));
-  const rejections = rows.filter((row) => rejectedBy(row, to));
-  const sources = countBy(grants.map((row) => row.source ?? "unknown"));
   const worker = scope.worker === undefined ? undefined : data.fleet ? scope.worker : "";
   const buckets = minutes(worker ?? (data.fleet ? "*" : ""), scope.platform ?? "all");
+  const allPlatforms = scope.platform === undefined;
   return {
     ...deviceFigures(facts),
+    ...requestFigures(rows, data.window.to, data.fleet),
+    queue: allPlatforms ? queueOf(buckets) : { meanDepth: null, peakDepth: null },
+    utilisation: utilisationOf(buckets, allPlatforms),
+  };
+}
+
+function requestFigures(
+  rows: readonly RequestRow[],
+  to: number,
+  fleet: boolean,
+): Pick<
+  UsageFigures,
+  "bySource" | "granted" | "held" | "probes" | "rejected" | "requests" | "turnaround" | "wait"
+> {
+  const grants = rows.filter((row) => grantedBy(row, to));
+  const rejections = rows.filter((row) => rejectedBy(row, to));
+  const sources = countBy(grants.map((row) => row.source ?? "unknown"));
+  return {
     bySource: {
       booted: sources.booted ?? 0,
       provisioned: sources.provisioned ?? 0,
-      ...(data.fleet ? { unknown: unknownSources(sources) } : {}),
+      ...(fleet ? { unknown: unknownSources(sources) } : {}),
       warm: sources.warm ?? 0,
     },
     granted: grants.length,
     held: summarise(grants.flatMap((row) => heldOf(row, to))),
-    ...(data.fleet ? {} : { probes: rows.filter((row) => row.probe).length }),
-    queue: scope.platform === undefined ? queueOf(buckets) : { meanDepth: null, peakDepth: null },
+    ...(fleet ? {} : { probes: rows.filter((row) => row.probe).length }),
     rejected: {
       byReason: countBy(rejections.map((row) => row.reason ?? "unknown")),
       total: rejections.length,
@@ -136,8 +149,7 @@ function figuresFor(
         return wait === undefined || held === undefined ? [] : [wait + held];
       }),
     ),
-    utilisation: utilisationOf(buckets, scope.platform === undefined),
-    wait: summarise(waits),
+    wait: summarise(rows.flatMap((row) => (isRequest(row) ? waitOf(row, to) : []))),
   };
 }
 
