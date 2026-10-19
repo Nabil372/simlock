@@ -750,8 +750,16 @@ describe("GatewayDispatcher", () => {
     },
     { health: "starting" as const, history: { opened: false, writing: false } },
     { health: "running" as const, history: { opened: true, writing: true } },
+    {
+      health: "running" as const,
+      history: { opened: true, rebuiltAt: 1_760_605_920_000, writing: true },
+    },
+    {
+      health: "running" as const,
+      history: { opened: true, rebuildFailed: true as const, writing: true },
+    },
   ])(
-    "status.get carries the gateway's own history opened, writing and setAsideAt, in the starting answer too ($health, $history)",
+    "status.get carries the gateway's own history opened, writing, setAsideAt, rebuiltAt and rebuildFailed, in the starting answer too ($health, $history)",
     async ({ health, history }) => {
       const { dispatcher } = harness({ eventHistory: fixedEventHistory(history), health });
 

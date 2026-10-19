@@ -4126,6 +4126,18 @@ describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () =
         [NOT_WRITTEN, setAside].sort(),
       );
     });
+
+    it("prints the rebuilt line with the local time when rebuiltAt is set and the could-not-rebuild line when rebuildFailed is set, and neither otherwise", async () => {
+      const rebuiltLine = `History: figures were rebuilt from the event history at ${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())} ${pad(local.getHours())}:${pad(local.getMinutes())}.`;
+      const failedLine = "History: figures could not be rebuilt; see daemon.log.";
+      const plain = await statusLines({ opened: true, writing: true });
+      const rebuilt = await statusLines({ opened: true, rebuiltAt: SET_ASIDE_AT, writing: true });
+      const failed = await statusLines({ opened: true, rebuildFailed: true, writing: true });
+
+      expect(plain.filter((line) => line.startsWith("History:"))).toEqual([]);
+      expect(rebuilt.filter((line) => line.startsWith("History:"))).toEqual([rebuiltLine]);
+      expect(failed.filter((line) => line.startsWith("History:"))).toEqual([failedLine]);
+    });
   });
 
   it("prints an install line while one runs and none after", async () => {

@@ -1538,6 +1538,43 @@ describe("QuarantineCoordinator quarantine cause", () => {
     };
   }
 
+  it.each(["ios", "android"] as const)(
+    "device.quarantine-recovered, device.quarantine-abandoned and device.quarantine-stranded carry the device's own platform, for an %s device",
+    async (platform) => {
+      const recovered = await build({ platform });
+      await recovered.coordinator.enter(failure(recovered.id, "purge-failed", "boom"));
+      recovered.clock.advance(retryConfig.retryBackoffMs);
+      await flush();
+
+      const abandoned = await build({ platform });
+      abandoned.driver.failOn("reclaim", 1, new Error("still stuck"));
+      abandoned.driver.failOn("reclaim", 2, new Error("still stuck"));
+      await abandoned.coordinator.enter(failure(abandoned.id, "purge-failed", "boom"));
+      abandoned.clock.advance(retryConfig.retryBackoffMs);
+      await flush();
+      abandoned.clock.advance(2_000);
+      await flush();
+
+      const stranded = await build({ platform });
+      stranded.driver.failOn("reclaim", 1, new Error("still stuck"));
+      stranded.driver.failOn("reclaim", 2, new Error("still stuck"));
+      stranded.driver.failOn("destroy", 1, new Error("destroy blew up"));
+      await stranded.coordinator.enter(failure(stranded.id, "purge-failed", "boom"));
+      stranded.clock.advance(retryConfig.retryBackoffMs);
+      await flush();
+      stranded.clock.advance(2_000);
+      await flush();
+
+      const payloadOf = (harness: { readonly bus: EventBus }, name: string) =>
+        harness.bus.replay().find((event) => event.event === name)?.payload;
+      expect([
+        payloadOf(recovered, "device.quarantine-recovered"),
+        payloadOf(abandoned, "device.quarantine-abandoned"),
+        payloadOf(stranded, "device.quarantine-stranded"),
+      ]).toMatchObject([{ platform }, { platform }, { platform }]);
+    },
+  );
+
   it.each([
     ["purge-failed", "reclaiming"],
     ["shutdown-failed", "reclaiming"],

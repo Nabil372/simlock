@@ -254,6 +254,51 @@ describe("loadConfig", () => {
     expect(accepted.eventLog.maxBytes).toBe(sixteenMiB);
   });
 
+  it("metrics.retention defaults to the larger of 90 days and eventLog.retention, and is accepted as written", async () => {
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    const DAY = 24 * 60 * 60 * 1000;
+    const loadWith = async (contents: unknown) => {
+      await filesystem.writeFileAtomic(configPath, JSON.stringify(contents));
+      return loadConfig({ configPath, filesystem, systemStats: createStats() });
+    };
+
+    const defaulted = await loadWith({});
+    const longer = await loadWith({ eventLog: { retention: 100 * DAY } });
+    const shorter = await loadWith({ eventLog: { retention: 30 * DAY } });
+    const written = await loadWith({ metrics: { retention: 120 * DAY } });
+
+    expect(defaulted.metrics).toEqual({ retention: 90 * DAY });
+    expect(longer.metrics).toEqual({ retention: 100 * DAY });
+    expect(shorter.metrics).toEqual({ retention: 90 * DAY });
+    expect(written.metrics).toEqual({ retention: 120 * DAY });
+  });
+
+  it("rejects a metrics.retention shorter than eventLog.retention, or not a positive integer, naming the key", async () => {
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp("/home/agent/.simlock");
+    const DAY = 24 * 60 * 60 * 1000;
+    const loadWith = async (contents: unknown) => {
+      await filesystem.writeFileAtomic(configPath, JSON.stringify(contents));
+      return loadConfig({ configPath, filesystem, systemStats: createStats() });
+    };
+
+    const equal = await loadWith({
+      eventLog: { retention: 7 * DAY },
+      metrics: { retention: 7 * DAY },
+    });
+    await expect(
+      loadWith({ eventLog: { retention: 7 * DAY }, metrics: { retention: 7 * DAY - 1 } }),
+    ).rejects.toThrow("metrics.retention");
+    for (const value of [0, -1, 1.5]) {
+      await expect(loadWith({ metrics: { retention: value } })).rejects.toThrow(
+        "metrics.retention",
+      );
+    }
+
+    expect(equal.metrics).toEqual({ retention: 7 * DAY });
+  });
+
   it("applies a file-level warm-pool quarantine override", async () => {
     const filesystem = new MemoryFilesystem();
     await filesystem.mkdirp("/home/agent/.simlock");
@@ -1724,6 +1769,18 @@ describe("loadConfig modes (ADR 0005)", () => {
     const config = await load({ mode: "gateway", lease: { maxPerRequester: 2 } }, { warn });
 
     expect(config.lease).toMatchObject({ maxPerRequester: 2 });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("reads metrics.retention in a gateway config without a warning", async () => {
+    const warn = vi.fn();
+
+    const config = await load(
+      { mode: "gateway", metrics: { retention: 120 * 24 * 3_600_000 } },
+      { warn },
+    );
+
+    expect(config.metrics).toEqual({ retention: 120 * 24 * 3_600_000 });
     expect(warn).not.toHaveBeenCalled();
   });
 

@@ -914,6 +914,8 @@ export const historyStatusSchema = z.object({
   opened: z.boolean(),
   writing: z.boolean(),
   setAsideAt: z.number().min(-MAX_DATE_MS).max(MAX_DATE_MS).optional(),
+  rebuiltAt: z.number().min(-MAX_DATE_MS).max(MAX_DATE_MS).optional(),
+  rebuildFailed: z.literal(true).optional(),
 });
 
 export const EVENT_ID_PATTERN = /^evt_[A-Za-z0-9_-]{1,64}$/;
@@ -1044,6 +1046,7 @@ export const configSchema = z.object({
       maxBytes: z.number().optional(),
     })
     .optional(),
+  metrics: z.object({ retention: z.number() }).optional(),
   http: z.object({
     enabled: z.boolean(),
     host: z.string(),

@@ -199,6 +199,7 @@ export interface Config {
     readonly retention: number;
     readonly maxBytes: number;
   };
+  readonly metrics?: { readonly retention: number };
   readonly http: {
     readonly enabled: boolean;
     readonly host: string;

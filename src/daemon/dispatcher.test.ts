@@ -1272,6 +1272,16 @@ describe("Dispatcher: config.get eventLog", () => {
   });
 });
 
+describe("Dispatcher: config.get metrics", () => {
+  it("config.get reports metrics.retention", async () => {
+    const { dispatcher } = await buildDispatcher();
+
+    const { metrics } = await dispatcher.dispatch("config.get", {}, session({ role: "admin" }));
+
+    expect(metrics).toStrictEqual({ retention: 90 * 24 * 60 * 60 * 1000 });
+  });
+});
+
 describe("Dispatcher: status.get history", () => {
   it.each([
     {
@@ -1280,8 +1290,16 @@ describe("Dispatcher: status.get history", () => {
     },
     { health: "starting" as const, history: { opened: false, writing: false } },
     { health: "running" as const, history: { opened: true, writing: true } },
+    {
+      health: "running" as const,
+      history: { opened: true, rebuiltAt: 1_760_605_920_000, writing: true },
+    },
+    {
+      health: "running" as const,
+      history: { opened: true, rebuildFailed: true as const, writing: true },
+    },
   ])(
-    "status.get carries the history's opened, writing and setAsideAt, in the starting answer too ($health, $history)",
+    "status.get carries the history's opened, writing, setAsideAt, rebuiltAt and rebuildFailed, in the starting answer too ($health, $history)",
     async ({ health, history }) => {
       const { dispatcher } = await buildDispatcher({
         eventHistory: fixedEventHistory(history),

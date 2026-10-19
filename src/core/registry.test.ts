@@ -439,6 +439,44 @@ describe("Registry", () => {
     expect(registry.snapshot.devices[0]?.state).toBe("ready");
   });
 
+  it.each([
+    ["ios", spec],
+    [
+      "android",
+      { physical: false, model: "Pixel 8", osVersion: "35", platform: "android" } as VirtualSpec,
+    ],
+  ] as const)(
+    "emits device.ready with the device's own platform, for an %s device",
+    async (platform, deviceSpec) => {
+      const clock = new FakeClock(1_000);
+      const bus = new EventBus(clock);
+      const registry = await Registry.load({
+        clock,
+        eventBus: bus,
+        filesystem: new MemoryFilesystem(),
+        idGenerator: { generate: () => "test" },
+        statePath,
+      });
+      const device = await registry.registerDevice({
+        driverData: {},
+        driverDeviceId: "driver_test",
+        provisionDuration: 0,
+        spec: deviceSpec,
+      });
+
+      await registry.transitionDevice(device.id, "ready", {
+        event: "device.ready",
+        payload: { bootDuration: 50, deviceId: device.id },
+      });
+
+      expect(bus.replay().find((event) => event.event === "device.ready")?.payload).toEqual({
+        bootDuration: 50,
+        deviceId: device.id,
+        platform,
+      });
+    },
+  );
+
   it("rejects a device event whose payload identifies another device", async () => {
     const clock = new FakeClock();
     const registry = await Registry.load({

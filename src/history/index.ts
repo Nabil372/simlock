@@ -24,22 +24,36 @@ import { pruneHistory, totalEventBytes } from "./prune.js";
 import { setAsideDamagedHistory } from "./set-aside.js";
 
 export { HISTORY_DB_NAME } from "./names.js";
-export { HISTORY_PROJECTIONS } from "./projections/index.js";
+export { HISTORY_PROJECTIONS, openUsageReads } from "./projections/index.js";
+export type { DeviceFactRow, RequestRow } from "./projections/index.js";
 
 const PRUNE_INTERVAL_MS = 3_600_000;
 
 export interface HistoryProjectionDefinition {
   readonly name: string;
-  create(database: SqliteDatabase): {
+  readonly version?: number;
+  readonly migrations?: readonly string[];
+  check?(database: SqliteDatabase): boolean;
+  create(
+    database: SqliteDatabase,
+    options?: HistoryProjectionOptions,
+  ): {
     apply(envelope: EventEnvelope): void;
     prune(now: number): void;
   };
+}
+
+export interface HistoryProjectionOptions {
+  readonly fleet: boolean;
+  readonly metricsRetentionMs: number;
 }
 
 export interface EventHistoryStatus {
   readonly opened: boolean;
   readonly writing: boolean;
   readonly setAsideAt?: number;
+  readonly rebuiltAt?: number;
+  readonly rebuildFailed?: true;
 }
 
 export interface EventHistoryHandle {
@@ -58,6 +72,7 @@ export interface EventHistoryOptions {
   readonly dataDirectory: string;
   readonly config: { readonly retention: number; readonly maxBytes: number };
   readonly projections: readonly HistoryProjectionDefinition[];
+  readonly projectionOptions?: HistoryProjectionOptions;
 }
 
 type Projector = ReturnType<HistoryProjectionDefinition["create"]>;
