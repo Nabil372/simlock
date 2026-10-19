@@ -53,6 +53,10 @@ describe("the Usage view", () => {
         ["Boot", "41", "11 s", "19 s", "25 s"],
       ],
     );
+    const quick = usageStatsFullOf({
+      totals: usageFiguresOf({ boot: { count: 3, max: 900, p50: 400, p95: 800 } }),
+    });
+    expect(view(quick).durations.at(-1)).toMatchObject({ max: "0 s", p50: "0 s", p95: "0 s" });
     expect(view(nullP95).durations.at(-1)).toMatchObject({
       count: "0",
       max: "—",
@@ -99,7 +103,10 @@ describe("the Usage view", () => {
       }),
     });
     const noRam = usageStatsFullOf({
-      totals: usageFiguresOf({ utilisation: { slots: { max: 9, mean: 5.24, peak: 8 } } }),
+      totals: usageFiguresOf({
+        utilisation: { slots: { max: 9, mean: 5.24, peak: 8 } },
+        queue: { meanDepth: 0.46, peakDepth: 3 },
+      }),
     });
 
     expect(view().use).toEqual([
@@ -107,7 +114,10 @@ describe("the Usage view", () => {
       { label: "RAM", text: "peak 12.0 GiB, mean 900 MiB, of 16.0 GiB" },
       { label: "Queue", text: "peak 3, mean 0.4" },
     ]);
-    expect(view(noRam).use.map((line) => line.label)).toEqual(["Slots", "Queue"]);
+    expect(view(noRam).use).toEqual([
+      { label: "Slots", text: "peak 8, mean 5.2, of 9" },
+      { label: "Queue", text: "peak 3, mean 0.5" },
+    ]);
     expect(view(smallRam).use).toEqual([
       { label: "Slots", text: "peak —, mean —, of —" },
       { label: "RAM", text: "peak 300 MiB, mean 900 MiB, of 16.0 GiB" },

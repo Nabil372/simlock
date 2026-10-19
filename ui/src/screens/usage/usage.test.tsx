@@ -69,6 +69,7 @@ describe("the Usage screen", () => {
       "Per requester",
     ]);
     const body = text(html);
+    expect(body).toContain("Held in total");
     for (const tile of [
       "Requests 214",
       "Granted 209",
