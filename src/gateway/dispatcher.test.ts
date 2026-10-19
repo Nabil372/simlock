@@ -1739,6 +1739,34 @@ describe("GatewayDispatcher: usage.get", () => {
     expect(bare.requesters.every((requester) => !("label" in requester))).toBe(true);
   });
 
+  it("the gateway handler with includeLedger lists the fleet's request rows as entries, labelled after stripping its own gw: prefix", async () => {
+    const { eventHistory, rig } = await fleetHistory();
+    for (const [index, requester] of [
+      `${GATEWAY_REQUESTER_PREFIX}tok_a`,
+      "gw:other-instance:tok_a",
+      "tok_a",
+    ].entries()) {
+      rig.emit("lease.requested", requested(`R${index}`, { requester }));
+    }
+    const { dispatcher } = harness({
+      eventHistory,
+      historyPath: rig.historyPath,
+      tokenRecords: [{ id: "tok_a", label: "ci-bot" }],
+    });
+
+    const answer = await dispatcher.dispatch(
+      "usage.get",
+      { ...window, includeLedger: true },
+      session(),
+    );
+    const plain = await dispatcher.dispatch("usage.get", window, session());
+
+    expect(
+      Object.fromEntries((answer.requests ?? []).map((entry) => [entry.requestId, entry.label])),
+    ).toEqual({ R0: "ci-bot", R1: undefined, R2: "ci-bot" });
+    expect(plain).not.toHaveProperty("requests");
+  });
+
   it("the gateway handler lists every registry worker with its label and a worker id the rows name that the registry lacks, and counts a fleet request with no worker in totals and its platform only", async () => {
     const { eventHistory, rig } = await fleetHistory();
     rig.emit("lease.requested", requested("G1"));

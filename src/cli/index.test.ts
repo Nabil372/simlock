@@ -7351,7 +7351,7 @@ describe("CLI: stats", () => {
 
   function statsRun(argv: readonly string[], usage: SimlockAdminClient["usage"]) {
     const output = outputCapture();
-    const asked: { from: number; to: number }[] = [];
+    const asked: { from: number; to: number; includeLedger?: boolean | undefined }[] = [];
     const run = runCli(
       ["stats", ...argv],
       output.environmentWith({
@@ -7483,6 +7483,95 @@ describe("CLI: stats", () => {
     expect(output.stdout).toBe("");
     expect(output.stderr).toContain('"code":"HISTORY_NOT_KEPT"');
     expect(output.stderr).toContain("its figures start at 2026-10-05T11:59:00.000Z");
+  });
+
+  const LEDGER_HEADER =
+    "requestId,requester,label,platform,model,workerId,source,requestedAt,grantedAt,rejectedAt,endedAt,waitMs,heldMs,turnaroundMs,outcome,probe,reason,endReason";
+  const TRUNCATION_NOTICE =
+    "The ledger holds the newest 100000 requests of the window; ask for a shorter window for the rest.";
+
+  it("simlock stats --csv prints the header row and one row per ledger entry with times as ISO 8601, durations as whole milliseconds (400, not 400.0), probe as true or false, and asks usage.get with includeLedger: true", async () => {
+    const requests = [
+      {
+        endReason: "explicit",
+        endedAt: Date.parse("2026-10-05T11:09:30.000Z"),
+        grantedAt: Date.parse("2026-10-05T11:01:02.400Z"),
+        heldMs: 507_600.4,
+        label: "ci-runner",
+        model: "iPhone 16",
+        outcome: "granted" as const,
+        platform: "ios",
+        probe: false,
+        requestId: "req_8f2",
+        requestedAt: Date.parse("2026-10-05T11:01:02.000Z"),
+        requester: "tok_ci",
+        source: "warm",
+        turnaroundMs: 508_000,
+        waitMs: 400,
+      },
+      {
+        outcome: "open" as const,
+        platform: "android",
+        probe: true,
+        requestId: "req_9",
+        requestedAt: Date.parse("2026-10-05T11:02:00.000Z"),
+        requester: "gw:gw-1:tok_a",
+      },
+    ];
+    const { asked, output, run } = statsRun(["--since", "1h", "--csv"], async (window) =>
+      usageAnswer(window, { requests }),
+    );
+
+    await expect(run).resolves.toBe(0);
+
+    expect(asked[0]?.includeLedger).toBe(true);
+    expect(output.stdout.split("\r\n")).toEqual([
+      LEDGER_HEADER,
+      "req_8f2,tok_ci,ci-runner,ios,iPhone 16,,warm,2026-10-05T11:01:02.000Z,2026-10-05T11:01:02.400Z,,2026-10-05T11:09:30.000Z,400,507600,508000,granted,false,,explicit",
+      "req_9,gw:gw-1:tok_a,,android,,,,2026-10-05T11:02:00.000Z,,,,,,,open,true,,",
+      "",
+    ]);
+  });
+
+  it("simlock stats --csv writes the truncation notice on stderr and exits 0 when ledgerTruncated, and writes no notice otherwise", async () => {
+    const truncated = statsRun(["--csv"], async (window) =>
+      usageAnswer(window, { ledgerTruncated: true, requests: [] }),
+    );
+    const whole = statsRun(["--csv"], async (window) => usageAnswer(window, { requests: [] }));
+
+    await expect(truncated.run).resolves.toBe(0);
+    await expect(whole.run).resolves.toBe(0);
+
+    expect(truncated.output.stderr).toBe(`${JSON.stringify({ notice: TRUNCATION_NOTICE })}\n`);
+    expect(truncated.output.stdout.startsWith(LEDGER_HEADER)).toBe(true);
+    expect(whole.output.stderr).toBe("");
+    expect(whole.output.stdout.startsWith(LEDGER_HEADER)).toBe(true);
+  });
+
+  it("simlock stats --csv on an error (HISTORY_NOT_KEPT) writes the error line on stderr, nothing on stdout, and exits 12", async () => {
+    const { output, run } = statsRun(["--since", "30d", "--csv"], async () => {
+      throw fromWireError("HISTORY_NOT_KEPT", "The history does not reach back.", {
+        oldestTs: NOW - 60_000,
+      });
+    });
+
+    await expect(run).resolves.toBe(12);
+
+    expect(output.stdout).toBe("");
+    expect(output.stderr).toContain('"code":"HISTORY_NOT_KEPT"');
+  });
+
+  it("simlock stats refuses --csv with --json as a usage error, exit 2", async () => {
+    const accepted = statsRun(["--csv"], async (window) => usageAnswer(window, { requests: [] }));
+    const both = statsRun(["--csv", "--json"], async (window) => usageAnswer(window));
+
+    await expect(accepted.run).resolves.toBe(0);
+    await expect(both.run).resolves.toBe(2);
+
+    expect(both.output.stderr).toContain('"code":"USAGE"');
+    expect(both.output.stderr).toContain('"message":"stats takes --csv or --json, not both"');
+    expect(both.asked).toEqual([]);
+    expect(both.output.stdout).toBe("");
   });
 
   it("closes the connection after the answer, and after a failure", async () => {

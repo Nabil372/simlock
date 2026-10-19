@@ -1315,6 +1315,7 @@ const USAGE_MAX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 export const usageWindowSchema = z
   .object({
     from: z.number().int().min(0).max(MAX_DATE_MS),
+    includeLedger: z.boolean().optional(),
     to: z.number().int().min(0).max(MAX_DATE_MS),
   })
   .refine((window) => window.from < window.to, { message: "from must be before to" })
@@ -1375,9 +1376,34 @@ const usageFiguresSchema = z.object({
   wait: usageSamplesSchema,
 });
 
+const usageLedgerEntrySchema = z.object({
+  endReason: z.string().optional(),
+  endedAt: z.number().optional(),
+  grantedAt: z.number().optional(),
+  heldMs: z.number().optional(),
+  label: z.string().optional(),
+  model: z.string().optional(),
+  outcome: z.enum(["granted", "rejected", "declined", "open"]),
+  platform: z.string(),
+  probe: z.boolean(),
+  reason: z.string().optional(),
+  rejectedAt: z.number().optional(),
+  requestId: z.string(),
+  requestedAt: z.number(),
+  requester: z.string(),
+  source: z.string().optional(),
+  turnaroundMs: z.number().optional(),
+  waitMs: z.number().optional(),
+  workerId: z.string().optional(),
+});
+
+export type UsageLedgerEntry = z.infer<typeof usageLedgerEntrySchema>;
+
 export const usageOutputSchema = z.object({
   bucketMs: z.number().int().positive(),
   coversFrom: z.number(),
+  ledgerTruncated: z.literal(true).optional(),
+  requests: z.array(usageLedgerEntrySchema).optional(),
   partial: z.boolean(),
   platforms: z.object({ android: usageFiguresSchema, ios: usageFiguresSchema }),
   requesters: z.array(

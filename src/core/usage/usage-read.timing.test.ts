@@ -1,6 +1,7 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { runDispatch, usageAnswer } from "../../daemon/dispatch.js";
 import { NodeSqliteOpener, type SqliteDatabase } from "../../ports/index.js";
 import { createUsageReader } from "./index.js";
 import { DAY, MIN, removeUsageRigs, T0, usageRig } from "../../history/testing.js";
@@ -79,4 +80,41 @@ describe("usage.get read", () => {
     expect(delay.max / 1e6).toBeLessThan(50);
     if (result.kind === "figures") expect(result.usage.totals.requests).toBeGreaterThan(5_000);
   });
+
+  it("a 100,000-entry ledger answer over the seeded rows returns through the dispatcher, output parse included, within 1 s", async () => {
+    const rig = await usageRig();
+    await rig.close();
+    const to = T0 + 2 * DAY;
+    const database = await new NodeSqliteOpener().open(rig.historyPath, { readOnly: false });
+    try {
+      database.exec("BEGIN");
+      seedRequestRows(database, T0, DAY, 100_000);
+      database.exec("COMMIT");
+    } finally {
+      database.close();
+    }
+    const reader = createUsageReader(rig.deps({ opened: () => true }));
+    const admin = { manageEventSubscription: () => 0, principal: "admin", role: "admin" } as never;
+    const pipeline = {
+      handlers: {
+        "usage.get": (input: { readonly from: number; readonly to: number }) =>
+          usageAnswer(reader.get({ ...input, includeLedger: true })),
+      },
+    };
+    // why: a source run starts the read thread by transpiling its modules, a cost a built daemon does not pay; one small read starts it before the timed call.
+    await reader.get({ from: to - MIN, to });
+
+    const startedAt = performance.now();
+    const answer = await runDispatch(
+      "usage.get",
+      { from: T0, includeLedger: true, to },
+      admin,
+      pipeline,
+    );
+    const elapsed = performance.now() - startedAt;
+    await reader.stop();
+
+    expect(answer.requests).toHaveLength(100_000);
+    expect(elapsed).toBeLessThan(1_000);
+  }, 60_000);
 });

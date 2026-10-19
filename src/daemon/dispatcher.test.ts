@@ -4510,6 +4510,27 @@ describe("Dispatcher: usage.get", () => {
     expect(threads.posts).toHaveLength(before);
   });
 
+  it("the worker handler passes includeLedger to the reader: it lists the window's requests when true, leaves requests out when absent or false, and refuses a non-boolean as BAD_REQUEST", async () => {
+    const { eventHistory, rig } = await historyWithRows();
+    const { dispatcher } = await buildDispatcher({ eventHistory, historyPath: rig.historyPath });
+    const window = { from: T0, to: T0 + HOUR };
+
+    const listed = await dispatcher.dispatch(
+      "usage.get",
+      { ...window, includeLedger: true },
+      admin,
+    );
+    const absent = await dispatcher.dispatch("usage.get", window, admin);
+    const off = await dispatcher.dispatch("usage.get", { ...window, includeLedger: false }, admin);
+
+    expect(listed.requests?.map((entry) => entry.requestId)).toEqual(["R1"]);
+    expect(absent).not.toHaveProperty("requests");
+    expect(off).not.toHaveProperty("requests");
+    await expect(
+      dispatcher.dispatch("usage.get", { ...window, includeLedger: "yes" } as never, admin),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("the worker handler answers one worker entry, itself, with its instance id and gateway.label, or no label when none is set", async () => {
     const { eventHistory, rig } = await historyWithRows();
     const labelled = await buildDispatcher({

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import { NodeSqliteOpener } from "../../ports/index.js";
 import { createUsageReader, type UsageReader, type UsageReaderDeps } from "./index.js";
 import {
   capacity,
@@ -679,4 +680,186 @@ describe("usage reader: coverage", () => {
     expect(early).toEqual({ kind: "not-kept", oldestTs: T0 });
     expect(exact.kind).toBe("figures");
   });
+});
+
+describe("usage reader: the ledger", () => {
+  async function ledgerSetup(options: Parameters<typeof setup>[0] = {}) {
+    const made = await setup(options);
+    const ledger = async (from: number, to: number) => {
+      const result = await made.reader.get({ from, includeLedger: true, to });
+      if (result.kind !== "figures") throw new Error(`expected figures, got ${result.kind}`);
+      return result.usage;
+    };
+    return { ...made, ledger };
+  }
+
+  it("usage.get with includeLedger lists one entry per request in the window, by requestedAt then requestId, with the timestamps and waitMs, heldMs and turnaroundMs of a granted and released request", async () => {
+    const { ledger, rig } = await ledgerSetup();
+    rig.emit("lease.requested", requested("B"));
+    rig.emit("lease.requested", requested("A"));
+    rig.at(T0 + 400);
+    rig.emit("lease.granted", granted("LB", "B"));
+    rig.at(T0 + 1_900);
+    rig.emit("lease.released", released("LB"));
+    rig.at(T0 + 5_000);
+    rig.emit("lease.requested", requested("C"));
+
+    const { requests } = await ledger(T0, T0 + HOUR);
+
+    expect(requests?.map((entry) => entry.requestId)).toEqual(["A", "B", "C"]);
+    expect(requests?.find((entry) => entry.requestId === "B")).toMatchObject({
+      endReason: "explicit",
+      endedAt: T0 + 1_900,
+      grantedAt: T0 + 400,
+      heldMs: 1_500,
+      outcome: "granted",
+      platform: "ios",
+      probe: false,
+      requestedAt: T0,
+      requester: "alice",
+      source: "warm",
+      turnaroundMs: 1_900,
+      waitMs: 400,
+    });
+  });
+
+  it("usage.get's ledger marks a request still waiting at to as open, one granted after to as open with no grantedAt, source or workerId, a lease open at to as granted with no endedAt, endReason, heldMs or turnaroundMs, a rejection as rejected with its rejectedAt and reason, and a declined probe on a worker as declined", async () => {
+    const { ledger, rig } = await ledgerSetup();
+    const entryOf = async () => {
+      const { requests } = await ledger(T0, T0 + HOUR);
+      return (id: string) => requests?.find((entry) => entry.requestId === id);
+    };
+    rig.emit("lease.requested", requested("WAITING"));
+    rig.at(T0 + 5 * MIN);
+    rig.emit("lease.requested", requested("REJ"));
+    rig.emit("lease.rejected", rejected("REJ", "no-wait"));
+    rig.emit(
+      "lease.requested",
+      requested("PROBE", { fleetRequestId: "F1", requester: "gw:gw-1:tok_a" }),
+    );
+    rig.emit("lease.declined", {
+      fleetRequestId: "F1",
+      reason: "no-wait",
+      requestId: "PROBE",
+      requestSpec: { platform: "ios" },
+      requester: "gw:gw-1:tok_a",
+    });
+    rig.at(T0 + 10 * MIN);
+    rig.emit("lease.requested", requested("HELD"));
+    rig.emit("lease.granted", granted("L-HELD", "HELD"));
+    rig.at(T0 + 59 * MIN);
+    rig.emit("lease.requested", requested("LATE"));
+    rig.at(T0 + 61 * MIN);
+    rig.emit("lease.granted", granted("L-LATE", "LATE"));
+    rig.at(T0 + 70 * MIN);
+    rig.emit("lease.released", released("L-HELD"));
+
+    const entry = await entryOf();
+
+    expect(entry("WAITING")).toMatchObject({ outcome: "open" });
+    expect(entry("LATE")).toMatchObject({ outcome: "open" });
+    for (const absent of ["grantedAt", "source", "workerId"]) {
+      expect(entry("LATE"), absent).not.toHaveProperty(absent);
+    }
+    expect(entry("HELD")).toMatchObject({ grantedAt: T0 + 10 * MIN, outcome: "granted" });
+    for (const absent of ["endedAt", "endReason", "heldMs", "turnaroundMs"]) {
+      expect(entry("HELD"), absent).not.toHaveProperty(absent);
+    }
+    expect(entry("REJ")).toMatchObject({
+      outcome: "rejected",
+      reason: "no-wait",
+      rejectedAt: T0 + 5 * MIN,
+    });
+    expect(entry("PROBE")).toMatchObject({ outcome: "declined", probe: true, reason: "no-wait" });
+  });
+
+  it("usage.get's ledger agrees with its figures: entries granted equal totals.granted, and a request's waitMs is a sample in totals.wait", async () => {
+    const { ledger, rig } = await ledgerSetup();
+    rig.emit("lease.requested", requested("R1"));
+    rig.emit("lease.requested", requested("R2"));
+    rig.emit("lease.requested", requested("R3"));
+    rig.at(T0 + 100);
+    rig.emit("lease.granted", granted("L1", "R1"));
+    rig.at(T0 + 300);
+    rig.emit("lease.granted", granted("L2", "R2"));
+
+    const answer = await ledger(T0, T0 + HOUR);
+
+    const grantedEntries = answer.requests?.filter((entry) => entry.outcome === "granted") ?? [];
+    expect(grantedEntries).toHaveLength(answer.totals.granted);
+    expect(grantedEntries.map((entry) => entry.waitMs).sort()).toEqual([100, 300]);
+    expect(answer.totals.wait).toEqual({ count: 2, max: 300, p50: 100, p95: 300 });
+  });
+
+  it("usage.get's ledger carries the token label of a known requester and none for an unknown one, and lists a probe (probe: true) and a refused-at-admission rejection as entries", async () => {
+    const { ledger, rig } = await ledgerSetup({
+      deps: { tokenLabels: async () => new Map([["tok_b", "ci-bot"]]) },
+    });
+    rig.emit("lease.requested", requested("KNOWN", { requester: "tok_b" }));
+    rig.emit("lease.requested", requested("UNKNOWN", { requester: "tok_z" }));
+    rig.emit(
+      "lease.requested",
+      requested("PROBE", { fleetRequestId: "F1", requester: "gw:gw-1:tok_a" }),
+    );
+    rig.at(T0 + 300);
+    rig.emit("lease.granted", granted("LP", "PROBE", { requester: "gw:gw-1:tok_a" }));
+    rig.emit("lease.rejected", rejected("ADMIT", "already-leased", { requester: "tok_b" }));
+
+    const { requests } = await ledger(T0, T0 + HOUR);
+    const entry = (id: string) => requests?.find((candidate) => candidate.requestId === id);
+
+    expect(entry("KNOWN")).toMatchObject({ label: "ci-bot" });
+    expect(entry("UNKNOWN")).not.toHaveProperty("label");
+    expect(entry("PROBE")).toMatchObject({ outcome: "granted", probe: true });
+    expect(entry("PROBE")).not.toHaveProperty("waitMs");
+    expect(entry("ADMIT")).toMatchObject({
+      outcome: "rejected",
+      probe: false,
+      reason: "already-leased",
+      requester: "tok_b",
+    });
+    expect(entry("ADMIT")).not.toHaveProperty("waitMs");
+  });
+
+  async function seededReader(rows: number) {
+    const rig = await usageRig();
+    rigs.push(rig);
+    await rig.close();
+    const database = await new NodeSqliteOpener().open(rig.historyPath, { readOnly: false });
+    try {
+      database.exec("BEGIN");
+      const insert = database.prepare(
+        `INSERT INTO request_rows (requestId, requester, platform, requestedAt, grantedAt, source,
+           leaseId, heldMs, endedAt, endReason, probe)
+         VALUES (?, 'tok_a', 'ios', ?, ?, 'warm', ?, 5000, ?, 'explicit', 0)`,
+      );
+      for (let index = 1; index <= rows; index += 1) {
+        const at = T0 + index * 1_000;
+        insert.run(`R${String(index).padStart(6, "0")}`, at, at + 400, `L${index}`, at + 5_400);
+      }
+      database.exec("COMMIT");
+    } finally {
+      database.close();
+    }
+    const reader = createUsageReader(rig.deps({ opened: () => true }));
+    readers.push(reader);
+    return async () => {
+      const result = await reader.get({ from: T0, includeLedger: true, to: T0 + 2 * DAY });
+      if (result.kind !== "figures") throw new Error(`expected figures, got ${result.kind}`);
+      return result.usage;
+    };
+  }
+
+  it("usage.get's ledger over 100,001 requests holds the newest 100,000 with ledgerTruncated: true, and over exactly 100,000 holds them all with no ledgerTruncated", async () => {
+    const over = await (await seededReader(100_001))();
+    const exact = await (await seededReader(100_000))();
+
+    expect(over.requests).toHaveLength(100_000);
+    expect(over.requests?.[0]?.requestId).toBe("R000002");
+    expect(over.requests?.at(-1)?.requestId).toBe("R100001");
+    expect(over.ledgerTruncated).toBe(true);
+    expect(exact.requests).toHaveLength(100_000);
+    expect(exact.requests?.[0]?.requestId).toBe("R000001");
+    expect(exact).not.toHaveProperty("ledgerTruncated");
+  }, 60_000);
 });

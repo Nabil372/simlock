@@ -2034,6 +2034,109 @@ describe("operator-only listing routes", () => {
     expect(JSON.stringify(await response.json())).toContain("Invalid duration: nonsense");
   });
 
+  describe("GET /v1/stats", () => {
+    const NOW = Date.parse("2026-10-16T12:00:00Z");
+    const HOUR = 3_600_000;
+
+    function statsHarness() {
+      const harness = buildHarness();
+      harness.clock.advance(NOW - harness.clock.now());
+      const asked: { from: number; to: number; includeLedger?: boolean }[] = [];
+      harness.dispatcher.handlers["usage.get"] = (input) => {
+        asked.push(input as never);
+        return { window: input };
+      };
+      const get = (query: string) =>
+        harness.app.request(`/v1/stats${query}`, { headers: operatorAuth });
+      return { ...harness, asked, get };
+    }
+
+    it("dispatches usage.get for since back from now, from to to, from to now, and the last 24 hours with no parameter", async () => {
+      const { asked, get } = statsHarness();
+
+      const answered = await get("?since=1h");
+      await get("?from=2026-10-15T00:00Z&to=2026-10-16T00:00Z");
+      await get("?from=2026-10-15T00:00Z");
+      await get("");
+
+      expect(answered.status).toBe(200);
+      expect(await answered.json()).toEqual({ window: { from: NOW - HOUR, to: NOW } });
+      expect(asked.map(({ from, to }) => ({ from, to }))).toEqual([
+        { from: NOW - HOUR, to: NOW },
+        { from: Date.parse("2026-10-15T00:00Z"), to: Date.parse("2026-10-16T00:00Z") },
+        { from: Date.parse("2026-10-15T00:00Z"), to: NOW },
+        { from: NOW - 24 * HOUR, to: NOW },
+      ]);
+    });
+
+    it("answers 400 with the Inputs table's message for since with from, to without from, from not before to, a bad duration, the times 1, 2026, 10/15/2026, no zone and an unencoded +, and ledger other than 1, each after the same query without the fault answered 200, and answers 200 for %2B02:00", async () => {
+      const { asked, get } = statsHarness();
+      const time = "from=2026-10-15T00:00Z";
+      const timeMessage = (value: string) =>
+        `Invalid time: ${value} (use ISO 8601 with Z or an offset)`;
+      const cases: readonly (readonly [string, string, string])[] = [
+        [`?since=1h&${time}`, "?since=1h", "stats takes since or from, not both"],
+        ["?to=2026-10-16T00:00Z", `?${time}&to=2026-10-16T00:00Z`, "to needs from"],
+        [
+          "?from=2026-10-16T00:00Z&to=2026-10-15T00:00Z",
+          "?from=2026-10-15T00:00Z&to=2026-10-16T00:00Z",
+          "from must be earlier than to, or than now when to is left out",
+        ],
+        ["?since=fortnight", "?since=1h", "Invalid duration: fortnight"],
+        ["?from=1", `?${time}`, timeMessage("1")],
+        ["?from=2026", `?${time}`, timeMessage("2026")],
+        ["?from=10/15/2026", `?${time}`, timeMessage("10/15/2026")],
+        ["?from=2026-10-15T00:00", `?${time}`, timeMessage("2026-10-15T00:00")],
+        ["?from=2026-10-15T00:00+02:00", `?${time}`, timeMessage("2026-10-15T00:00 02:00")],
+        ["?since=1h&ledger=yes", "?since=1h&ledger=1", "ledger must be 1"],
+      ];
+
+      for (const [bad, good, message] of cases) {
+        expect((await get(good)).status, good).toBe(200);
+        const dispatched = asked.length;
+        const refused = await get(bad);
+        expect(refused.status, bad).toBe(400);
+        expect(await refused.json(), bad).toMatchObject({
+          error: { code: "BAD_REQUEST", message },
+        });
+        expect(asked, bad).toHaveLength(dispatched);
+      }
+      const offset = await get("?from=2026-10-15T00:00%2B02:00");
+      expect(offset.status).toBe(200);
+      expect(asked.at(-1)).toEqual({ from: Date.parse("2026-10-14T22:00:00Z"), to: NOW });
+    });
+
+    it("passes includeLedger: true only for ledger=1", async () => {
+      const { asked, get } = statsHarness();
+
+      await get("?since=1h");
+      await get("?since=1h&ledger=1");
+
+      expect(asked.map((input) => input.includeLedger === true)).toEqual([false, true]);
+    });
+
+    it("answers HISTORY_NOT_KEPT with status 422 and oldestTs in the body, and HISTORY_UNAVAILABLE with 503", async () => {
+      const { dispatcher, get } = statsHarness();
+      dispatcher.handlers["usage.get"] = () => {
+        throw new DispatchError("HISTORY_NOT_KEPT", "The history does not reach back.", {
+          oldestTs: 1_234,
+        });
+      };
+      const notKept = await get("?since=1h");
+      dispatcher.handlers["usage.get"] = () => {
+        throw new DispatchError("HISTORY_UNAVAILABLE", "The history could not be opened.");
+      };
+      const unavailable = await get("?since=1h");
+
+      expect(notKept.status).toBe(422);
+      expect(await notKept.json()).toMatchObject({
+        error: { code: "HISTORY_NOT_KEPT", oldestTs: 1_234 },
+      });
+      expect(unavailable.status).toBe(503);
+      expect(await unavailable.json()).toMatchObject({ error: { code: "HISTORY_UNAVAILABLE" } });
+    });
+  });
+
   it("GET /v1/events/stream dispatches events.subscribe then follows the raw event bus live", async () => {
     const { app, dispatcher, eventBus } = buildHarness();
     dispatcher.handlers["events.subscribe"] = (_input, session) => ({

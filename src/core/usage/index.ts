@@ -7,6 +7,7 @@ import type { ReadRequest, ReadResponse } from "./read-thread.js";
 export interface UsageGetInput {
   readonly from: number;
   readonly to: number;
+  readonly includeLedger?: boolean | undefined;
 }
 
 export type UsageResult =

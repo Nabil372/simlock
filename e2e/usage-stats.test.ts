@@ -172,4 +172,37 @@ describe("simlock stats", () => {
       expect(own.totals.probes).toBeGreaterThanOrEqual(1);
     }
   }, 240_000);
+
+  it("simlock stats --csv --from <before the run> --to <after it> after a scripted run with an already-leased refusal has one data row per lease.requested in that window of simlock events, plus one for the refusal", async () => {
+    const env = await withDaemon();
+    await env.driverScript.set({
+      ios: { knownModels: ["iPhone 16"], availableOsVersions: ["18.4"] },
+    });
+    const from = new Date(Date.now() - 2_000).toISOString();
+    const first = await env.cli([...LEASE_ARGS, "--agent-id", "agent-a", "--detach"]);
+    expect(first.code).toBe(0);
+    expect((await env.cli([...LEASE_ARGS, "--agent-id", "agent-a", "--detach"])).code).toBe(13);
+    expect(
+      (await env.cli(["release", (first.json as { lease: { id: string } }).lease.id])).code,
+    ).toBe(0);
+    const to = new Date().toISOString();
+
+    const csv = await env.cli(["stats", "--csv", "--from", from, "--to", to]);
+
+    expect(csv.code).toBe(0);
+    const lines = csv.stdout.split("\r\n");
+    expect(lines.at(-1)).toBe("");
+    expect(lines[0]).toBe(
+      "requestId,requester,label,platform,model,workerId,source,requestedAt,grantedAt,rejectedAt,endedAt,waitMs,heldMs,turnaroundMs,outcome,probe,reason,endReason",
+    );
+    const requested = (await env.events()).filter(
+      (event) =>
+        event.event === "lease.requested" &&
+        event.timestamp >= Date.parse(from) &&
+        event.timestamp < Date.parse(to),
+    );
+    expect(requested.length).toBeGreaterThanOrEqual(1);
+    expect(lines.slice(1, -1)).toHaveLength(requested.length + 1);
+    expect(lines.filter((line) => line.includes(",already-leased,"))).toHaveLength(1);
+  }, 240_000);
 });
