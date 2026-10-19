@@ -87,6 +87,63 @@ async function start(
   return { daemon, directory, sink };
 }
 
+describe("interrupted writes", () => {
+  it("startup followed by doctor --fix removes dead-pid .tmp files beside state.json and instance.json while preserving live-pid files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "simlock-interrupted-write-"));
+    temporaryDirectories.push(directory);
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp(directory);
+    const deadPid = 41001;
+    const livePid = 41002;
+    const processSupervisor = new FakeProcessSupervisor([livePid]);
+    const writeId = "00000000-0000-4000-8000-000000000001";
+    const leftovers = ["state.json", "instance.json"].flatMap((target) =>
+      [deadPid, livePid].map((pid) => ({
+        path: join(directory, `.${target}.${pid}.${writeId}.tmp`),
+        pid,
+        contents: `interrupted ${target} write by ${pid}`,
+      })),
+    );
+    for (const leftover of leftovers) {
+      await filesystem.writeFileAtomic(leftover.path, leftover.contents, { mode: 0o600 });
+    }
+
+    const { daemon } = await start({
+      dataDirectory: directory,
+      filesystem,
+      processSupervisor,
+      statePath: join(directory, "state.json"),
+    });
+    await daemon.dispatch(
+      "doctor.run",
+      { fix: true },
+      {
+        manageEventSubscription: () => undefined,
+        principal: "operator",
+        role: "admin",
+      },
+    );
+
+    for (const leftover of leftovers.filter(({ pid }) => pid === livePid)) {
+      expect(await filesystem.readFile(leftover.path)).toBe(leftover.contents);
+    }
+    const remaining = await Promise.all(
+      leftovers.map(async ({ path, pid }) => ({
+        path,
+        exists: await filesystem.exists(path),
+        writerAlive: processSupervisor.isAlive(pid),
+      })),
+    );
+    expect(remaining).toEqual(
+      leftovers.map(({ path, pid }) => ({
+        path,
+        exists: pid === livePid,
+        writerAlive: pid === livePid,
+      })),
+    );
+  });
+});
+
 describe("the version a daemon reports", () => {
   it("is the version in package.json when the caller names none", async () => {
     const directory = await mkdtemp(join(tmpdir(), "simlock-main-"));
