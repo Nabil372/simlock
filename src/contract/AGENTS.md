@@ -5,7 +5,7 @@ Entry: `index.ts` → `OPERATIONS`, `PUSH_SCHEMAS`, `ERROR_TABLE`, `PROTOCOL_VER
 OS range helpers and `parseDurationMs`.
 Uses: zod only. Never imports: anything outside `src/contract/` (`.dependency-cruiser.mjs`,
 rule `contract-imports-nothing`).
-Imported by: daemon, gateway, simlock-client, every frontend, core, leasing, bus.
+Imported by: daemon, gateway, simlock-client, every frontend, core, leasing, history.
 
 ## Files
 
