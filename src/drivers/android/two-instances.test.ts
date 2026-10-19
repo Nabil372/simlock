@@ -53,6 +53,21 @@ const second: Instance = {
 };
 
 describe("AndroidDriver with two Simlock instances on one machine (#257)", () => {
+  it("attaches no emulator another instance is running to its own adb server when it starts", async () => {
+    const machine = await Machine.with([first, second]);
+
+    const firstDriver = await machine.start(first);
+    await firstDriver.resolveSpec(spec);
+    await firstDriver.makeReady(await firstDriver.provision(spec));
+
+    await machine.start(second);
+
+    expect(
+      machine.serversAttachedTo("simlock_first"),
+      "adb servers holding a transport to the first instance's emulator",
+    ).toEqual([first.adbServerPort]);
+  });
+
   it("boots a device on a console port no other instance's emulator is listening on", async () => {
     const machine = await Machine.with([first, second]);
 
@@ -155,6 +170,14 @@ class Machine {
       simlockHome: instance.simlockHome,
       tcpProbe: this.#tcpProbe(),
     });
+  }
+
+  serversAttachedTo(avdName: string): number[] {
+    const consolePort = [...this.#listening].find(([, name]) => name === avdName)?.[0];
+    if (consolePort === undefined) {
+      throw new Error(`No emulator is running ${avdName}`);
+    }
+    return [...(this.#attached.get(consolePort) ?? [])].sort((a, b) => a - b);
   }
 
   /** The AVD whose emulator is listening on `serial`'s console port, or `undefined`. */
