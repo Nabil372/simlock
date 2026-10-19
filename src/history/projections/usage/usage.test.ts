@@ -502,6 +502,29 @@ describe("usage projection: a gateway", () => {
     await r.history.stop();
   });
 
+  it("a relayed lease with an over-long id, an unknown source or no leaseId joins by the cut id, leaves source absent and holds nothing without an id", async () => {
+    const r = await rig({ fleet: true });
+    const long = "L".repeat(500);
+    r.emit("lease.requested", requested("A"));
+    r.relay("w1", "lease.granted", granted(long, "A", { source: "mystery" as never }), T0 + 15_000);
+    r.relay("w1", "lease.granted", { ...granted("X", "A"), leaseId: undefined }, T0 + 16_000);
+    await dispatch(r, "A", long, T0 + 20_000);
+    const held = await count(r, "SELECT count(*) AS n FROM held_leases");
+    r.relay("w1", "lease.released", released(long), T0 + 75_000);
+
+    const rows = await rowsOf(r);
+
+    expect(held).toBe(1);
+    expect(row(rows, "A")).toMatchObject({
+      endReason: "explicit",
+      heldMs: 60_000,
+      workerLeaseId: "L".repeat(200),
+    });
+    expect(row(rows, "A").source).toBeUndefined();
+    expect(await count(r, "SELECT count(*) AS n FROM held_leases")).toBe(0);
+    await r.history.stop();
+  });
+
   it("an open request is rejected daemon-restarted at the own next daemon.started; a relayed daemon.started closes nothing", async () => {
     const first = await rig({ fleet: true });
     first.emit("lease.requested", requested("G1"));
