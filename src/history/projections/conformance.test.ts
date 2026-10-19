@@ -116,6 +116,29 @@ function dumpTables(database: SqliteDatabase): string[] {
   );
 }
 
+// why: events that make rows in the registered projection, so a rebuild that does nothing differs from the live rows.
+const EVENTS: ReadonlyArray<readonly [EventEnvelope["event"], unknown]> = [
+  [
+    "lease.requested",
+    { requestId: "R1", requestSpec: { platform: "ios" }, requester: "a", waitPolicy: "wait" },
+  ],
+  [
+    "lease.granted",
+    {
+      deviceId: "d",
+      leaseId: "L1",
+      platform: "ios",
+      requestId: "R1",
+      requester: "a",
+      source: "warm",
+    },
+  ],
+  ["capacity.changed", { ios: { maxRunning: 4, reserved: 0, running: 1, warm: 0 } }],
+  ["device.ready", { bootDuration: 10, deviceId: "d", platform: "ios" }],
+  ["lease.released", { deviceId: "d", leaseId: "L1", ownerId: "a", reason: "explicit" }],
+  ["daemon.stopping", { reason: "signal" }],
+];
+
 function conformance(
   label: string,
   registry: Readonly<Record<string, HistoryProjectionDefinition>>,
@@ -161,18 +184,20 @@ function conformance(
           fleet: false,
           metricsRetentionMs: 90 * 24 * 3_600_000,
         });
-        const envelopes = ["evt_a", "evt_b"].map(
-          (id, index): EventEnvelope => ({
-            event: "daemon.stopping",
-            id,
-            module: "daemon",
-            payload: { reason: id },
-            seq: index,
-            timestamp: 1_000 + index,
-          }),
+        const envelopes = EVENTS.map(
+          ([event, payload], index): EventEnvelope =>
+            ({
+              event,
+              id: `evt_${index}`,
+              module: "daemon",
+              payload,
+              seq: index,
+              timestamp: 1_000 + 20_000 * index,
+            }) as never,
         );
         for (const envelope of envelopes) projector.apply(envelope);
         const live = dumpTables(database);
+        expect(live.length).toBeGreaterThan(0);
 
         projector.rebuild(1_000);
         for (const envelope of envelopes) projector.apply(envelope);

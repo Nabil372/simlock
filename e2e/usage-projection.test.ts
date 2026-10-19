@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { type DeviceFactRow, openUsageReads, type RequestRow } from "../src/history/index.js";
-import { readHistoryEvents } from "../src/history/testing.js";
 import { NodeSqliteOpener } from "../src/ports/index.js";
 import { type TestEnv, waitFor, withDaemon } from "./helpers/index.js";
 
@@ -79,11 +78,19 @@ describe("usage projection", () => {
     await env.restartDaemon();
     const after = await usageOf(env);
 
-    const history = (await readHistoryEvents(env.home)) as unknown as Array<{
-      readonly event: string;
-      readonly timestamp: number;
-      readonly payload: { readonly requestId?: string };
-    }>;
+    const printed = await env.cli(["events", "--since", "1h"]);
+    expect(printed.code).toBe(0);
+    const history = printed.stdout
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            readonly event: string;
+            readonly timestamp: number;
+            readonly payload: { readonly requestId?: string };
+          },
+      );
     const requested = history.filter((entry) => entry.event === "lease.requested");
     expect(requested).toHaveLength(3);
     expect(before.requests).toHaveLength(3);
