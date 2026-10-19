@@ -2,12 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import {
-  type DeviceFactRow,
-  openUsageReads,
-  type RequestRow,
-  type UsageReads,
-} from "../src/history/index.js";
+import { type DeviceFactRow, openUsageReads, type RequestRow } from "../src/history/index.js";
 import { NodeSqliteOpener } from "../src/ports/index.js";
 import { type TestEnv, waitFor, withDaemon } from "./helpers/index.js";
 
@@ -29,7 +24,7 @@ async function prepare(env: TestEnv): Promise<void> {
 async function usageOf(env: TestEnv): Promise<{
   readonly requests: RequestRow[];
   readonly facts: DeviceFactRow[];
-  readonly minutes: ReturnType<UsageReads["minuteBuckets"]>;
+  readonly minutes: ReturnType<ReturnType<typeof openUsageReads>["minuteBuckets"]>;
   readonly oldest: number | undefined;
 }> {
   const database = await new NodeSqliteOpener().open(join(env.home, "history.db"), {
