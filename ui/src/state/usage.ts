@@ -1,12 +1,9 @@
-import type { UsageOutput } from "../../../src/contract/index";
 import type { Paging } from "../ds";
 import { TABLE_SIZES } from "../model/paging";
 import type { ConsoleRange } from "../model/range";
-import { statsPath } from "../model/range";
 import { type UsageState, usageOf, usageRangeSearch } from "../model/usage";
-import { useLiveResource, useNow } from "./live";
+import { useStats } from "./figures";
 import { usePaging } from "./paging";
-import { loadView } from "./resource";
 import { setSearch, useSearch } from "./router";
 import { readRange } from "../model/range";
 
@@ -20,20 +17,8 @@ export type {
   UsageView,
 } from "../model/usage";
 
-// why: the stats are one read for the whole page, like the Overview's, so with both on screen there
-// is one resource and one request in flight.
 export function useUsage(range: ConsoleRange): UsageState {
-  const view = loadView(useLiveResource<UsageOutput>(statsPath(range)));
-  const now = useNow();
-  if (view.kind === "loading") return view;
-  if (view.kind === "unsupported") {
-    return { kind: "refused", message: "Not available on a single host." };
-  }
-  if (view.kind === "refused") return view;
-  const data = usageOf(view.data, range, now.server);
-  return view.refusal === undefined
-    ? { data, kind: "ready" }
-    : { data, kind: "ready", refusal: view.refusal };
+  return useStats(range, usageOf);
 }
 
 export function useUsageRange(): readonly [ConsoleRange, (range: ConsoleRange) => void] {

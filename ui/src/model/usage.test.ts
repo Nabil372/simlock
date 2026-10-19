@@ -148,7 +148,7 @@ describe("the Usage view", () => {
     expect(
       view().workers.map((row) => [row.name, row.requests, row.granted, row.rejected, row.waitP95]),
     ).toEqual([
-      ["mac-mini-01", "125", "120", "5", "33 s"],
+      ["zeta-mini-01", "125", "120", "5", "33 s"],
       ["w2", "89", "89", "5", "—"],
     ]);
     expect(view(host).workers.map((row) => [row.name, row.requests])).toEqual([["host", "214"]]);
@@ -165,8 +165,8 @@ describe("the Usage view", () => {
         row.held,
       ]),
     ).toEqual([
-      ["CI bot", "tok_a", "150", "149", "1", "2 h 2 min"],
-      [undefined, "agent-9", "44", "40", "3", "1 min 1 s"],
+      ["CI bot", "tok_a", "150", "149", "1", "1 min 1 s"],
+      [undefined, "agent-9", "44", "40", "3", "2 h 2 min"],
       [undefined, "agent-7", "20", "20", "1", "5 s"],
     ]);
   });

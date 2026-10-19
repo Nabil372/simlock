@@ -431,9 +431,9 @@ p50**. Under them:
 - **Device incidents**: quarantined, recovered from quarantine, recovered
   after a crash and lost.
 - **Per platform**, **Per worker** and **Per requester**: requests, granted,
-  rejected and the wait p95, and for a requester the time it held devices in
-  total. A requester with a token label shows the label and its id; one
-  without shows its id. On a single host the worker table has one row, the
+  rejected and the wait p95; a requester shows the time it held devices in
+  total instead of the wait p95. A requester with a token label shows the
+  label and its id; one without shows its id. On a single host the worker table has one row, the
   host. The worker and requester tables page in the address.
 
 ## Live updates

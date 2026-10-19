@@ -93,13 +93,13 @@ export function usageStatsFullOf(over: Partial<UsageOutput> = {}): UsageOutput {
     requesters: [
       {
         granted: 149,
-        heldTotalMs: 7_320_000,
+        heldTotalMs: 61_000,
         id: "tok_a",
         label: "CI bot",
         rejected: 1,
         requests: 150,
       },
-      { granted: 40, heldTotalMs: 61_000, id: "agent-9", rejected: 3, requests: 44 },
+      { granted: 40, heldTotalMs: 7_320_000, id: "agent-9", rejected: 3, requests: 44 },
       { granted: 20, heldTotalMs: 5_000, id: "gw:gwA:agent-7", rejected: 1, requests: 20 },
     ],
     series: [],
@@ -113,7 +113,7 @@ export function usageStatsFullOf(over: Partial<UsageOutput> = {}): UsageOutput {
           wait: samples(120, 1_000, 33_000, 60_000),
         }),
         id: "w1",
-        label: "mac-mini-01",
+        label: "zeta-mini-01",
       },
       {
         ...usageFiguresOf({ granted: 89, requests: 89, wait: samples(89, 1_000, null, 60_000) }),
