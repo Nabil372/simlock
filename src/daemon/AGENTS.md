@@ -133,9 +133,8 @@ Security model: cooperative identity, not a hostile-process boundary.
 - At `log.level: debug`, `LoggingProcessRunner` logs one `process` line per command.
 - Events: ring of `eventBuffer.capacity` (1000) in memory; `history.db` via the
   [history](../history/AGENTS.md), kept `eventLog.retention` (7 days), event rows capped at
-  `eventLog.maxBytes` (256 MiB); the usage rows beside it are kept `metrics.retention` (90 days). `onSocketClaimed`
-  starts it in both modes with `config.mode` and `metrics.retention`; `dispose` stops it
-  last. A file that fails costs only history. A start the history refuses (a newer stored projection version, a
+  `eventLog.maxBytes` (256 MiB); usage rows are kept `metrics.retention` (90 days). `onSocketClaimed`
+  starts it in both modes with `config.mode` and `metrics.retention`; `dispose` stops it last. A file that fails costs only history. A start the history refuses (a newer stored projection version, a
   failed migration) stops the daemon with reason `history-refused` and exit 1. `status.get` carries its `history`, also while starting.
 - A start that throws is logged by a fallback logger to the default `daemon.log`; exit 1.
 
