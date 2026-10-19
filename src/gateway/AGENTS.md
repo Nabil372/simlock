@@ -102,8 +102,7 @@ missing from 2 snapshots in a row → dropped; kept across a disconnect, forgott
 
 **Reads.** `status.get`, `catalog.get`, `list.get`, `lease.list` (admin: all; else own) answer from
 views. `worker.install-component` fans out. `nuke.run`, `cleanup.run`, `doctor.run`,
-`driver.passthrough`, `component.*`, `device.add`, `device.remove` → `UNSUPPORTED_IN_GATEWAY_MODE`.
-`usage.get` reads this gateway's `history.db` rows through `core/usage`: fleet totals, one entry per registry or named worker; `dispose` stops its read thread.
+`driver.passthrough`, `component.*`, `device.add`, `device.remove` → `UNSUPPORTED_IN_GATEWAY_MODE`. `usage.get` reads this gateway's `history.db` rows through `core/usage`: fleet totals, one entry per registry or named worker; `dispose` stops its read thread.
 
 **Uplink drop.** View → `disconnected`, kept; `worker.disconnected`. In-flight calls → `WORKER_UNREACHABLE`, an in-flight lease request → `worker-failed`. `token.revoke` closes its uplinks.
 
