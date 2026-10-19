@@ -4501,11 +4501,13 @@ describe("Dispatcher: usage.get", () => {
       totals: { requests: 1 },
     });
     gate.open = false;
+    const before = threads.posts.length;
 
     await expect(dispatcher.dispatch("usage.get", window, admin)).rejects.toMatchObject({
       code: "HISTORY_UNAVAILABLE",
       message: "The history could not be opened, so no figures can be read; see daemon.log.",
     });
+    expect(threads.posts).toHaveLength(before);
   });
 
   it("the worker handler answers one worker entry, itself, with its instance id and gateway.label, or no label when none is set", async () => {

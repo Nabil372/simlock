@@ -1,5 +1,5 @@
 /**
- * The gateway's implementation of the daemon contract (ADR 0005 §32): "a second implementation
+ * why: the gateway's implementation of the daemon contract (ADR 0005 §32): "a second implementation
  * of the daemon contract's handlers, not a second contract". Same `runDispatch` pipeline, same
  * operation declarations, same role checks -- only the handlers differ, reading worker views
  * instead of a registry and leasing.
@@ -10,7 +10,8 @@
  *    `worker.*` (§8/§23, and ADR 0010 §7's `worker.install-component`, relayed to the workers it
  *    names by `./component-relay.ts`), `events.*` (the gateway's own bus, which carries every worker's
  *    republished events, §22), `config.get` (the gateway's own config, §34), `token.*` (a
- *    gateway mints its own credentials, §24), and -- as of #118 -- the lease *lifecycle*
+ *    gateway mints its own credentials, §24), `usage.get` (read from the gateway's own history by
+ *    `createUsageReader`), and -- as of #118 -- the lease *lifecycle*
  *    (`lease.request`/`renew`/`release`/`cancel`/`release-all`) and `device.exec`, all forwarded
  *    through `FleetLeaseCoordinator`.
  * 2. **Refused permanently** (`unsupportedByDesign`): `nuke.run`, `cleanup.run`, `doctor.run`

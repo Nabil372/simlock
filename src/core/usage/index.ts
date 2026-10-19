@@ -37,6 +37,7 @@ type Thread =
     };
 
 interface Pending {
+  readonly worker: Worker;
   resolve(thread: Thread): void;
   reject(error: Error): void;
   readonly timer: NodeJS.Timeout;
@@ -67,8 +68,9 @@ export function createUsageReader(deps: UsageReaderDeps): UsageReader {
   const pending = new Map<number, Pending>();
   const inFlight = new Map<string, Promise<Thread>>();
 
-  const failAll = (error: Error): void => {
+  const failAll = (error: Error, owner?: Worker): void => {
     for (const [id, entry] of pending) {
+      if (owner !== undefined && entry.worker !== owner) continue;
       pending.delete(id);
       clearTimeout(entry.timer);
       entry.reject(error);
@@ -77,7 +79,8 @@ export function createUsageReader(deps: UsageReaderDeps): UsageReader {
 
   const drop = (worker: Worker, error: Error): void => {
     if (thread === worker) thread = undefined;
-    failAll(error);
+    // why: a dropped thread's late exit must not reject the reads of the thread that replaced it.
+    failAll(error, worker);
     void worker.terminate();
   };
 
@@ -112,7 +115,7 @@ export function createUsageReader(deps: UsageReaderDeps): UsageReader {
         () => drop(worker, new Error("The usage read thread did not answer in time")),
         READ_TIMEOUT_MS,
       );
-      pending.set(id, { reject, resolve, timer });
+      pending.set(id, { reject, resolve, timer, worker });
       worker.postMessage({ ...request, id } satisfies ReadRequest);
     });
 

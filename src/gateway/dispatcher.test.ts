@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { Worker } from "node:worker_threads";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EventBus, type EventEnvelope } from "../bus/index.js";
 import type { EventHistoryHandle } from "../history/index.js";
@@ -1694,11 +1695,14 @@ describe("GatewayDispatcher: usage.get", () => {
       totals: { requests: 1 },
     });
     gate.open = false;
+    const posted = vi.spyOn(Worker.prototype, "postMessage");
 
     await expect(dispatcher.dispatch("usage.get", window, session())).rejects.toMatchObject({
       code: "HISTORY_UNAVAILABLE",
       message: "The history could not be opened, so no figures can be read; see daemon.log.",
     });
+    expect(posted).not.toHaveBeenCalled();
+    posted.mockRestore();
   });
 
   it("the gateway handler strips its own gw: prefix before the label lookup and leaves another prefix alone, and labels nothing when it has no token store", async () => {

@@ -2,7 +2,7 @@
 
 Does: the durable record of every business event, one SQLite file, `history.db`, in the data directory.
 Entry: `index.ts` → `createEventHistory()`, `openHistoryReader()`, `HistoryProjectionDefinition`, `HISTORY_PROJECTIONS`, `HISTORY_DB_NAME`, `openUsageReads()`.
-Uses: bus (type, subscription), contract (`EVENT_ID_PATTERN`), ports (`SqliteOpener`, `Filesystem`, `Clock`, `Logger`). Never imports: core, leasing, drivers, gateway. Imported by daemon, cli (reader) and gateway (type).
+Uses: bus (type, subscription), contract (`EVENT_ID_PATTERN`), ports (`SqliteOpener`, `Filesystem`, `Clock`, `Logger`). Never imports: core, leasing, drivers, gateway. Imported by daemon, cli (reader), gateway (type) and core (`usage/` imports `openUsageReads`, `DeviceFactRow`, `MinuteBucket` and `RequestRow`).
 Flows: [startup](../../docs/internal/flows/startup.md). Catalog: [EVENTS.md](../../docs/internal/EVENTS.md).
 
 ## Files
@@ -63,7 +63,7 @@ Flows: [startup](../../docs/internal/flows/startup.md). Catalog: [EVENTS.md](../
 - The history deletes rows, never files. A set-aside file is renamed, never deleted.
 - Only the socket-claim holder starts it, so a second daemon never opens, checks or renames the file.
 - A failing write never reaches the emitter (events rule 5).
-- The history's own code (`database.ts`, `versions.ts`, `rebuild.ts`, `prune.ts` and the write path in `index.ts`) never names a projection (architecture rule 21); the host hands `HISTORY_PROJECTIONS` in. `index.ts` only re-exports that registry and the usage read side (`openUsageReads`, `DeviceFactRow`, `RequestRow`) for the readers; `core/usage` is the reader of `usage.get`.
+- The history's own code (`database.ts`, `versions.ts`, `rebuild.ts`, `prune.ts` and the write path in `index.ts`) never names a projection (architecture rule 21); the host hands `HISTORY_PROJECTIONS` in. `index.ts` only re-exports that registry and the usage read side (`openUsageReads`, `DeviceFactRow`, `MinuteBucket`, `RequestRow`) for the readers; `core/usage` is the reader of `usage.get`.
 
 ## Known gaps
 
