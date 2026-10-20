@@ -845,6 +845,10 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
     ...(hostLoad === undefined ? {} : { load: () => fitHostLoad(hostLoad.current()) }),
     leaseIndex,
     logger: logger.child("gateway"),
+    // why: `alerts` is built after this dispatcher but before start(), and only with destinations; without any, the option stays out.
+    ...(config.gateway.alerts.destinations.length === 0
+      ? {}
+      : { testDestination: (destination: string) => (alerts as Alerts).test(destination) }),
     tokens: auth.tokens,
     workers: gatewayService.workers,
     historyPath: join(dataDirectory, HISTORY_DB_NAME),
@@ -967,6 +971,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
       clock,
       destinations: config.gateway.alerts.destinations,
       eventBus,
+      idGenerator,
       logger: logger.child("alerts"),
       poster: options.webhookPoster ?? new FetchWebhookPoster(),
       version: options.version,

@@ -48,6 +48,7 @@ class Harness {
       eventBus: this.eventBus,
       poster: this.poster,
       clock: this.clock,
+      idGenerator: { generate: () => "sample-id" },
       logger: new JsonLinesLogger({ clock: this.clock, level: "debug", sink: this.sink }).child(
         "alerts",
       ),
@@ -771,6 +772,78 @@ describe("alerts", () => {
     expect(h.poster.requests).toHaveLength(1);
   });
 
+  it("stop during a test aborts its try, cancels its timer and resolves stopped, and a test is not counted as discarded", async () => {
+    const h = harness();
+    h.poster.respond = () => new Promise(() => {});
+    h.emit("worker.connected", connected());
+    await settle();
+    let result: unknown = "pending";
+    void h.alerts.test("audit").then((value) => (result = value));
+    await settle();
+    expect(h.poster.requests).toHaveLength(2);
+    expect(h.poster.requests[1]?.signal.aborted).toBe(false);
+    expect(h.clock.pendingTimerCount).toBe(2);
+    expect(result).toBe("pending");
+    const lines = h.sink.records.length;
+
+    h.alerts.stop();
+    await settle();
+
+    expect(result).toEqual({ ok: false, reason: "stopped" });
+    expect(h.poster.requests[1]?.signal.aborted).toBe(true);
+    expect(h.clock.pendingTimerCount).toBe(0);
+    expect(h.sink.records.slice(lines).map((record) => [record.message, record.fields])).toEqual([
+      ["Alerts discarded at stop", { discarded: { audit: 1 } }],
+    ]);
+  });
+
+  it("test after stop resolves stopped and posts nothing", async () => {
+    const h = harness();
+    expect(await h.alerts.test("audit")).toEqual({ ok: true, status: 200 });
+    h.alerts.stop();
+
+    await expect(h.alerts.test("audit")).resolves.toEqual({ ok: false, reason: "stopped" });
+    await h.advance(60_000);
+
+    expect(h.poster.requests).toHaveLength(1);
+    expect(h.clock.pendingTimerCount).toBe(0);
+  });
+
+  it("the sample is not put on the bus and does not go through the destination's queue", async () => {
+    const h = harness();
+    h.poster.respond = (_request, index) => Promise.resolve({ status: index === 0 ? 503 : 200 });
+    const seen: string[] = [];
+    h.eventBus.subscribeAll((envelope) => seen.push(envelope.event));
+    h.emit("worker.connected", connected("wrk_a"));
+    h.emit("worker.connected", connected("wrk_b"));
+    await settle();
+    expect(h.poster.requests).toHaveLength(1);
+
+    await expect(h.alerts.test("audit")).resolves.toEqual({ ok: true, status: 200 });
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).event)).toEqual([
+      "worker.connected",
+      "alerts.test-sent",
+    ]);
+    await h.advance(999);
+    expect(h.poster.requests).toHaveLength(2);
+    await h.advance(1);
+    await settle();
+    expect(
+      h.poster.requests.map((request) => {
+        const { event, payload } = JSON.parse(request.body);
+        return [event, payload.workerId];
+      }),
+    ).toEqual([
+      ["worker.connected", "wrk_a"],
+      ["alerts.test-sent", undefined],
+      ["worker.connected", "wrk_a"],
+      ["worker.connected", "wrk_b"],
+    ]);
+    expect(seen).toEqual(["worker.connected", "worker.connected"]);
+    expect(h.eventBus.replay({}).map((envelope) => envelope.event)).toEqual(seen);
+  });
+
   it("the bus handler returns before the post settles, and a poster that throws reaches neither the emitter nor other subscribers", async () => {
     const h = harness();
     const seen: string[] = [];
@@ -886,6 +959,7 @@ describe("alerts", () => {
       eventBus: h.eventBus,
       poster: new FetchWebhookPoster(),
       clock: h.clock,
+      idGenerator: { generate: () => "sample-id" },
       logger: new JsonLinesLogger({ clock: h.clock, level: "debug", sink: h.sink }),
       version: "9.9.9",
       workerLabel: () => undefined,
