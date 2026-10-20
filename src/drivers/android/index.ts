@@ -104,6 +104,7 @@ const PORT_POLL_INTERVAL_MS = 2_000;
  * first and the read reports the platform's failure rather than its own timeout.
  */
 const ADB_DEVICES_TIMEOUT_MS = 30_000;
+const AVD_PATH_TIMEOUT_MS = 5_000;
 const DEFAULT_ADB_SERVER_PORT = 5038;
 // why: After this long without an answer from a serial, the emulator's own registration is
 // assumed lost and Simlock re-sends it. Long enough that a normally-booting emulator has
@@ -1204,12 +1205,6 @@ export class AndroidDriver implements Driver {
     return avdNames;
   }
 
-  /**
-   * why: Serials attached in a settled `device` state can answer `getprop`, so they can be
-   * attributed to an AVD by name. A serial in any other adb state (offline, unauthorized,
-   * booting, ...) cannot answer `getprop` yet, so it cannot be attributed to an AVD name --
-   * `unattributableTransitionalSerial` records that this tick saw at least one such serial.
-   */
   async #scanAdbSerials(): Promise<{
     readonly settledSerials: readonly string[];
     readonly unattributableTransitionalSerial: boolean;
@@ -1265,11 +1260,17 @@ export class AndroidDriver implements Driver {
       }
       const [nameLine = "", ...markLines] = output.stdout.split(/\r?\n/);
       const avdName = nameLine.trim();
-      // why: Root membership, never the name and never "our server can see it". `ADB_EMU=0`
-      // should mean this server only holds transports Simlock registered itself, but a
-      // device is Simlock's because of where its AVD lives -- ownership is proven, not
-      // inferred from who happens to be looking at it (safety rule 8).
       if (!avdNamesInRoot.has(avdName)) continue;
+      let answered: string;
+      try {
+        answered = await this.#readAvdPath(candidate);
+      } catch {
+        // why: A serial can disappear after its shell answered; keep the observation
+        // inconclusive just as when it disappears before that shell call.
+        unreadableSerial = true;
+        continue;
+      }
+      if (!(await this.#sameDirectory(answered, `${this.#deviceRoot}/${avdName}.avd`))) continue;
       runningByAvdName.add(avdName);
       erasableMarkByAvdName.set(avdName, parseErasableMark(markLines.join("\n")));
       const port = Number(candidate.slice("emulator-".length));
@@ -1930,14 +1931,20 @@ export class AndroidDriver implements Driver {
    */
   async #confirmAvdAnswers(data: AndroidDriverData): Promise<void> {
     const expected = `${this.#deviceRoot}/${data.avdName}.avd`;
-    const result = await this.#runOrThrow(this.#sdk.adb, ["-s", data.serial, "emu", "avd", "path"]);
-    const answered = answeredAvdPath(result.stdout);
+    const answered = await this.#readAvdPath(data.serial);
     if (await this.#isOwnAvdPath(answered, expected)) {
       return;
     }
     throw new DriverCrashError(
       `Refusing to ready ${data.avdName}: the emulator answering on ${data.serial} runs ${JSON.stringify(answered)}, not ${expected} -- another emulator holds its console port`,
     );
+  }
+
+  async #readAvdPath(serial: string): Promise<string> {
+    const result = await this.#runOrThrow(this.#sdk.adb, ["-s", serial, "emu", "avd", "path"], {
+      timeoutMs: AVD_PATH_TIMEOUT_MS,
+    });
+    return answeredAvdPath(result.stdout);
   }
 
   /**
@@ -1968,6 +1975,7 @@ export class AndroidDriver implements Driver {
   }
 
   async #sameDirectory(left: string, right: string): Promise<boolean> {
+    if (left === right) return true;
     if (!isAbsolute(left)) return false;
     try {
       const [realLeft, realRight] = await Promise.all([
