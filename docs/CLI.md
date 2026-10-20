@@ -19,7 +19,8 @@ On failure, every command writes one structured line to stderr:
 
 `code` is the daemon's own error code where the failure came from the
 daemon, or a stable CLI-level code otherwise: `USAGE` for bad flags/missing
-arguments/unknown commands, `INTERNAL` for anything unexpected. An unknown
+arguments/unknown commands, `DAEMON_STARTUP_FAILED` for a failed auto-start,
+`INTERNAL` for anything unexpected. An unknown
 command or a missing required argument gets a `message` that ends with a
 pointer to `simlock --help`, so a human hitting one from a terminal isn't
 stranded with only a JSON blob — the full command banner itself is no
@@ -78,7 +79,7 @@ command starts it again) to bring the platform up.
 |---|---|---|
 | 0 | — | success (for a `lease` that stayed alive: the lease ended normally) |
 | 1 | `INTERNAL` | internal / unexpected error |
-| 1 | `DAEMON_STARTUP_FAILED` | the daemon was started but did not accept connections before the startup timeout |
+| 1 | `DAEMON_STARTUP_FAILED` | the daemon was started but did not accept connections before the startup timeout, or answered the handshake then closed before the CLI's startup status probe answered |
 | 1 | `PROVISION_FAILED` | creating a device for the request failed twice; the message is the driver's error |
 | 1 | `HISTORY_UNAVAILABLE` | `stats` while `history.db` could not be opened, so the usage figures cannot be read; the daemon's log says why |
 | 1 | `WORKER_UNREACHABLE` | the gateway cannot reach the worker this lease or request lives on (its uplink is down), or a worker named with `component install --worker` cannot be asked |
@@ -2413,6 +2414,16 @@ Totals
   so (exit 0). `--csv` with `--json` is a usage error (exit 2).
 
 ## `simlock daemon <start|stop|status|logs [--follow]>`
+
+If a command auto-starts a daemon and it answers the handshake but closes
+before the CLI's startup status probe answers, the command reports
+`DAEMON_STARTUP_FAILED` (exit 1). The probe shares the launch timeout and runs
+before the command's operation, including after a rejected credential falls
+back to an agent session. Once status answers (even `starting`), later deaths
+report `DAEMON_CONNECTION_LOST`, including while a lease request queues or
+boots, during a held lease, or during an operation on the same connection. An
+unanswered probe times out with `DAEMON_STARTUP_FAILED`. A connection to an
+already listening daemon keeps the usual `DAEMON_CONNECTION_LOST` behavior.
 
 Manage the daemon explicitly. Other commands auto-start it on demand; `daemon`
 exists for operators and debugging. `start` starts whichever mode
