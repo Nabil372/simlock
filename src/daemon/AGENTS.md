@@ -94,7 +94,7 @@ Health: `starting` → `running`, or `failed`.
 
 ## Identity and roles
 
-Credential resolution (`createCredentialRoleResolver`), at `hello`:
+Credential resolution (`resolveHelloRole` in `src/auth`), at `hello`:
 
 1. No credential → `agent`.
 2. An `operator` token in `tokens.json` → `admin`.
