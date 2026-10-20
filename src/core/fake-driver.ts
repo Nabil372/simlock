@@ -13,6 +13,7 @@ import {
   type ComponentReceipt,
   type ComponentRemoval,
   type ExactDeviceRequest,
+  type DeviceDataTable,
   type Driver,
   type DriverCatalogEntry,
   type DriverCatalogImage,
@@ -823,3 +824,31 @@ function readPhysical(device: FakePhysicalDevice, id: string): PhysicalInspectio
     osVersion: device.osVersion ?? "1.0",
   };
 }
+
+export const fakeDeviceDataTable: DeviceDataTable = {
+  migrations: [
+    "CREATE TABLE fake_device_data (device_id TEXT PRIMARY KEY, fake_device_id TEXT NOT NULL) STRICT",
+  ],
+  name: "fake-device-data",
+  read(database, deviceId) {
+    const row = database
+      .prepare("SELECT fake_device_id FROM fake_device_data WHERE device_id = ?")
+      .get(deviceId);
+    if (row === undefined) throw new Error(`No fake driver data for device ${deviceId}`);
+    return { fakeDeviceId: row.fake_device_id };
+  },
+  version: 1,
+  write(database, deviceId, driverData) {
+    const data = driverData as Record<string, unknown> | null | undefined;
+    const fakeDeviceId = data?.fakeDeviceId;
+    if (typeof fakeDeviceId !== "string" || Object.keys(data ?? {}).length !== 1) {
+      throw new Error(`Invalid fake driver data for device ${deviceId}`);
+    }
+    database
+      .prepare(
+        `INSERT INTO fake_device_data (device_id, fake_device_id) VALUES (?, ?)
+         ON CONFLICT (device_id) DO UPDATE SET fake_device_id = excluded.fake_device_id`,
+      )
+      .run(deviceId, fakeDeviceId);
+  },
+};

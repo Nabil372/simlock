@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 import { freeLoopbackPort, REPO_ROOT, type TestEnv, waitFor, withDaemon } from "./helpers/index.js";
@@ -108,7 +109,15 @@ describe("daemon folders (ADR 0034)", () => {
       const workerInstance = await readFile(join(env.home, "instance.json"), "utf8");
       const gatewayInstance = await readFile(join(gatewayFolder(env), "instance.json"), "utf8");
       expect(gatewayInstance).not.toBe(workerInstance);
-      expect(existsSync(join(gatewayFolder(env), "state.json"))).toBe(false);
+      const gatewayState = new DatabaseSync(join(gatewayFolder(env), "state.db"));
+      try {
+        const devicesTables = gatewayState
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'")
+          .all();
+        expect(devicesTables).toEqual([]);
+      } finally {
+        gatewayState.close();
+      }
     } finally {
       await stopGateway(env);
     }
@@ -183,6 +192,30 @@ describe("daemon folders (ADR 0034)", () => {
     expect(await readFile(join(env.home, "daemon.log"), "utf8")).toContain(
       "Daemon failed to start",
     );
+  });
+
+  it("the daemon entry run in a folder that still holds state.json exits 1, logs the upgrade instructions as its last line and creates no state.db", async () => {
+    const env = await withDaemon({ mode: "auto" });
+    await writeFile(join(env.home, "state.json"), "{}\n", "utf8");
+
+    const code = await new Promise<number | null>((resolve, reject) => {
+      const child = spawn(process.execPath, [join(REPO_ROOT, "dist/daemon/main.js")], {
+        env: env.env,
+        stdio: "ignore",
+      });
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+
+    expect(code).toBe(1);
+    const lines = (await readFile(join(env.home, "daemon.log"), "utf8")).trim().split("\n");
+    expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
+      fields: {
+        message: `Found ${join(env.home, "state.json")}, which this Simlock no longer reads. To upgrade: with the older Simlock, release every lease and run \`simlock nuke --delete-devices\`; then remove ${join(env.home, "state.json")} and start again. See "Breaking: state moves to state.db" in docs/CLI.md.`,
+      },
+      message: "Daemon failed to start",
+    });
+    expect(existsSync(join(env.home, "state.db"))).toBe(false);
   });
 
   it("on a machine with only a present gateway, plain daemon start and plain status reach the gateway and start no worker", async () => {

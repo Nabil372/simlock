@@ -6,7 +6,6 @@ export {
   type AlertFormatName,
   type Config,
   type ConfigOverrides,
-  // fallow-ignore-next-line unused-type -- public Config surface (config.mode, ADR 0005 §1); every in-tree reader gets it structurally off `Config`
   type DaemonMode,
   // fallow-ignore-next-line unused-type -- public Config surface (config.downloads.policy); no in-tree consumer names it directly yet
   type DownloadPolicy,
@@ -23,6 +22,7 @@ export {
   type DeviceMode,
   type DeviceRecord,
   type DeviceSpec,
+  type DeviceTransitionUpdate,
   type LeaseRecord,
   type LeaseRequestFailure,
   type PhysicalClass,
@@ -64,6 +64,7 @@ export {
   type DriverCatalogEntry,
   type DriverComponent,
   DriverCrashError,
+  type DeviceDataTable,
   type DriverDevice,
   type DriverEstimate,
   type DriverReality,
@@ -131,6 +132,8 @@ export { InstanceIdentityError, loadInstanceId } from "./instance-identity.js";
 export type { InstanceIdentityOptions } from "./instance-identity.js";
 export { Nuke } from "./nuke.js";
 export { type NukeExecutor } from "./core-ports.js";
+export { registryOwner } from "./registry-schema.js";
+export { RegistryLoadError } from "./registry-rows.js";
 export { Registry, RegistryEventError, UnknownDeviceError, UnknownLeaseError } from "./registry.js";
 export {
   ComponentInstaller,
