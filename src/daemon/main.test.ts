@@ -25,7 +25,8 @@ import {
 } from "../core/testing.js";
 import { openStateDatabase } from "../state/index.js";
 import { fakeModule, type FakeModule } from "../modules/testing.js";
-import { IosSimctlDriver } from "../drivers/ios/index.js";
+import { androidDeviceDataTable } from "../drivers/android/index.js";
+import { IosSimctlDriver, iosDeviceDataTable } from "../drivers/ios/index.js";
 import { EventBus, type EventEnvelope } from "../bus/index.js";
 import { readHistoryEvents, seedHistory } from "../history/testing.js";
 import { DAEMON_PROTOCOL_VERSION } from "../daemon-protocol/index.js";
@@ -3766,8 +3767,10 @@ describe("startDaemon state.db", () => {
     expect(await resolveDeviceDataTables({ deviceDataTables: optionMap })).toBe(optionMap);
 
     delete process.env.SIMLOCK_DRIVERS_MODULE;
-    expect(await resolveDeviceDataTables({})).toEqual(productionDeviceDataTables());
-    expect(productionDeviceDataTables().size).toBe(0);
+    const production = await resolveDeviceDataTables({});
+    expect(production).toEqual(productionDeviceDataTables());
+    expect(production.get("ios")).toBe(iosDeviceDataTable);
+    expect(production.get("android")).toBe(androidDeviceDataTable);
 
     process.env.SIMLOCK_DRIVERS_MODULE = await writeModule(
       "export function createDrivers() { return []; }",
