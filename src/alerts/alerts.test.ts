@@ -23,6 +23,11 @@ function destination(overrides: Partial<AlertDestination> = {}): AlertDestinatio
   };
 }
 
+function slackDestination(overrides: Partial<AlertDestination> = {}): AlertDestination {
+  const { secret: _secret, ...rest } = destination({ format: "slack", ...overrides });
+  return rest;
+}
+
 function settle(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
@@ -34,6 +39,7 @@ class Harness {
   readonly eventBus = new EventBus(this.clock);
   readonly poster = new FakeWebhookPoster();
   readonly sink = new MemoryLogSink();
+  readonly labels = new Map<string, string>();
   alerts: Alerts;
 
   constructor(destinations: AlertDestination[] = [destination()]) {
@@ -46,6 +52,7 @@ class Harness {
         "alerts",
       ),
       version: "9.9.9",
+      workerLabel: (id) => this.labels.get(id),
     });
   }
 
@@ -135,6 +142,388 @@ describe("alerts", () => {
       expect(h.logs("Alert delivered")[0]?.level).toBe("debug");
     },
   );
+
+  it('a slack destination posts {"text": message} with only the Content-Type and User-Agent headers', async () => {
+    const h = harness([slackDestination()]);
+    h.emit("worker.connected", connected("wrk_1"));
+    await settle();
+
+    expect(h.poster.requests).toHaveLength(1);
+    expect(h.poster.requests[0]?.headers).toEqual({
+      "Content-Type": "application/json",
+      "User-Agent": "simlock/9.9.9",
+    });
+    expect(JSON.parse(h.poster.requests[0]?.body ?? "")).toEqual({
+      text: "🟢 Worker wrk_1 connected.",
+    });
+  });
+
+  it("each of the eleven events posts its message word for word", async () => {
+    const rows: [EventName, Record<string, unknown>, string][] = [
+      [
+        "worker.connected",
+        { workerId: "wrk_1", version: "1.2.3" },
+        "🟢 Worker wrk_1 connected (simlock 1.2.3).",
+      ],
+      ["worker.connected", { workerId: "wrk_1" }, "🟢 Worker wrk_1 connected."],
+      [
+        "worker.disconnected",
+        { workerId: "wrk_1", leaseCount: 0 },
+        "🔴 Worker wrk_1 disconnected.",
+      ],
+      [
+        "worker.disconnected",
+        { workerId: "wrk_1", leaseCount: 1 },
+        "🔴 Worker wrk_1 disconnected while holding 1 lease.",
+      ],
+      [
+        "worker.disconnected",
+        { workerId: "wrk_1", leaseCount: 3 },
+        "🔴 Worker wrk_1 disconnected while holding 3 leases.",
+      ],
+      [
+        "worker.rejected",
+        { reason: "forbidden", workerId: "wrk_x" },
+        "⛔ A worker was refused (forbidden): wrk_x.",
+      ],
+      [
+        "worker.drain-started",
+        { workerId: "wrk_1" },
+        "⏸ Worker wrk_1 is drained: it takes no new leases.",
+      ],
+      ["worker.drain-ended", { workerId: "wrk_1" }, "▶️ Worker wrk_1 takes new leases again."],
+      [
+        "device.quarantine-abandoned",
+        { workerId: "wrk_1", deviceId: "dev_1", attempts: 3 },
+        "⚠️ Device dev_1 on wrk_1 was retired after 3 failed clean-ups.",
+      ],
+      [
+        "device.quarantine-stranded",
+        { workerId: "wrk_1", deviceId: "dev_1", attempts: 4, error: "disk full" },
+        "🛑 Device dev_1 on wrk_1 could not be cleaned up or deleted after 4 tries: disk full. It needs a person.",
+      ],
+      [
+        "device.recovery-failed",
+        { workerId: "wrk_1", deviceId: "dev_1", leaseId: "lse_1", reason: "boot-timeout" },
+        "⚠️ Device dev_1 on wrk_1 crashed during lease lse_1 and could not be brought back: boot-timeout.",
+      ],
+      [
+        "device.stalled-transition-detected",
+        { workerId: "wrk_1", deviceId: "dev_1", state: "booting", ageMs: 840_000 },
+        "⏳ Device dev_1 on wrk_1 has been booting for 14 min.",
+      ],
+      [
+        "disk.pressure-detected",
+        { workerId: "wrk_1", freeBytes: 8_804_682_956, threshold: 10_737_418_240 },
+        "💾 Worker wrk_1 is low on disk: 8.2 GiB free (threshold 10 GiB).",
+      ],
+      [
+        "component.install-failed",
+        { workerId: "wrk_1", platform: "ios", componentId: "runtime-18", error: "no space" },
+        "❌ Installing ios runtime-18 on wrk_1 failed: no space.",
+      ],
+    ];
+    const events = [...new Set(rows.map(([event]) => event))] as AlertDestination["events"];
+    const h = harness([slackDestination({ events })]);
+    for (const [event, payload] of rows) {
+      h.emit(event, payload as never);
+      await settle();
+    }
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).text)).toEqual(
+      rows.map(([, , text]) => text),
+    );
+  });
+
+  it("names the worker by the label workerLabel answers, and by the id when it answers undefined", async () => {
+    const h = harness([slackDestination({ events: ["worker.drain-started"] })]);
+    h.labels.set("wrk_1", "build-mac-3");
+    h.emit("worker.drain-started", { workerId: "wrk_1" });
+    h.emit("worker.drain-started", { workerId: "wrk_2" });
+    await settle();
+    await h.advance(1_000);
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).text)).toEqual([
+      "⏸ Worker build-mac-3 is drained: it takes no new leases.",
+      "⏸ Worker wrk_2 is drained: it takes no new leases.",
+    ]);
+  });
+
+  it("builds a message when it leaves the queue and resends the same body on later tries", async () => {
+    const h = harness([slackDestination({ events: ["worker.drain-started"] })]);
+    const first = deferred();
+    h.poster.respond = (_request, index) =>
+      index === 0 ? first.promise : Promise.resolve({ status: 503 });
+    h.labels.set("wrk_1", "old-name");
+    h.emit("worker.drain-started", { workerId: "wrk_0" });
+    await settle();
+    h.emit("worker.drain-started", { workerId: "wrk_1" });
+    h.labels.set("wrk_1", "new-name");
+    first.resolve({ status: 200 });
+    await settle();
+    h.labels.set("wrk_1", "newer-name");
+    await h.advance(1_000);
+
+    const texts = h.poster.requests.slice(1).map((request) => JSON.parse(request.body).text);
+    expect(texts).toEqual([
+      "⏸ Worker new-name is drained: it takes no new leases.",
+      "⏸ Worker new-name is drained: it takes no new leases.",
+    ]);
+  });
+
+  it("worker.rejected names the claimed label, else the claimed id, else an unknown worker, and adds the count only above one", async () => {
+    const h = harness([slackDestination({ events: ["worker.rejected"] })]);
+    h.labels.set("wrk_9", "registry-name");
+    const cases: [Record<string, unknown>, string][] = [
+      [{ reason: "forbidden", workerId: "wrk_9", label: "claimed-label" }, "claimed-label."],
+      [{ reason: "forbidden", workerId: "wrk_9" }, "wrk_9."],
+      [{ reason: "unauthenticated" }, "an unknown worker."],
+      [{ reason: "forbidden", workerId: "wrk_9", count: 1 }, "wrk_9."],
+      [
+        { reason: "forbidden", workerId: "wrk_9", count: 4 },
+        "wrk_9. 4 more refusals like it came before this one.",
+      ],
+    ];
+    for (const [payload] of cases) {
+      h.emit("worker.rejected", payload as never);
+      await settle();
+    }
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).text)).toEqual(
+      cases.map(([payload, tail]) => `⛔ A worker was refused (${payload.reason}): ${tail}`),
+    );
+  });
+
+  it("formats an age in seconds, minutes, and hours with minutes", async () => {
+    const h = harness([slackDestination({ events: ["device.stalled-transition-detected"] })]);
+    const cases: [number, string][] = [
+      [45_000, "45 s"],
+      [840_000, "14 min"],
+      [3_900_000, "1 h 5 min"],
+      [7_200_000, "2 h"],
+      [59_999, "59 s"],
+      [60_000, "1 min"],
+      [3_600_000, "1 h"],
+    ];
+    for (const [ageMs] of cases) {
+      h.emit("device.stalled-transition-detected", {
+        workerId: "wrk_1",
+        deviceId: "dev_1",
+        state: "booting",
+        ageMs,
+      } as never);
+      await settle();
+    }
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).text)).toEqual(
+      cases.map(([, age]) => `⏳ Device dev_1 on wrk_1 has been booting for ${age}.`),
+    );
+  });
+
+  it("formats bytes in GiB and MiB with one decimal rounded half up, dropping .0", async () => {
+    const h = harness([slackDestination({ events: ["disk.pressure-detected"] })]);
+    const cases: [number, string][] = [
+      [8_804_682_956, "8.2 GiB"],
+      [10_737_418_240, "10 GiB"],
+      [536_870_912, "512 MiB"],
+      [1_020_054_733, "972.8 MiB"],
+      [1_073_741_824, "1 GiB"],
+    ];
+    for (const [freeBytes] of cases) {
+      h.emit("disk.pressure-detected", {
+        workerId: "wrk_1",
+        freeBytes,
+        threshold: 10_737_418_240,
+      } as never);
+      await settle();
+    }
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).text)).toEqual(
+      cases.map(([, size]) => `💾 Worker wrk_1 is low on disk: ${size} free (threshold 10 GiB).`),
+    );
+  });
+
+  it("cuts every variable part to 300 code points, then escapes &, < and >", async () => {
+    const h = harness([
+      slackDestination({
+        events: [
+          "component.install-failed",
+          "worker.drain-started",
+          "worker.rejected",
+          "device.quarantine-abandoned",
+          "device.stalled-transition-detected",
+        ],
+      }),
+    ]);
+    h.labels.set("wrk_1", "<!channel>");
+    h.labels.set("wrk_2", `${"a".repeat(299)}😀b`);
+    const install = (error: string) =>
+      [
+        "component.install-failed",
+        { workerId: "wrk_0", platform: "ios", componentId: "c", error },
+      ] as const;
+    const cases: [readonly [EventName, Record<string, unknown>], string][] = [
+      [install("<b>&"), "❌ Installing ios c on wrk_0 failed: &lt;b&gt;&amp;."],
+      [
+        ["worker.drain-started", { workerId: "wrk_1" }],
+        "⏸ Worker &lt;!channel&gt; is drained: it takes no new leases.",
+      ],
+      [
+        ["worker.rejected", { reason: "forbidden", label: "<!here>" }],
+        "⛔ A worker was refused (forbidden): &lt;!here&gt;.",
+      ],
+      [
+        ["worker.rejected", { reason: "<r>", label: "x" }],
+        "⛔ A worker was refused (&lt;r&gt;): x.",
+      ],
+      [
+        [
+          "device.stalled-transition-detected",
+          { workerId: "wrk_0", deviceId: "d", state: "<s>", ageMs: 1000 },
+        ],
+        "⏳ Device d on wrk_0 has been &lt;s&gt; for 1 s.",
+      ],
+      [
+        ["device.quarantine-abandoned", { workerId: "wrk_0", deviceId: "d", attempts: "<a>" }],
+        "⚠️ Device d on wrk_0 was retired after &lt;a&gt; failed clean-ups.",
+      ],
+      [
+        install(`${"e".repeat(299)}&b`),
+        `❌ Installing ios c on wrk_0 failed: ${"e".repeat(299)}&amp;….`,
+      ],
+      [
+        install(`${"e".repeat(299)}<b`),
+        `❌ Installing ios c on wrk_0 failed: ${"e".repeat(299)}&lt;….`,
+      ],
+      [install("e".repeat(301)), `❌ Installing ios c on wrk_0 failed: ${"e".repeat(300)}….`],
+      [install("e".repeat(300)), `❌ Installing ios c on wrk_0 failed: ${"e".repeat(300)}.`],
+      [
+        ["worker.drain-started", { workerId: "wrk_2" }],
+        `⏸ Worker ${"a".repeat(299)}😀… is drained: it takes no new leases.`,
+      ],
+    ];
+    for (const [[event, payload]] of cases) {
+      h.emit(event, payload as never);
+      await settle();
+    }
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).text)).toEqual(
+      cases.map(([, text]) => text),
+    );
+  });
+
+  it("escapes every variable part of every message that carries one", async () => {
+    const x = "<x>";
+    const h = harness([
+      slackDestination({
+        events: [
+          "worker.connected",
+          "worker.disconnected",
+          "worker.rejected",
+          "device.quarantine-abandoned",
+          "device.quarantine-stranded",
+          "device.recovery-failed",
+          "device.stalled-transition-detected",
+          "component.install-failed",
+        ],
+      }),
+    ]);
+    const w = { workerId: "wrk_0" };
+    const cases: [EventName, Record<string, unknown>, string][] = [
+      ["worker.connected", { ...w, version: x }, "🟢 Worker wrk_0 connected (simlock &lt;x&gt;)."],
+      [
+        "worker.disconnected",
+        { ...w, leaseCount: x },
+        "🔴 Worker wrk_0 disconnected while holding &lt;x&gt; leases.",
+      ],
+      [
+        "worker.rejected",
+        { reason: x, workerId: x },
+        "⛔ A worker was refused (&lt;x&gt;): &lt;x&gt;.",
+      ],
+      [
+        "device.quarantine-abandoned",
+        { ...w, deviceId: x, attempts: x },
+        "⚠️ Device &lt;x&gt; on wrk_0 was retired after &lt;x&gt; failed clean-ups.",
+      ],
+      [
+        "device.quarantine-stranded",
+        { ...w, deviceId: x, attempts: x, error: x },
+        "🛑 Device &lt;x&gt; on wrk_0 could not be cleaned up or deleted after &lt;x&gt; tries: &lt;x&gt;. It needs a person.",
+      ],
+      [
+        "device.recovery-failed",
+        { ...w, deviceId: x, leaseId: x, reason: x },
+        "⚠️ Device &lt;x&gt; on wrk_0 crashed during lease &lt;x&gt; and could not be brought back: &lt;x&gt;.",
+      ],
+      [
+        "device.stalled-transition-detected",
+        { ...w, deviceId: x, state: x, ageMs: 1000 },
+        "⏳ Device &lt;x&gt; on wrk_0 has been &lt;x&gt; for 1 s.",
+      ],
+      [
+        "component.install-failed",
+        { ...w, platform: x, componentId: x, error: x },
+        "❌ Installing &lt;x&gt; &lt;x&gt; on wrk_0 failed: &lt;x&gt;.",
+      ],
+    ];
+    for (const [event, payload] of cases) {
+      h.emit(event, payload as never);
+      await settle();
+    }
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).text)).toEqual(
+      cases.map(([, , text]) => text),
+    );
+  });
+
+  it("a relayed payload with missing fields posts the text the Known gap names", async () => {
+    const h = harness([
+      slackDestination({
+        events: [
+          "device.quarantine-abandoned",
+          "disk.pressure-detected",
+          "device.stalled-transition-detected",
+        ],
+      }),
+    ]);
+    const cases: [EventName, Record<string, unknown>, string][] = [
+      [
+        "device.quarantine-abandoned",
+        { workerId: "wrk_1", deviceId: "dev_1" },
+        "⚠️ Device dev_1 on wrk_1 was retired after undefined failed clean-ups.",
+      ],
+      [
+        "disk.pressure-detected",
+        { workerId: "wrk_1", threshold: 10_737_418_240 },
+        "💾 Worker wrk_1 is low on disk: ? free (threshold 10 GiB).",
+      ],
+      [
+        "device.stalled-transition-detected",
+        { workerId: "wrk_1" },
+        "⏳ Device undefined on wrk_1 has been undefined for ?.",
+      ],
+    ];
+    for (const [event, payload] of cases) {
+      h.emit(event, payload as never);
+      await settle();
+    }
+
+    expect(h.poster.requests.map((request) => JSON.parse(request.body).text)).toEqual(
+      cases.map(([, , text]) => text),
+    );
+  });
+
+  it("a slack destination is tried again on 5xx like a generic one", async () => {
+    const h = harness([slackDestination()]);
+    h.failWith(503);
+    h.emit("worker.connected", connected());
+    await settle();
+    await h.advance(1_000);
+
+    expect(h.poster.requests).toHaveLength(2);
+    expect(h.poster.requests[1]?.body).toBe(h.poster.requests[0]?.body);
+  });
 
   it("posts nothing for an event the destination did not list", async () => {
     const h = harness();
@@ -499,6 +888,7 @@ describe("alerts", () => {
       clock: h.clock,
       logger: new JsonLinesLogger({ clock: h.clock, level: "debug", sink: h.sink }),
       version: "9.9.9",
+      workerLabel: () => undefined,
     });
     h.emit("worker.connected", connected());
 

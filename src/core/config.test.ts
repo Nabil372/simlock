@@ -1939,6 +1939,7 @@ describe("gateway.alerts.destinations", () => {
     "expected a name of lowercase letters, digits and dashes that starts with a letter, at most 32 characters";
   const urlExpected =
     "expected an https:// URL, or an http:// URL to localhost, 127.0.0.1 or [::1], with no user name or password";
+  const formatExpected = 'expected one of "generic", "slack"';
   const eventsExpected = `expected a non-empty list of alert events, each once: ${ALERT_EVENTS.join(", ")}`;
 
   async function load(
@@ -1987,9 +1988,9 @@ describe("gateway.alerts.destinations", () => {
     ["name", bad("name", ""), nameExpected],
     ["name", bad("name", "a".repeat(33)), nameExpected],
     ["name", without("name"), nameExpected],
-    ["format", bad("format", "slack"), 'expected one of "generic"'],
-    ["format", bad("format", "json"), 'expected one of "generic"'],
-    ["format", without("format"), 'expected one of "generic"'],
+    ["format", bad("format", "teams"), formatExpected],
+    ["format", bad("format", "json"), formatExpected],
+    ["format", without("format"), formatExpected],
     ["url", bad("url", "http://n8n.internal/x"), urlExpected],
     ["url", bad("url", "ftp://example.com"), urlExpected],
     ["url", bad("url", "n8n.example.com/x"), urlExpected],
@@ -2008,6 +2009,26 @@ describe("gateway.alerts.destinations", () => {
     await expect(loadDestinations([validDestination])).resolves.toBeDefined();
     await expect(loadDestinations([destination])).rejects.toThrow(
       `Invalid config value for "gateway.alerts.destinations[0].${field}": ${expected}`,
+    );
+  });
+
+  it("loadConfig accepts a slack destination, refuses a secret on it, and lists both formats in the format message", async () => {
+    const { secret: _secret, ...slack } = { ...validDestination, format: "slack" };
+    const config = await loadDestinations([slack]);
+    expect(config.gateway.alerts.destinations).toEqual([slack]);
+
+    for (const secret of ["s", "", null]) {
+      await expect(loadDestinations([{ ...slack, secret }])).rejects.toThrow(
+        'Invalid config value for "gateway.alerts.destinations[0].secret": expected no secret: a slack destination is not signed',
+      );
+    }
+    await expect(
+      loadDestinations([{ ...slack, url: "https://user:pw@hooks.slack.com/x" }]),
+    ).rejects.toThrow(
+      `Invalid config value for "gateway.alerts.destinations[0].url": ${urlExpected}`,
+    );
+    await expect(loadDestinations([bad("format", "teams")])).rejects.toThrow(
+      `Invalid config value for "gateway.alerts.destinations[0].format": ${formatExpected}`,
     );
   });
 
@@ -2060,8 +2081,10 @@ describe("gateway.alerts.destinations", () => {
     expect(destination.shape.format.options).toEqual([...ALERT_FORMATS]);
   });
 
-  it("config.get's schema keeps every field of a loaded destination", async () => {
-    const config = await loadDestinations([validDestination]);
+  it("config.get's schema keeps every field of a loaded destination, a slack one without a secret", async () => {
+    const { secret: _secret, ...slack } = { ...validDestination, name: "chat", format: "slack" };
+    const config = await loadDestinations([validDestination, slack]);
+    expect(config.gateway.alerts.destinations[1]).toEqual(slack);
     const parsed = configSchema.parse(config);
     expect(parsed.gateway.alerts).toEqual(config.gateway.alerts);
   });
@@ -2089,7 +2112,7 @@ describe("redactConfig", () => {
     expect(config.gateway.token).toBe("secret-join-token");
   });
 
-  it("masks every destination's url and secret, keeps name, format and events, and leaves its input untouched", async () => {
+  it("masks every destination's url and secret, keeps name, format and events, and leaves its input untouched (a slack destination gets no secret key)", async () => {
     const destinations = [
       {
         name: "audit",
@@ -2105,6 +2128,12 @@ describe("redactConfig", () => {
         events: ["worker.disconnected"],
         secret: "other",
       },
+      {
+        name: "chat",
+        format: "slack",
+        url: "https://hooks.slack.com/services/T0/B0/token",
+        events: ["worker.connected"],
+      },
     ];
     for (const token of ["join-token", undefined]) {
       const config = await load({
@@ -2119,7 +2148,7 @@ describe("redactConfig", () => {
         destinations.map((destination) => ({
           ...destination,
           url: REDACTED_VALUE,
-          secret: REDACTED_VALUE,
+          ...("secret" in destination ? { secret: REDACTED_VALUE } : {}),
         })),
       );
       expect(redacted.gateway.token).toBe(token === undefined ? undefined : REDACTED_VALUE);

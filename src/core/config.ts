@@ -112,12 +112,13 @@ export type AlertEventName = (typeof ALERT_EVENTS)[number];
 /**
  * why: re-declared in the contract's `configSchema`, which imports nothing from core; a test checks the two agree.
  */
-export const ALERT_FORMATS = ["generic"] as const;
+export const ALERT_FORMATS = ["generic", "slack"] as const;
 export type AlertFormatName = (typeof ALERT_FORMATS)[number];
 
 /** why: checked at config load, which cannot import the alerts module. */
 const ALERT_FORMAT_SECRET: Record<AlertFormatName, "required" | "refused"> = {
   generic: "required",
+  slack: "refused",
 };
 
 export interface AlertDestination {
@@ -175,6 +176,24 @@ function checkAlertEvents(events: unknown, path: string): AlertEventName[] {
   return events as AlertEventName[];
 }
 
+function checkAlertSecret(
+  format: AlertFormatName,
+  entry: Record<string, unknown>,
+  path: string,
+): string | undefined {
+  const { secret } = entry;
+  if (ALERT_FORMAT_SECRET[format] === "refused") {
+    if ("secret" in entry) {
+      throw invalidValue(`${path}.secret`, `no secret: a ${format} destination is not signed`);
+    }
+    return undefined;
+  }
+  if (typeof secret !== "string" || secret.length === 0) {
+    throw invalidValue(`${path}.secret`, `a non-empty secret for a ${format} destination`);
+  }
+  return secret;
+}
+
 function alertDestinationValidator(
   names: Set<string>,
 ): (value: unknown, path: string, warn: Warn) => AlertDestination {
@@ -188,20 +207,14 @@ function alertDestinationValidator(
     const format = stringUnion(ALERT_FORMATS)(entry.format, `${path}.format`);
     if (!isAlertUrl(entry.url)) throw invalidValue(`${path}.url`, ALERT_URL_EXPECTED);
     const events = checkAlertEvents(entry.events, path);
-    const { secret } = entry;
-    if (
-      ALERT_FORMAT_SECRET[format] === "required" &&
-      (typeof secret !== "string" || secret.length === 0)
-    ) {
-      throw invalidValue(`${path}.secret`, `a non-empty secret for a ${format} destination`);
-    }
+    const secret = checkAlertSecret(format, entry, path);
     names.add(name);
     return {
       name,
       format,
       url: entry.url,
       events,
-      ...(typeof secret === "string" ? { secret } : {}),
+      ...(secret === undefined ? {} : { secret }),
     };
   };
 }
