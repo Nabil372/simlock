@@ -185,6 +185,111 @@ describe("daemon folders (ADR 0034)", () => {
     );
   });
 
+  it("on a machine with only a present gateway, plain daemon start and plain status reach the gateway and start no worker", async () => {
+    const env = await withDaemon({ mode: "auto" });
+
+    try {
+      await makeGatewayPresent(env);
+
+      const started = await env.cli(["daemon", "start"]);
+      const status = await env.cli(["status", "--json"]);
+
+      expect(started.code, started.stderr).toBe(0);
+      expect(status.code, status.stderr).toBe(0);
+      expect(daemonMode(status)).toBe("gateway");
+      expect(existsSync(join(env.home, "instance.json"))).toBe(false);
+    } finally {
+      await stopGateway(env);
+    }
+  });
+
+  it("with a worker and a present gateway, a plain worker drain exits 2 with the worker's message and the --gateway hint; with --gateway the gateway answers UNKNOWN_WORKER (exit 12) for the worker's id", async () => {
+    const env = await withDaemon();
+
+    try {
+      await startGateway(env);
+      const workerId = JSON.parse(await readFile(join(env.home, "instance.json"), "utf8")).id;
+
+      const plain = await env.cli(["worker", "drain", workerId]);
+      const viaGateway = await env.cli(["--gateway", "worker", "drain", workerId]);
+
+      expect(plain.code).toBe(2);
+      expect(plain.error).toEqual({
+        code: "UNSUPPORTED_IN_WORKER_MODE",
+        message:
+          "worker.drain acts on a gateway's workers, and this daemon is not a gateway. A gateway also runs on this machine: run the command again with --gateway.",
+      });
+      expect(viaGateway.code).toBe(12);
+      expect(viaGateway.error?.code).toBe("UNKNOWN_WORKER");
+    } finally {
+      await stopGateway(env);
+    }
+  });
+
+  it("on a machine that got its gateway first, simlock --local daemon start starts a worker in <root>, and plain status reaches it afterwards", async () => {
+    const env = await withDaemon({ mode: "auto" });
+
+    try {
+      await makeGatewayPresent(env);
+      expect(existsSync(join(env.home, "instance.json"))).toBe(false);
+
+      const started = await env.cli(["--local", "daemon", "start"]);
+      const status = await env.cli(["status", "--json"]);
+
+      expect(started.code, started.stderr).toBe(0);
+      expect(existsSync(join(env.home, "instance.json"))).toBe(true);
+      expect(status.code, status.stderr).toBe(0);
+      expect(daemonMode(status)).toBe("worker");
+    } finally {
+      await stopGateway(env);
+    }
+  });
+
+  it("with a worker and a present gateway, a worker error of another code carries no hint", async () => {
+    const env = await withDaemon();
+
+    try {
+      await startGateway(env);
+
+      const result = await env.cli(["release", "lease_unknown"]);
+
+      expect(result.error?.code).toBe("UNKNOWN_LEASE");
+      expect(result.error?.message).toBe("Unknown lease: lease_unknown");
+    } finally {
+      await stopGateway(env);
+    }
+  });
+
+  it("on a machine with only a gateway, plain daemon logs and events --since read the gateway's files", async () => {
+    const env = await withDaemon({ mode: "auto" });
+
+    try {
+      await startGateway(env);
+      await stopGateway(env);
+      const gatewayLog = await readFile(join(gatewayFolder(env), "daemon.log"), "utf8");
+
+      const logs = await env.cli(["daemon", "logs"]);
+      const events = await env.cli(["events", "--since", "1h"]);
+
+      expect(logs.code, logs.stderr).toBe(0);
+      expect(gatewayLog).toContain("Daemon started");
+      expect(logs.stdout).toBe(gatewayLog);
+      expect(events.code, events.stderr).toBe(0);
+      const started = events.stdout
+        .split("\n")
+        .filter((line) => line !== "")
+        .map(
+          (line) =>
+            JSON.parse(line) as { event: string; payload: { configSnapshot?: { mode?: string } } },
+        )
+        .find((entry) => entry.event === "daemon.started");
+      expect(started?.payload.configSnapshot?.mode).toBe("gateway");
+      expect(existsSync(join(env.home, "daemon.log"))).toBe(false);
+    } finally {
+      await stopGateway(env);
+    }
+  });
+
   describe("MCP", () => {
     it("simlock --gateway mcp lists the gateway's catalog, plain simlock mcp lists the worker's", async () => {
       const env = await withDaemon();
@@ -212,6 +317,49 @@ describe("daemon folders (ADR 0034)", () => {
           ]),
         });
         expect(gatewayCatalog.structuredContent).toEqual({ platforms: [] });
+      } finally {
+        await stopGateway(env);
+      }
+    });
+
+    it("simlock --local mcp on a machine with only a present gateway lists the worker's catalog", async () => {
+      const env = await withDaemon({ mode: "auto" });
+      await env.driverScript.set({
+        ios: { knownModels: ["iPhone 16"], availableOsVersions: ["18.4"] },
+      });
+      const mcp = await env.mcpClient({ local: true });
+
+      try {
+        await makeGatewayPresent(env);
+
+        const catalog = await mcp.client.callTool({ name: "list_devices", arguments: {} });
+
+        expect(catalog.structuredContent).toMatchObject({
+          platforms: expect.arrayContaining([
+            expect.objectContaining({ platform: "ios", models: ["iPhone 16"] }),
+          ]),
+        });
+        expect(existsSync(join(env.home, "instance.json"))).toBe(true);
+      } finally {
+        await stopGateway(env);
+      }
+    });
+
+    it("plain simlock mcp on a machine with only a present gateway lists the gateway's catalog", async () => {
+      const env = await withDaemon({ mode: "auto" });
+      await env.driverScript.set({
+        ios: { knownModels: ["iPhone 16"], availableOsVersions: ["18.4"] },
+      });
+      const mcp = await env.mcpClient();
+
+      try {
+        await makeGatewayPresent(env);
+
+        const catalog = await mcp.client.callTool({ name: "list_devices", arguments: {} });
+
+        expect(catalog.isError).toBeFalsy();
+        expect(catalog.structuredContent).toEqual({ platforms: [] });
+        expect(existsSync(join(env.home, "instance.json"))).toBe(false);
       } finally {
         await stopGateway(env);
       }

@@ -161,8 +161,9 @@ The folder a daemon lives in decides what it is: `~/.simlock` is a worker and
 `~/.simlock/gateway` is a gateway. No config key names the role. A worker is
 what every simlock daemon has always been; a gateway is a daemon that owns no
 devices and fronts the workers connected to it. `simlock --gateway daemon start`
-starts the gateway (creating it on the first start), and plain `simlock daemon
-start` starts the worker; both run on one machine, each with its own config,
+starts the gateway (creating it on the first start), and `simlock --local daemon
+start` starts the worker (a plain `simlock daemon start` does too, unless only a
+gateway is present); both run on one machine, each with its own config,
 state, socket and log. A `config.json` that still sets `mode` is refused at
 load, with a message that says to remove the key.
 
@@ -882,7 +883,7 @@ those settings would have no effect.
 
 ## Signing in through a proxy
 
-`http.proxyAuth` makes Simlock treat a person the sign-in proxy has signed in as an operator, with no Simlock token. It is an `http` key, so a gateway reads it from `~/.simlock/gateway/config.json`; the commands below set it there with `--gateway`. Drop `--gateway` to set it on the worker. Set it as one object:
+`http.proxyAuth` makes Simlock treat a person the sign-in proxy has signed in as an operator, with no Simlock token. It is an `http` key, so a gateway reads it from `~/.simlock/gateway/config.json`; the commands below set it there with `--gateway`. Without `--gateway`, `config set` writes the config of the daemon a plain command reaches: the worker's, or the gateway's on a machine with only a gateway. Set it as one object:
 
 ```
 simlock --gateway config set http.proxyAuth '{"header":"cf-access-jwt-assertion","jwksUrl":"https://team.cloudflareaccess.com/cdn-cgi/access/certs","issuer":"https://team.cloudflareaccess.com","audience":"4f1c…"}'

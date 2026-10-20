@@ -3,6 +3,7 @@
 // are answered without loading the control plane (see `lazy-loading.test.ts`).
 import { COMMANDS, resolveCommand } from "./tree.js";
 import { errorExitCode, UsageError, withHelpHint, writeError } from "./errors.js";
+import type { DaemonFlag } from "../ports/index.js";
 import type { CliEnvironment } from "./types.js";
 
 export type { CliEnvironment, CliEnvironmentPorts } from "./types.js";
@@ -39,16 +40,25 @@ Pass --token <secret> anywhere on the command line to connect as admin
 explicitly; see https://github.com/callstackincubator/simlock for the default
 resolution order.
 
-Pass --gateway anywhere on the command line to reach this machine's gateway in place of its worker.`;
+Pass --gateway anywhere on the command line to reach this machine's gateway in place of its worker.
+Pass --local anywhere on the command line to reach this machine's worker even when only a gateway has run here.`;
+
+function daemonFlagNamed(arg: string): "gateway" | "local" | undefined {
+  for (const name of ["gateway", "local"] as const) {
+    if (arg === `--${name}`) return name;
+    if (arg.startsWith(`--${name}=`)) throw new UsageError(`--${name} takes no value`);
+  }
+  return undefined;
+}
 
 function extractGlobalFlags(argv: readonly string[]): {
   readonly token: string | undefined;
-  readonly gateway: boolean;
+  readonly daemonFlag: DaemonFlag;
   readonly rest: string[];
 } {
   const rest: string[] = [];
   let token: string | undefined;
-  let gateway = false;
+  let daemonFlag: DaemonFlag;
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index] as string;
     if (arg === "--token") {
@@ -62,14 +72,17 @@ function extractGlobalFlags(argv: readonly string[]): {
       token = arg.slice("--token=".length);
       continue;
     }
-    if (arg === "--gateway") {
-      gateway = true;
+    const named = daemonFlagNamed(arg);
+    if (named !== undefined) {
+      if (daemonFlag !== undefined && daemonFlag !== named) {
+        throw new UsageError("--gateway and --local cannot be used together");
+      }
+      daemonFlag = named;
       continue;
     }
-    if (arg.startsWith("--gateway=")) throw new UsageError("--gateway takes no value");
     rest.push(arg);
   }
-  return { token, gateway, rest };
+  return { token, daemonFlag, rest };
 }
 
 /** why: the ports barrel is loaded here, not statically, so `simlock --help` answers without
@@ -77,7 +90,7 @@ function extractGlobalFlags(argv: readonly string[]): {
  * exceeds the platform limit throws `SocketPathTooLongError`, and this runs inside `runCli`'s
  * try, where that throw becomes the single structured error line `docs/CLI.md` promises instead
  * of a raw stack trace. */
-async function buildDefaultEnvironment(gateway: boolean): Promise<CliEnvironment> {
+async function buildDefaultEnvironment(flag: DaemonFlag): Promise<CliEnvironment> {
   const [{ join, dirname }, { fileURLToPath }, ports, { buildCliEnvironment }] = await Promise.all([
     import("node:path"),
     import("node:url"),
@@ -95,7 +108,7 @@ async function buildDefaultEnvironment(gateway: boolean): Promise<CliEnvironment
   } = ports;
   const root = resolveSimlockHome(process.env);
   const filesystem = new NodeFilesystem();
-  const daemonHome = await resolveDaemonHome({ root, gateway, filesystem });
+  const daemonHome = await resolveDaemonHome({ root, flag, filesystem });
   const logPath = join(daemonHome.dataDirectory, "daemon.log");
   return buildCliEnvironment(
     {
@@ -106,7 +119,7 @@ async function buildDefaultEnvironment(gateway: boolean): Promise<CliEnvironment
       launcher: new NodeDaemonLauncher({
         args: [
           join(dirname(fileURLToPath(import.meta.url)), "../daemon/main.js"),
-          ...(gateway ? ["--gateway"] : []),
+          ...(daemonHome.role === "gateway" ? ["--gateway"] : []),
         ],
         command: process.execPath,
         logPath,
@@ -128,6 +141,24 @@ const GATEWAY_EXEMPT_PATHS: readonly (readonly string[])[] = [
   ["mcp"],
 ];
 
+const GATEWAY_ALSO_HERE_HINT =
+  "A gateway also runs on this machine: run the command again with --gateway.";
+
+async function gatewayHintFor(
+  environment: CliEnvironment | undefined,
+  daemonFlag: DaemonFlag,
+  error: unknown,
+): Promise<string | undefined> {
+  if (environment === undefined || daemonFlag === "gateway") return undefined;
+  if (environment.daemonHome.role !== "worker" || !environment.daemonHome.gatewayPresent) {
+    return undefined;
+  }
+  const { isSimlockError } = await import("../contract/index.js");
+  return isSimlockError(error) && error.code === "UNSUPPORTED_IN_WORKER_MODE"
+    ? GATEWAY_ALSO_HERE_HINT
+    : undefined;
+}
+
 async function refuseWhenNoGateway(
   environment: CliEnvironment,
   path: readonly string[],
@@ -146,8 +177,11 @@ export async function runCli(
   argv: readonly string[],
   environment?: CliEnvironment,
 ): Promise<number> {
+  let resolved = environment;
+  let flag: DaemonFlag;
   try {
-    const { token, gateway, rest } = extractGlobalFlags(argv);
+    const { token, daemonFlag, rest } = extractGlobalFlags(argv);
+    flag = daemonFlag;
     if (rest.length === 0 || isHelp(rest[0])) {
       (environment?.stdout ?? process.stdout).write(`${USAGE}\n`);
       return 0;
@@ -155,16 +189,20 @@ export async function runCli(
     const command = await resolveCommand(COMMANDS, rest);
     if (command === undefined)
       throw new UsageError(withHelpHint(`Unknown command: ${String(rest[0])}`));
-    const resolved = environment ?? (await buildDefaultEnvironment(gateway));
-    if (gateway) await refuseWhenNoGateway(resolved, command.path, command.rest);
+    resolved = environment ?? (await buildDefaultEnvironment(daemonFlag));
+    if (daemonFlag === "gateway") await refuseWhenNoGateway(resolved, command.path, command.rest);
     return await command.module.run(command.rest, {
       path: command.path,
       environment: resolved,
       token,
-      gateway,
+      daemonFlag,
     });
   } catch (error: unknown) {
-    await writeError((value) => (environment?.stderr ?? process.stderr).write(value), error);
+    await writeError(
+      (value) => (environment?.stderr ?? process.stderr).write(value),
+      error,
+      await gatewayHintFor(resolved, flag, error),
+    );
     return await errorExitCode(error);
   }
 }
