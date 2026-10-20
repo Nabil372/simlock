@@ -23,7 +23,10 @@ export async function tokenDevices(
     throw new LeaseCheckFailed();
   }
   for (const entry of held) {
-    if (!listed.some((lease) => lease.id === entry.leaseId)) context.map.markEnded(entry.leaseId);
+    if (listed.some((lease) => lease.id === entry.leaseId)) continue;
+    if (context.link.stillHeld?.(entry.leaseId) !== true) context.map.markEnded(entry.leaseId);
   }
-  return context.map.liveOf(identity.principal);
+  return context.map
+    .liveOf(identity.principal)
+    .filter((entry) => listed.some((lease) => lease.id === entry.leaseId));
 }
