@@ -1333,7 +1333,73 @@ describe("the agent-device front, through a gateway", { timeout: 60_000 }, () =>
     expect(beat.error?.message).toBe(`${notAvailable}no relay target agent-device on this worker`);
     expect((await fleetLeases(rig)).map((lease) => lease.id)).toContain(hex(2));
   });
+
+  it("a lease the gateway's `lease.list` leaves out of one answer, read by a `devices` call, an allocate, a renewal while a command runs, or a heartbeat, is not ended: the next heartbeat succeeds and renews the simlock lease", async () => {
+    const triggers: Record<string, (rig: Rig, member: Member) => Promise<void>> = {
+      allocate: async (rig) => {
+        await granted(rig, 2);
+      },
+      devices: async (rig) => {
+        await command(rig, "devices", undefined);
+      },
+      heartbeat: async (rig) => {
+        await heartbeat(rig, 1);
+      },
+      renewal: async (rig, member) => {
+        const running = await runningCommand(rig, member, 1);
+        await advance(rig, 10_000, 5_000);
+        member.fake.releaseCommand();
+        await running.promise;
+      },
+    };
+    const outcomes: Record<string, { cut: number; answer: unknown; leftMs: unknown }> = {};
+
+    for (const [name, trigger] of Object.entries(triggers)) {
+      const rig = await setUp({ workers: [{ label: "w1", maxRunning: 2 }] });
+      const member = first(rig);
+      await granted(rig, 1, { ttlMs: 30_000 });
+      await listedByGateway(rig, 1);
+      // why: the front's own record of the deadline is only the grant's, so an allocate re-reads lease 1 only once that has passed; a heartbeat keeps the simlock lease alive meanwhile.
+      await advance(rig, 20_000, 5_000);
+      expect((await envelopeOf(await heartbeat(rig, 1, { ttlMs: 30_000 }))).result).toMatchObject({
+        ok: true,
+      });
+      await advance(rig, 15_000, 5_000);
+      const listing = leaveOutOfNextListing(rig.gateway, hex(1));
+
+      await trigger(rig, member);
+      await expect.poll(() => listing.cut()).toBe(1);
+      await advance(rig, 1_000, 1_000);
+      const answer = await envelopeOf(await heartbeat(rig, 1, { ttlMs: 60_000 }));
+
+      outcomes[name] = {
+        answer: answer.result ?? answer.error?.data,
+        cut: listing.cut(),
+        leftMs: ((await deadlineOf(member, 1)) ?? Number.NaN) - rig.clock.now(),
+      };
+      await Promise.all(runningDaemons.splice(0).map((daemon) => daemon.stop("test")));
+    }
+
+    const live = { answer: expect.objectContaining({ ok: true }), cut: 1, leftMs: 60_000 };
+    expect(outcomes).toEqual({ allocate: live, devices: live, heartbeat: live, renewal: live });
+  });
 });
+
+// why: on a gateway, `lease.list` skips a lease whose worker view is missing for a moment (a reconnect, a starting worker), so the test cuts one lease from exactly one answer to stand for that.
+function leaveOutOfNextListing(daemon: DaemonServer, leaseId: string): { cut: () => number } {
+  const target = daemon as unknown as { dispatch: RawDispatch };
+  const original = target.dispatch.bind(target);
+  let cut = 0;
+  target.dispatch = async (operation, input, session) => {
+    const result = await original(operation, input, session);
+    if (operation !== "lease.list" || cut > 0) return result;
+    const { leases } = result as { leases: readonly { id: string }[] };
+    if (!leases.some((lease) => lease.id === leaseId)) return result;
+    cut += 1;
+    return { ...(result as object), leases: leases.filter((lease) => lease.id !== leaseId) };
+  };
+  return { cut: () => cut };
+}
 
 const LEASE_HEADER = "x-agent-device-lease-id";
 const notYoursOnGateway = (n: number): string =>
