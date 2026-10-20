@@ -3666,18 +3666,25 @@ describe("startDaemon state.db", () => {
   it.each([
     [
       "worker",
+      "tokens.json",
       "with the older Simlock, release every lease and run `simlock nuke --delete-devices`; then remove <path> and start again.",
     ],
     [
       "gateway",
+      "tokens.json",
+      "remove <path> and start again; then create each worker's join token again with `simlock --gateway token create --role worker`, set it as that worker's `gateway.token`, and drain workers again.",
+    ],
+    [
+      "gateway",
+      "workers.json",
       "remove <path> and start again; then create each worker's join token again with `simlock --gateway token create --role worker`, set it as that worker's `gateway.token`, and drain workers again.",
     ],
   ] as const)(
-    "a %s started with tokens.json in its folder refuses with the old-file message and its step",
-    async (role, step) => {
-      const directory = await mkdtemp(join(tmpdir(), "simlock-main-old-tokens-"));
+    "a %s started with %s in its folder refuses with the old-file message and its step",
+    async (role, file, step) => {
+      const directory = await mkdtemp(join(tmpdir(), "simlock-main-old-file-"));
       temporaryDirectories.push(directory);
-      const oldFile = join(directory, "tokens.json");
+      const oldFile = join(directory, file);
       await writeFile(oldFile, "[]", "utf8");
 
       await expect(start({ dataDirectory: directory, role })).rejects.toMatchObject({
