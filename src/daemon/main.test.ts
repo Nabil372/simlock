@@ -89,6 +89,164 @@ async function start(
   return { daemon, directory, sink };
 }
 
+describe("interrupted writes", () => {
+  it("startup followed by doctor --fix removes dead-pid .tmp files beside state.json and instance.json while preserving live-pid files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "simlock-interrupted-write-"));
+    temporaryDirectories.push(directory);
+    const filesystem = new MemoryFilesystem();
+    await filesystem.mkdirp(directory);
+    const deadPid = 41001;
+    const livePid = 41002;
+    const processSupervisor = new FakeProcessSupervisor([livePid]);
+    const writeId = "00000000-0000-4000-8000-000000000001";
+    const leftovers = ["state.json", "instance.json"].flatMap((target) =>
+      [deadPid, livePid].map((pid) => ({
+        path: join(directory, `.${target}.${pid}.${writeId}.tmp`),
+        pid,
+        contents: `interrupted ${target} write by ${pid}`,
+      })),
+    );
+    for (const leftover of leftovers) {
+      await filesystem.writeFileAtomic(leftover.path, leftover.contents, { mode: 0o600 });
+    }
+
+    const { daemon } = await start({
+      dataDirectory: directory,
+      filesystem,
+      processSupervisor,
+      statePath: join(directory, "state.json"),
+    });
+    await daemon.dispatch(
+      "doctor.run",
+      { fix: true },
+      {
+        manageEventSubscription: () => undefined,
+        principal: "operator",
+        via: "socket",
+        role: "admin",
+      },
+    );
+
+    for (const leftover of leftovers.filter(({ pid }) => pid === livePid)) {
+      expect(await filesystem.readFile(leftover.path)).toBe(leftover.contents);
+    }
+    const remaining = await Promise.all(
+      leftovers.map(async ({ path, pid }) => ({
+        path,
+        exists: await filesystem.exists(path),
+        writerAlive: processSupervisor.isAlive(pid),
+      })),
+    );
+    expect(remaining).toEqual(
+      leftovers.map(({ path, pid }) => ({
+        path,
+        exists: pid === livePid,
+        writerAlive: pid === livePid,
+      })),
+    );
+  });
+});
+
+describe("interrupted root assembly", () => {
+  async function startWithRoot(
+    filesystem: MemoryFilesystem,
+    processSupervisor: FakeProcessSupervisor,
+  ) {
+    const directory = await mkdtemp(join(tmpdir(), "simlock-interrupted-staging-"));
+    temporaryDirectories.push(directory);
+    const clock = new FakeClock(1_000);
+    const devices = join(SIMLOCK_HOME, "devices");
+    const deviceRoot = join(devices, "ios");
+    await filesystem.mkdirp(devices);
+    const driver = Object.assign(
+      new FakeDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" }),
+      {
+        deviceRoot,
+      },
+    );
+    const result = await start({
+      dataDirectory: directory,
+      drivers: [driver],
+      filesystem,
+      processSupervisor,
+      statePath: join(directory, "state.json"),
+    });
+    return { ...result, devices };
+  }
+
+  async function stage(filesystem: MemoryFilesystem, devices: string, name: string) {
+    const path = join(devices, name);
+    await filesystem.mkdirp(path);
+    await filesystem.writeFileAtomic(join(path, "marker.json"), "{}");
+    return path;
+  }
+
+  it("startup removes a staging directory named for a dead pid and keeps one named for a live pid", async () => {
+    const filesystem = new MemoryFilesystem();
+    const devices = join(SIMLOCK_HOME, "devices");
+    await filesystem.mkdirp(devices);
+    const dead = await stage(filesystem, devices, ".ios.41003.root-id.staging");
+    const live = await stage(filesystem, devices, ".ios.41004.root-id.staging");
+
+    await startWithRoot(filesystem, new FakeProcessSupervisor([41004]));
+
+    expect([await filesystem.exists(dead), await filesystem.exists(live)]).toEqual([false, true]);
+  });
+
+  it("startup leaves a pid-less legacy staging directory in place and logs it once", async () => {
+    const filesystem = new MemoryFilesystem();
+    const devices = join(SIMLOCK_HOME, "devices");
+    await filesystem.mkdirp(devices);
+    const legacy = await stage(filesystem, devices, ".ios.root-id.staging");
+
+    const { sink } = await startWithRoot(filesystem, new FakeProcessSupervisor());
+
+    expect(await filesystem.exists(legacy)).toBe(true);
+    expect(
+      sink.records.filter(
+        (record) =>
+          record.message === "left a legacy staging directory in place" &&
+          (record.fields as { path?: string } | undefined)?.path === legacy,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("startup leaves a directory of the user's own that only looks like a staging directory", async () => {
+    const filesystem = new MemoryFilesystem();
+    const devices = join(SIMLOCK_HOME, "devices");
+    await filesystem.mkdirp(devices);
+    const theirs = await stage(filesystem, devices, ".photos.2023.backup.staging");
+
+    await startWithRoot(filesystem, new FakeProcessSupervisor());
+
+    expect(await filesystem.exists(theirs)).toBe(true);
+  });
+
+  it("startup leaves a .tmp-named file of the user's own beside a device root", async () => {
+    const filesystem = new MemoryFilesystem();
+    const devices = join(SIMLOCK_HOME, "devices");
+    await filesystem.mkdirp(devices);
+    const theirs = join(devices, ".notes.41006.0b9f6c1e-6a4d-4c43-9d0e-3f2a1b7c8d90.tmp");
+    await filesystem.writeFileAtomic(theirs, "mine");
+
+    await startWithRoot(filesystem, new FakeProcessSupervisor());
+
+    expect(await filesystem.exists(theirs)).toBe(true);
+  });
+
+  it("startup leaves a dead writer's leftover that another user owns", async () => {
+    const filesystem = new MemoryFilesystem();
+    const devices = join(SIMLOCK_HOME, "devices");
+    await filesystem.mkdirp(devices);
+    const foreign = await stage(filesystem, devices, ".ios.41005.root-id.staging");
+    filesystem.defineAttributes(foreign, { uid: (process.getuid?.() ?? 0) + 1 });
+
+    await startWithRoot(filesystem, new FakeProcessSupervisor());
+
+    expect(await filesystem.exists(foreign)).toBe(true);
+  });
+});
+
 async function historyEventsWhen(
   directory: string,
   done: (events: readonly EventEnvelope[]) => boolean,
@@ -1689,6 +1847,18 @@ describe("discoverDrivers", () => {
     expect(drivers.find((driver) => driver.platform === "ios")?.deviceRoot).toBe(IOS_ROOT);
   });
 
+  it("names the daemon's pid in the staging directory of the iOS root it creates", async () => {
+    const filesystem = new MemoryFilesystem();
+    const rename = vi.spyOn(filesystem, "rename");
+
+    await discoverIos({ filesystem });
+
+    expect(rename).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`/devices/\\.ios\\.${process.pid}\\.[^/]+\\.staging$`)),
+      IOS_ROOT,
+    );
+  });
+
   it("keeps the daemon up when the iOS device root is refused, reporting the platform instead", async () => {
     const filesystem = await foreignOwnedRoot();
 
@@ -1793,6 +1963,24 @@ describe("discoverDrivers on a host with an Android SDK", () => {
 
     expect(rejections).toEqual([]);
     expect(drivers.find((driver) => driver.platform === "android")?.deviceRoot).toBe(
+      join(SIMLOCK_HOME, "devices", "android"),
+    );
+  });
+
+  it("names the daemon's pid in the staging directory of the Android root it creates", async () => {
+    const filesystem = await androidSdk();
+    const probe = new FakeTcpProbe([5038]);
+    await filesystem.mkdirp(SIMLOCK_HOME);
+    await filesystem.writeFileAtomic(
+      join(SIMLOCK_HOME, "adb-server.json"),
+      JSON.stringify({ pid: 4242, port: 5038, startedAt: 1 }),
+    );
+    const rename = vi.spyOn(filesystem, "rename");
+
+    await discoverAndroid(filesystem, probe, [4242]);
+
+    expect(rename).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`/devices/\\.android\\.${process.pid}\\.[^/]+\\.staging$`)),
       join(SIMLOCK_HOME, "devices", "android"),
     );
   });

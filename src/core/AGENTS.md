@@ -30,6 +30,7 @@ See also: [leasing](../leasing/AGENTS.md) (lease flow, when reclaim runs), [warm
 | `reaper.ts`, `cleanup/`, `cleanup-executor.ts`         | `CleanupReaper`, pure rules, `CleanupExecutor`                                                                                                                                                                                                                                  |
 | **Startup, health, drivers**                           |                                                                                                                                                                                                                                                                                 |
 | `startup-read.ts`, `startup-converger.ts`              | `readStartup`; `StartupConverger`, the device half of startup                                                                                                                                                                                                                   |
+| `write-leftovers.ts`                                   | `sweepWriteLeftovers`: removes dead writers' `.tmp` files and the `.staging` dirs of the device roots it is given; logs pid-less legacy ones, never deletes them                                                                                                                |
 | `doctor.ts`, `host-facts.ts`                           | `Doctor` findings and fixes; `HostFactsReader` for status                                                                                                                                                                                                                       |
 | `driver.ts`, `driver-catalog.ts`, `screen.ts`          | `Driver`, errors, `DiskSpaceGuard`; `DriverCatalog`; `ScreenCapture`, frame tags                                                                                                                                                                                                |
 | `catalog-match.ts`                                     | Model name, class and paired runtimes against a catalog entry                                                                                                                                                                                                                   |
@@ -136,8 +137,7 @@ Events: → `absent` `device.absence-detected`; `absent` → `reclaiming` `devic
 - Grant paths select by exact state; `mayBeGranted` keeps a spent `fresh` device out.
 - A physical device is never destroyed and never counted against capacity.
 - Unreadable is not gone: startup skips a platform it could not list; doctor reports no drift there.
-- Warm pool and startup never install. Instance id is never regenerated.
-- Core imports no leasing or driver (dependency-cruiser `core-not-leasing`, `core-not-drivers`).
+- Warm pool and startup never install. Instance id is never regenerated. Core imports no leasing or driver (dependency-cruiser `core-not-leasing`, `core-not-drivers`).
 
 ## Known gaps
 

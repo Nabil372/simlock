@@ -214,4 +214,6 @@ export {
   type IdleVictimScope,
 } from "./idle-order.js";
 export { ReclaimCoordinator } from "./reclaim-coordinator.js";
+export { sweepWriteLeftovers } from "./write-leftovers.js";
+
 export { createUsageReader, type UsageReader } from "./usage/index.js";

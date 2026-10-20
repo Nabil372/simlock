@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { type Alerts, createAlerts } from "../alerts/index.js";
@@ -36,6 +36,7 @@ import {
   Registry,
   Nuke,
   SerializedDecision,
+  sweepWriteLeftovers,
 } from "../core/index.js";
 import { createLeasing } from "../leasing/index.js";
 import {
@@ -470,6 +471,14 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
   // on a daemon whose disposal has already run, and nothing would cancel them.
   let stopping = false;
   const convergeStartup = async (): Promise<void> => {
+    await sweepWriteLeftovers({
+      deviceRoots: deviceRoots(drivers),
+      directories: [dataDirectory, dirname(statePath)],
+      filesystem,
+      logger,
+      processSupervisor,
+      ...(process.getuid === undefined ? {} : { uid: process.getuid() }),
+    });
     await leasing.settleRequests();
     const read = await core.readStartup();
     const steps = [
@@ -1172,6 +1181,7 @@ async function discoverIosDriver(
       // Ambient like `homedir()` above, and read here rather than in the driver so the
       // composition root stays the only place that touches process state.
       ...(process.getuid === undefined ? {} : { uid: process.getuid() }),
+      pid: process.pid,
     });
     logger.info("Discovered driver", { platform: "ios" });
     return { driver };
@@ -1220,6 +1230,7 @@ async function discoverAndroidDriver(
       // Ambient like `homedir()` above, and read here rather than in the driver so the
       // composition root stays the only place that touches process state.
       ...(process.getuid === undefined ? {} : { uid: process.getuid() }),
+      pid: process.pid,
     });
     logger.info("Discovered driver", { platform: "android" });
     return { driver };
@@ -1495,4 +1506,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       });
     });
   }
+}
+
+/** why: a root's staging directory sits beside it, so the sweep looks there for leftovers. */
+function deviceRoots(drivers: readonly Driver[]): string[] {
+  return drivers.flatMap((driver) =>
+    "deviceRoot" in driver && typeof driver.deviceRoot === "string" ? [driver.deviceRoot] : [],
+  );
 }
