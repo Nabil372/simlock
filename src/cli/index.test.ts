@@ -2646,6 +2646,93 @@ describe("CLI: config set validates with the real config loader (ADR 0003 §11, 
     expect(output.stderr).toContain("http.enabled");
   });
 
+  describe("a joined worker's own HTTP listener (#811)", () => {
+    const joined = { url: "wss://fleet.example", token: "join-secret" };
+    const homeWithGateway = {
+      role: "worker",
+      dataDirectory: "/simlock",
+      gatewayPresent: true,
+    } as const;
+
+    async function workerFiles(contents: unknown) {
+      const filesystem = new MemoryFilesystem();
+      await filesystem.mkdirp("/simlock");
+      await filesystem.writeFileAtomic("/simlock/config.json", JSON.stringify(contents));
+      return filesystem;
+    }
+
+    it.each([
+      [
+        "enabling HTTP on a joined worker",
+        ["http.enabled", "true"],
+        { gateway: joined },
+        'Invalid config after setting http.enabled: Invalid config value for "http.enabled": expected false when gateway.url is set (joined workers are reached through the gateway)',
+      ],
+      [
+        "adding the gateway object to a standalone worker with HTTP on",
+        ["gateway", JSON.stringify(joined)],
+        { http: { enabled: true } },
+        'Invalid config after setting gateway: Invalid config value for "http.enabled": expected false when gateway.url is set (joined workers are reached through the gateway)',
+      ],
+    ] as const)(
+      "refuses a config set that creates the conflict with exit 2, USAGE and the file untouched: %s",
+      async (_name, [key, value], contents, message) => {
+        const filesystem = await workerFiles(contents);
+        const before = await filesystem.readFile("/simlock/config.json");
+        const output = outputCapture({
+          ...realCliEnvironmentPorts(filesystem),
+          daemonHome: homeWithGateway,
+        });
+        const exitCode = await runCli(
+          ["--local", "config", "set", key, value],
+          output.environmentWith(),
+        );
+        expect(exitCode).toBe(2);
+        expect(JSON.parse(output.stderr).error).toMatchObject({ code: "USAGE", message });
+        expect(await filesystem.readFile("/simlock/config.json")).toBe(before);
+      },
+    );
+
+    it("repairs a conflicting file with config set http.enabled false and prints the restart notice", async () => {
+      const filesystem = await workerFiles({ gateway: joined, http: { enabled: true } });
+      const output = outputCapture({
+        ...realCliEnvironmentPorts(filesystem),
+        daemonHome: homeWithGateway,
+      });
+      const exitCode = await runCli(
+        ["--local", "config", "set", "http.enabled", "false"],
+        output.environmentWith(),
+      );
+      expect(exitCode).toBe(0);
+      expect(output.stdout).toBe(
+        "Updated http.enabled in /simlock/config.json; takes effect on daemon restart.\n",
+      );
+      expect(JSON.parse(await filesystem.readFile("/simlock/config.json"))).toMatchObject({
+        http: { enabled: false },
+      });
+    });
+
+    it("--local daemon start with no daemon listening refuses a joined worker's HTTP conflict before any launch", async () => {
+      const filesystem = await workerFiles({
+        gateway: { url: "ws://127.0.0.1:1", token: "join-secret" },
+        http: { enabled: true },
+      });
+      // why: a launcher that exits at once, so a start that wrongly launches fails the launches assertion instead of waiting out the test.
+      const launcher = new FakeDaemonLauncher(undefined, { exit: { code: 1, signal: null } });
+      const output = outputCapture({
+        ...realCliEnvironmentPorts(filesystem),
+        daemonHome: homeWithGateway,
+        launcher,
+      });
+      const exitCode = await runCli(["--local", "daemon", "start"], output.environmentWith());
+      expect(exitCode).not.toBe(0);
+      expect(launcher.launches).toBe(0);
+      expect(JSON.parse(output.stderr).error.message).toBe(
+        'Invalid config value for "http.enabled": expected false when gateway.url is set (joined workers are reached through the gateway)',
+      );
+    });
+  });
+
   it("simlock config set eventLog.retention rejects a non-positive value, naming the key", async () => {
     for (const value of ["0", "1.5"]) {
       const output = outputCapture(realCliEnvironmentPorts());

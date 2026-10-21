@@ -91,7 +91,7 @@ interface WorkerSpec {
   readonly model?: string;
   readonly capability?: "available" | "off" | "unavailable";
   readonly maxRunning?: number;
-  // why: a worker that is reachable by an agent on its own HTTP port, the way a worker without a gateway is.
+  // why: a standalone worker -- no gateway membership, its own HTTP port -- the way a worker without a gateway is; a joined worker may not enable HTTP.
   readonly direct?: boolean;
   // why: a catalog read that waits for the fake clock, so a worker's catalog stays unread.
   readonly slowCatalog?: boolean;
@@ -258,9 +258,8 @@ async function setUp(options: SetUpOptions = {}): Promise<Rig> {
       configOverrides: {
         capabilities: { "agent-device": { enabled: spec.capability !== "off" } },
         capacity: { config: { maxRunning: spec.maxRunning ?? 4 }, strategy: "fixed" },
-        gateway: { label: spec.label, token: secret, url: `ws://127.0.0.1:${String(port)}` },
         ...(directPort === undefined
-          ? {}
+          ? { gateway: { label: spec.label, token: secret, url: `ws://127.0.0.1:${String(port)}` } }
           : { http: { enabled: true, host: "127.0.0.1", port: directPort } }),
         lease: { defaultTtlMs, maxTtlMs: workerMaxTtlMs },
       },
@@ -323,7 +322,7 @@ async function setUp(options: SetUpOptions = {}): Promise<Rig> {
     const member = await addWorker(spec);
     await member.daemon;
   }
-  for (const member of members) await untilRead(rig, member);
+  for (const member of members) if (member.spec.direct !== true) await untilRead(rig, member);
   return rig;
 }
 
@@ -1171,25 +1170,6 @@ describe("the agent-device front, through a gateway", { timeout: 60_000 }, () =>
     expect(member.fake.requests.length).toBe(before);
   });
 
-  it("an agent on a worker token with the same principal name as a gateway agent, connected to the worker directly, does not see the gateway agent's agent-device session, and the gateway agent's commands still work", async () => {
-    const rig = await setUp({ workers: [{ direct: true, label: "w1" }] });
-    const member = first(rig);
-    await granted(rig, 1);
-    expect((await envelopeOf(await heartbeat(rig, 1))).result).toMatchObject({ ok: true });
-
-    const direct = await envelopeOf(await heartbeat(member, 1, {}, { token: secrets.direct }));
-
-    expect(direct.result).toBeUndefined();
-    expect(direct.error).toBeDefined();
-    const seen = member.fake.rpcRequests("agent_device.lease.heartbeat").map((r) => r.tenant);
-    expect(seen).toContain(principals.one);
-    expect(seen).toContain(await tenantOf(member, 1));
-    expect((await envelopeOf(await heartbeat(rig, 1))).result).toMatchObject({ ok: true });
-    expect((await envelopeOf(await command(rig, "snapshot", 1))).result).toMatchObject({
-      ok: true,
-    });
-  });
-
   it("`capabilities.agent-device.leaseTtlCapMs` on the gateway caps the TTL of a lease made through it", async () => {
     const rig = await setUp({ leaseTtlCapMs: 10_000 });
     const member = first(rig);
@@ -1286,6 +1266,7 @@ describe("the agent-device front, through a gateway", { timeout: 60_000 }, () =>
   });
 
   it("a lease the gateway's `lease.list` leaves out of one answer, read by a `devices` call, an allocate, a renewal while a command runs, or a heartbeat, is not ended: the next heartbeat succeeds and renews the simlock lease", async () => {
+    const during: Record<string, unknown> = {};
     const triggers: Record<string, (rig: Rig, member: Member) => Promise<void>> = {
       allocate: async (rig) => {
         await granted(rig, 2);
@@ -1294,7 +1275,8 @@ describe("the agent-device front, through a gateway", { timeout: 60_000 }, () =>
         await command(rig, "devices", undefined);
       },
       heartbeat: async (rig) => {
-        await heartbeat(rig, 1);
+        const beat = await envelopeOf(await heartbeat(rig, 1));
+        during.heartbeat = beat.result ?? beat.error?.data;
       },
       renewal: async (rig, member) => {
         const running = await runningCommand(rig, member, 1);
@@ -1333,6 +1315,8 @@ describe("the agent-device front, through a gateway", { timeout: 60_000 }, () =>
 
     const live = { answer: expect.objectContaining({ ok: true }), cut: 1, leftMs: 60_000 };
     expect(outcomes).toEqual({ allocate: live, devices: live, heartbeat: live, renewal: live });
+    // why: the command already ran on the worker, so the heartbeat that met the omission still answers its reply.
+    expect(during).toEqual({ heartbeat: expect.objectContaining({ ok: true }) });
   });
 });
 
