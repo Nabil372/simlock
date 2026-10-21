@@ -118,3 +118,17 @@ export function textField(payload: unknown, key: string): string | undefined {
   const value = (payload as Record<string, unknown>)[key];
   return typeof value === "string" && value !== "" ? value : undefined;
 }
+
+// why: on a gateway an event belongs to a worker when its payload names it (a relayed event, or the
+// gateway's own `worker.*`); a single host's events carry no worker id, since every one is the
+// host's own, so all of them are the one worker's. Until the mode is known the gateway rule holds,
+// which never shows an event that is not the worker's.
+export function eventsOfWorker(
+  events: readonly ConsoleEvent[],
+  workerId: string,
+  mode: "gateway" | "worker" | undefined,
+): readonly ConsoleEvent[] {
+  return events
+    .filter((event) => mode === "worker" || workerIdOf(event) === workerId)
+    .toSorted((a, b) => b.timestamp - a.timestamp || b.seq - a.seq);
+}

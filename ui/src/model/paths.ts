@@ -16,3 +16,32 @@ export function itemIdFrom(section: Section, path: string): string | undefined {
     return rest;
   }
 }
+
+export interface FleetAddress {
+  readonly workerId?: string;
+  readonly deviceId?: string;
+}
+
+function decoded(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+// why: a worker's page is `/fleet/<workerId>` and its device drawer `/fleet/<workerId>/<deviceId>`,
+// each id encoded on its own, so a slash inside an id cannot be taken for the separator; a malformed
+// escape is kept as typed.
+export function fleetAddress(path: string): FleetAddress {
+  if (!path.startsWith("/fleet/")) return {};
+  const [worker, device] = path.slice("/fleet/".length).replace(/\/$/, "").split("/");
+  if (worker === undefined || worker === "") return {};
+  return device === undefined || device === ""
+    ? { workerId: decoded(worker) }
+    : { deviceId: decoded(device), workerId: decoded(worker) };
+}
+
+export function devicePath(workerId: string, deviceId: string): `/${string}` {
+  return `/fleet/${encodeURIComponent(workerId)}/${encodeURIComponent(deviceId)}`;
+}

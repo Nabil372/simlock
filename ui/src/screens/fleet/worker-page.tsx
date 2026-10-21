@@ -1,26 +1,14 @@
-import "./workers.css";
-
-import { useState } from "react";
-
 import {
   Card,
-  ChoiceChips,
   type Column,
   DataTable,
-  Empty,
   Facts,
   Grid,
   Id,
-  Inspector,
-  InspectorEmpty,
   Link,
-  List,
-  ListPane,
-  ListRow,
   Loaded,
-  MasterDetail,
   Meter,
-  Pager,
+  Page,
   Panel,
   SlotLegend,
   Slots,
@@ -31,144 +19,76 @@ import {
 import {
   type CapabilityRow,
   type DeviceRow,
+  type EventRow,
   type FigureCard,
   type InstallRow,
   type PlatformCard,
-  useWorkers,
+  useWorkerEvents,
+  useWorkerPage,
   type WarmRow,
-  WORKER_FILTERS,
-  type WorkerInspectorView,
-  type WorkerRow,
-  type WorkersPage,
-  type WorkerTab,
+  type WorkerPageView,
 } from "../../state/workers";
+import { DeviceDrawer } from "./device-drawer";
 
-export function WorkersScreen() {
-  const view = useWorkers();
-  return <Loaded view={view}>{(page) => <WorkersBody page={page} />}</Loaded>;
-}
-
-export function WorkersBody({
-  initialTab = "overview",
-  page,
-}: {
-  readonly page: WorkersPage;
-  readonly initialTab?: WorkerTab;
+export function WorkerPageScreen(props: {
+  readonly id: string;
+  readonly deviceId: string | undefined;
 }) {
+  const { deviceId, id } = props;
+  const view = useWorkerPage(id);
   return (
-    <MasterDetail
-      focus={page.focus}
-      wide
-      list={<WorkerList page={page} />}
-      detail={
-        page.inspector === undefined ? (
-          <MissingWorker id={page.missing} />
-        ) : (
-          <WorkerDetail
-            key={page.inspector.id}
-            inspector={page.inspector}
-            initialTab={initialTab}
-          />
-        )
-      }
-    />
-  );
-}
-
-function WorkerList({ page }: { readonly page: WorkersPage }) {
-  return (
-    <ListPane
-      title="Fleet"
-      meta={page.meta}
-      toolbar={
-        <ChoiceChips
-          legend="Show workers"
-          choices={WORKER_FILTERS}
-          value={page.filter}
-          onChange={page.setFilter}
-        />
-      }
-      footer={<Pager label="Workers" paging={page.paging} />}
-    >
-      {page.rows.length === 0 ? (
-        <Empty>{page.empty ? "No workers have connected." : "No worker matches."}</Empty>
-      ) : (
-        <List label="Workers">
-          {page.rows.map((row) => (
-            <WorkerListRow key={row.id} row={row} selected={row.id === page.chosen} />
-          ))}
-        </List>
+    <>
+      <Loaded view={view}>
+        {(page) => (page === undefined ? <MissingWorker /> : <WorkerPageBody page={page} />)}
+      </Loaded>
+      {deviceId === undefined ? null : (
+        <DeviceDrawer key={deviceId} workerId={id} deviceId={deviceId} />
       )}
-    </ListPane>
+    </>
   );
 }
 
-function WorkerListRow({ row, selected }: { readonly row: WorkerRow; readonly selected: boolean }) {
+function MissingWorker() {
   return (
-    <ListRow
-      to={row.to}
-      selected={selected}
-      mono={row.mono}
-      lead={<StatusDot tone={row.health.tone} label={row.health.word} />}
-      title={row.name}
-      aside={row.use === undefined ? "—" : `${row.use.running} / ${row.use.limit}`}
-      sub={
-        row.use === undefined ? undefined : (
-          <Meter percent={row.use.percent} tone="neutral" size="thin" />
-        )
-      }
-    />
+    <Page title="Worker">
+      <p className="muted">
+        This worker is not in the fleet. <Link to="/fleet">Back to Fleet</Link>
+      </p>
+    </Page>
   );
 }
 
-function MissingWorker({ id }: { readonly id: string | undefined }) {
-  if (id === undefined) return <InspectorEmpty>Nothing to show.</InspectorEmpty>;
+export function WorkerPageBody({ page }: { readonly page: WorkerPageView }) {
   return (
-    <InspectorEmpty>
-      Worker not found. <Link to="/fleet">Back to Fleet</Link>
-    </InspectorEmpty>
-  );
-}
-
-function WorkerDetail({
-  initialTab,
-  inspector,
-}: {
-  readonly inspector: WorkerInspectorView;
-  readonly initialTab: WorkerTab;
-}) {
-  const [tab, setTab] = useState<WorkerTab>(initialTab);
-  return (
-    <Inspector
-      crumbs={[{ label: "Fleet", to: "/fleet" }, { label: inspector.title }]}
-      title={inspector.title}
-      mono={inspector.mono}
-      line={
-        <>
-          <Status tone={inspector.health.tone}>{inspector.health.word}</Status>
-          {inspector.os === undefined ? null : <span>· {inspector.os}</span>}
-          {inspector.version === undefined ? null : <span>· {inspector.version}</span>}
-        </>
-      }
-    >
-      <Tabs label="Worker" tabs={inspector.tabs} value={tab} onChange={setTab}>
-        {tab === "overview" ? <OverviewTab inspector={inspector} /> : null}
-        {tab === "host" ? <HostTab inspector={inspector} /> : null}
-        {tab === "warm-pool" ? <WarmTab inspector={inspector} /> : null}
+    <Page title={page.title}>
+      <nav className="crumbs" aria-label="Breadcrumb">
+        <span className="crumb">
+          <Link to={page.back}>Fleet</Link>
+        </span>
+      </nav>
+      <p className="worker-line">
+        <Status tone={page.health.tone}>{page.health.word}</Status>
+        {page.system === undefined ? null : <> · {page.system}</>}
+      </p>
+      {page.banners.map((banner) => (
+        <p key={banner} className="worker-banner">
+          {banner}
+        </p>
+      ))}
+      <Overview page={page} />
+      <Tabs label="Worker" tabs={page.tabs} value={page.tab} onChange={page.chooseTab}>
+        {page.tab === "devices" ? <DevicesTab page={page} /> : null}
+        {page.tab === "host" ? <HostTab inspector={page} /> : null}
+        {page.tab === "warm-pool" ? <WarmTab inspector={page} /> : null}
+        {page.tab === "events" ? <WorkerEvents id={page.id} /> : null}
       </Tabs>
-    </Inspector>
+    </Page>
   );
 }
 
-function OverviewTab({ inspector }: { readonly inspector: WorkerInspectorView }) {
-  const { overview } = inspector;
-  if (overview.incompatible) {
-    return (
-      <Panel title="Protocol">
-        <ProtocolFacts inspector={inspector} />
-      </Panel>
-    );
-  }
+function Overview({ page }: { readonly page: WorkerPageView }) {
+  const { overview } = page;
+  if (overview.incompatible) return null;
   return (
     <>
       <Grid min="sm" label="Load and leases">
@@ -196,25 +116,32 @@ function OverviewTab({ inspector }: { readonly inspector: WorkerInspectorView })
       {overview.read === undefined ? null : (
         <p className="muted figure-read">Read {overview.read}</p>
       )}
-      {overview.starting ? (
-        <p className="muted">Devices, leases and capacity appear once startup finishes.</p>
-      ) : (
-        <>
-          <PlatformCards platforms={overview.platforms} />
-          <Panel title="Devices" flush>
-            <DataTable
-              label="Devices"
-              rows={overview.devices ?? []}
-              columns={DEVICE_COLUMNS}
-              rowId={(device) => device.id}
-              empty="No devices."
-              paging={inspector.devicesPaging}
-              wide
-            />
-          </Panel>
-        </>
-      )}
+      {overview.starting ? null : <PlatformCards platforms={overview.platforms} />}
     </>
+  );
+}
+
+function DevicesTab({ page }: { readonly page: WorkerPageView }) {
+  const { overview } = page;
+  if (overview.incompatible) {
+    return <p className="muted">No devices: the gateway cannot read this worker.</p>;
+  }
+  if (overview.starting) {
+    return <p className="muted">Devices, leases and capacity appear once startup finishes.</p>;
+  }
+  return (
+    <Panel title="Devices" flush>
+      <DataTable
+        label="Devices"
+        rows={overview.devices ?? []}
+        columns={DEVICE_COLUMNS}
+        rowId={(device) => device.id}
+        rowTo={(device) => device.to}
+        empty="No devices."
+        paging={page.devicesPaging}
+        wide
+      />
+    </Panel>
   );
 }
 
@@ -267,7 +194,8 @@ const DEVICE_COLUMNS: readonly Column<DeviceRow>[] = [
         <StatusDot tone={device.status.tone} label={device.status.word} />
         <span className="device-text">
           <span>
-            {device.model} <span className="mono muted">{device.runtime}</span>
+            <Link to={device.to}>{device.model}</Link>{" "}
+            <span className="mono muted">{device.runtime}</span>
           </span>
           <span className="device-sub">
             {device.platform} · <Id>{device.id}</Id>
@@ -319,7 +247,7 @@ const DEVICE_COLUMNS: readonly Column<DeviceRow>[] = [
   },
 ];
 
-function ProtocolFacts({ inspector }: { readonly inspector: WorkerInspectorView }) {
+function ProtocolFacts({ inspector }: { readonly inspector: WorkerPageView }) {
   const { protocol } = inspector.host;
   return protocol.compatible ? (
     <Status tone="ok">compatible</Status>
@@ -331,7 +259,7 @@ function ProtocolFacts({ inspector }: { readonly inspector: WorkerInspectorView 
   );
 }
 
-function HostTab({ inspector }: { readonly inspector: WorkerInspectorView }) {
+function HostTab({ inspector }: { readonly inspector: WorkerPageView }) {
   const { host } = inspector;
   return (
     <>
@@ -339,6 +267,9 @@ function HostTab({ inspector }: { readonly inspector: WorkerInspectorView }) {
         <Facts
           facts={[
             { label: "Worker id", value: <span className="mono">{host.id}</span> },
+            ...(host.version === undefined
+              ? []
+              : [{ label: "Version", value: <span className="mono">{host.version}</span> }]),
             {
               label: "Connection",
               value: (
@@ -443,7 +374,7 @@ const WARM_COLUMNS: readonly Column<WarmRow>[] = [
   { cell: (target) => target.short, header: "Short", mono: true },
 ];
 
-function WarmTab({ inspector }: { readonly inspector: WorkerInspectorView }) {
+function WarmTab({ inspector }: { readonly inspector: WorkerPageView }) {
   const { warm } = inspector;
   if (warm === undefined) return null;
   return (
@@ -487,6 +418,30 @@ function Installs({ rows }: { readonly rows: readonly InstallRow[] }) {
           {install.platform} <span className="mono">{install.component}</span>{" "}
           <Status tone={install.status.tone}>{install.status.word}</Status> for{" "}
           <span className="mono">{install.duration}</span>, {install.waiters}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function WorkerEvents({ id }: { readonly id: string }) {
+  const view = useWorkerEvents(id);
+  return <Loaded view={view}>{(rows) => <WorkerEventList rows={rows} />}</Loaded>;
+}
+
+function WorkerEventList({ rows }: { readonly rows: readonly EventRow[] }) {
+  if (rows.length === 0) {
+    return <p className="muted">No events for this worker in the last hour.</p>;
+  }
+  return (
+    <ul className="worker-events" aria-label="Events for this worker">
+      {rows.map((row) => (
+        <li key={row.id}>
+          <time dateTime={row.iso} className="mono muted">
+            {row.time}
+          </time>
+          <span className="mono">{row.name}</span>
+          <span className="muted">{row.summary}</span>
         </li>
       ))}
     </ul>
