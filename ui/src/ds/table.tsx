@@ -8,9 +8,10 @@ import {
   tableFeatures,
   useTable,
 } from "@tanstack/react-table";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 
 import { useNavigateTo } from "./link";
+import { type MenuEntry, MenuRow, RowMenu } from "./menu";
 import { Pager, type Paging } from "./pager";
 
 export interface Column<T> {
@@ -38,8 +39,24 @@ export function DataTable<T extends RowData>(props: {
   readonly className?: string;
   // why: a row that opens something is clicked anywhere; its first link stays the keyboard's way in.
   readonly rowTo?: (row: T) => string;
+  // why: the row's ⋯ menu, in a last column of its own that has no header text to show.
+  readonly menu?: {
+    readonly label: (row: T) => string;
+    readonly entries: (row: T) => readonly MenuEntry[];
+  };
 }) {
-  const { className, columns, empty, label, paging, rowId, rowTo, rows, wide = false } = props;
+  const {
+    className,
+    columns,
+    empty,
+    label,
+    menu,
+    paging,
+    rowId,
+    rowTo,
+    rows,
+    wide = false,
+  } = props;
   const navigate = useNavigateTo();
   // why: `FlexRender` mounts a cell function as a component, and a view builds its columns anew on
   // every render, so each refresh would mount a new component, draw the cell's elements afresh and
@@ -75,37 +92,63 @@ export function DataTable<T extends RowData>(props: {
                 {column.header}
               </th>
             ))}
+            {menu === undefined ? null : (
+              <th scope="col" className="table-menu">
+                <span className="visually-hidden">Actions</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr
-              key={row.id}
-              className={rowTo === undefined ? undefined : "table-row-link"}
-              onClick={
-                rowTo === undefined
-                  ? undefined
-                  : (event) => {
-                      if ((event.target as HTMLElement).closest("a, button") === null) {
-                        navigate?.(rowTo(row.original));
-                      }
+          {table.getRowModel().rows.map((row) => {
+            const className = rowTo === undefined ? undefined : "table-row-link";
+            const onClick =
+              rowTo === undefined
+                ? undefined
+                : (event: MouseEvent<HTMLTableRowElement>) => {
+                    if ((event.target as HTMLElement).closest("a, button") === null) {
+                      navigate?.(rowTo(row.original));
                     }
-              }
-            >
-              {row.getAllCells().map((cell) => {
-                const column = columns[Number(cell.column.id)];
-                return (
-                  <td
-                    key={cell.id}
-                    data-label={column?.header}
-                    className={cellClass(column?.numeric, column?.mono)}
-                  >
-                    {column?.cell(row.original)}
+                  };
+            const cells = (
+              <>
+                {row.getAllCells().map((cell) => {
+                  const column = columns[Number(cell.column.id)];
+                  return (
+                    <td
+                      key={cell.id}
+                      data-label={column?.header}
+                      className={cellClass(column?.numeric, column?.mono)}
+                    >
+                      {column?.cell(row.original)}
+                    </td>
+                  );
+                })}
+                {menu === undefined ? null : (
+                  <td className="table-menu">
+                    <RowMenu
+                      label={menu.label(row.original)}
+                      entries={menu.entries(row.original)}
+                    />
                   </td>
-                );
-              })}
-            </tr>
-          ))}
+                )}
+              </>
+            );
+            return menu === undefined ? (
+              <tr key={row.id} className={className} onClick={onClick}>
+                {cells}
+              </tr>
+            ) : (
+              <MenuRow
+                key={row.id}
+                className={className}
+                onClick={onClick}
+                entries={menu.entries(row.original)}
+              >
+                {cells}
+              </MenuRow>
+            );
+          })}
         </tbody>
       </table>
       {paging === undefined ? null : <Pager label={label} paging={paging} />}

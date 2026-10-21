@@ -2,7 +2,9 @@ import { useState } from "react";
 
 import { ApiError } from "../data/api";
 import type { LoadView } from "../ds/loaded";
+import type { MenuEntry } from "../ds";
 import type { Paging } from "../ds/pager";
+import { leaseActions } from "../model/actions";
 import { type EventRow, eventRows } from "../model/event-list";
 import {
   eventsOfLease,
@@ -20,6 +22,7 @@ import {
 import { listSearch, readQuery, TABLE_SIZES, writeQuery } from "../model/paging";
 import { itemIdFrom } from "../model/paths";
 import type { WorkerList } from "../model/workers";
+import { useActions } from "./actions";
 import { useRecentEvents } from "./events";
 import { useListDrawer, type ListDrawerState } from "./drawer";
 import { useLiveResource, useNow } from "./live";
@@ -49,6 +52,31 @@ export interface Leases {
   readonly paging: Paging;
   // why: the id in the URL stands even before the list has loaded, so the drawer can ask for it.
   readonly urlId: string | undefined;
+}
+
+// why: the row's ⋯ menu reads the one list of actions a lease offers (ADR 0037 §3).
+export function useLeaseMenu(): (row: LeaseRowView) => readonly MenuEntry[] {
+  const { entries } = useActions();
+  return (row) => entries(leaseActions(row));
+}
+
+// why: a lease's drawer offers the actions of the same row the list shows, under the same item key,
+// so an action in flight from either disables both.
+export function useLeaseDrawerMenu(id: string): {
+  readonly label: string;
+  readonly entries: readonly MenuEntry[];
+} {
+  const { entries } = useActions();
+  const leases = useLiveResource<LeaseList>("/v1/leases").data?.leases ?? [];
+  const tokens = useLiveResource<TokenList>("/v1/tokens").data?.tokens ?? [];
+  const workers = useLiveResource<WorkerList>("/v1/workers").data?.workers ?? [];
+  const now = useNow();
+  const row = leaseRows({ leases, now: now.server, tokens, workers }).find(
+    (candidate) => candidate.id === id,
+  );
+  return row === undefined
+    ? { entries: [], label: "" }
+    : { entries: entries(leaseActions(row)), label: `Actions for ${row.holder}` };
 }
 
 export function useLeaseDrawer(urlId: string | undefined): ListDrawerState {

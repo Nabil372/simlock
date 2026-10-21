@@ -3,6 +3,7 @@ import "./queue.css";
 import {
   type Column,
   DataTable,
+  ActionBar,
   Drawer,
   Facts,
   focusAfterClosing,
@@ -18,6 +19,7 @@ import {
 } from "../../ds";
 import { useItemId, useListDrawer } from "../../state/drawer";
 import {
+  useQueueMenu,
   useWaiting,
   type WaitingPage,
   type WaitingQueue,
@@ -41,6 +43,9 @@ export function QueueScreen() {
               <Drawer
                 key={urlId}
                 title={page.chosen?.requester ?? "Request"}
+                actions={
+                  page.chosen === undefined ? null : <QueueDrawerActions row={page.chosen} />
+                }
                 onClose={close}
                 finalFocus={() =>
                   focusAfterClosing({
@@ -101,6 +106,7 @@ const COLUMNS: readonly Column<WaitingRow>[] = [
 ];
 
 function QueueTable({ page }: { readonly page: WaitingPage }) {
+  const entries = useQueueMenu();
   return (
     <DataTable
       label="Waiting requests"
@@ -108,10 +114,16 @@ function QueueTable({ page }: { readonly page: WaitingPage }) {
       columns={COLUMNS}
       rowId={(row) => row.key}
       rowTo={(row) => row.to}
+      menu={{ entries, label: (row) => `Actions for ${row.requester}` }}
       empty="No requests are waiting."
       paging={page.paging}
     />
   );
+}
+
+function QueueDrawerActions({ row }: { readonly row: WaitingRow }) {
+  const entries = useQueueMenu()(row);
+  return <ActionBar label={`Actions for ${row.requester}`} entries={entries} />;
 }
 
 export function QueueDrawerBody({ page }: { readonly page: WaitingPage }) {
