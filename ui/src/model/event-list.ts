@@ -1,5 +1,5 @@
 import { eventSummary, eventTone } from "./activity";
-import { attentionItems } from "./attention";
+import { inboxItems } from "./inbox";
 import {
   type ConsoleEvent,
   payloadPairs,
@@ -12,7 +12,7 @@ import {
 import { eventsPerMinute, extremes, type MinuteCount } from "./history";
 import { type LeaseRecord, leasePath } from "./leases";
 import { formatCount, writeQuery } from "./paging";
-import { itemPath } from "./paths";
+import { inboxPath, itemPath } from "./paths";
 import type { Tone } from "./tones";
 import type { WaitingRequest } from "./waiting";
 import { type WorkerView, workerPath } from "./workers";
@@ -153,11 +153,11 @@ export function eventAction(event: ConsoleEvent, places: EventPlaces): EventActi
     return { label: "Open request", to: itemPath("/queue", request.id) };
   }
   const deviceId = textField(payload, "deviceId");
-  const item = attentionItems(places.workers).find(
+  const item = inboxItems(places.workers).find(
     (entry) => "device" in entry && entry.worker.id === workerId && entry.device.id === deviceId,
   );
   if (item !== undefined) {
-    return { label: "Open attention item", to: itemPath("/attention", item.key) };
+    return { label: "Open Inbox item", to: inboxPath(item.key) };
   }
   const worker = places.workers.find((entry) => entry.id === workerId);
   if (worker !== undefined) return { label: "Open worker", to: workerPath(worker.id) };

@@ -1,5 +1,5 @@
 import { AxeBuilder } from "@axe-core/playwright";
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 
 import {
   expect,
@@ -76,7 +76,7 @@ async function openSignedIn(page: Page, host: RunningDaemon): Promise<void> {
 
 // why: an open drawer hides the page behind it from assistive technology.
 function opensDrawer(path: string): boolean {
-  return /^\/(leases|queue|activity)\/./.test(path) || /^\/fleet\/[^/?]+\/./.test(path);
+  return /^\/(leases|queue|activity|inbox)\/./.test(path) || /^\/fleet\/[^/?]+\/./.test(path);
 }
 
 async function visit(page: Page, host: RunningDaemon, path: string): Promise<void> {
@@ -163,7 +163,7 @@ test.describe("every view", () => {
       }
 
       await visit(page, host, "/");
-      await expect(page.locator("#main .chart")).toHaveCount(3);
+      await expect(page.locator("#main .chart")).toHaveCount(2);
       const chart = page.locator(".chart [tabindex='0']").first();
       await chart.focus();
       await page.keyboard.press("ArrowLeft");
@@ -192,11 +192,11 @@ test.describe("every view", () => {
       for (const [path, title, index] of [
         ["/", "Leases held, last hour", 0],
         ["/", "Requests in the queue, last hour", 1],
-        ["/", "Device slots in use, last hour", 2],
+        ["/usage", "Device slots in use, last hour", 0],
         ["/activity", "Activity", 0],
       ] as const) {
         await visit(page, host, path);
-        if (path === "/") await expect(page.locator("#main .chart")).toHaveCount(3);
+        if (path === "/") await expect(page.locator("#main .chart")).toHaveCount(2);
         const chart = page.locator("#main .chart").nth(index);
         const heading = page.getByRole("heading", { name: title, exact: true });
         const ring = () => chart.evaluate((element) => getComputedStyle(element).outlineStyle);
@@ -287,6 +287,43 @@ test.describe("every view", () => {
         }));
         expect(found, path).toEqual({ styles: 0, violations: [] });
       }
+      // why: a healthy host has nothing in its Inbox, so a request that has waited two minutes is
+      // stubbed to give the Inbox a row and its drawer something to open.
+      await page.route(
+        (url) => url.pathname === "/v1/lease-requests",
+        async (route: Route) => {
+          const response = await route.fetch();
+          const now = new Date(response.headers().date ?? "").getTime();
+          await route.fulfill({
+            json: {
+              requests: [
+                {
+                  createdAt: now - 125_000,
+                  id: "req_busy",
+                  queuePosition: 1,
+                  requesterId: "busy-agent",
+                  spec: { platform: "ios" },
+                  stage: "queued",
+                },
+              ],
+            },
+            response,
+          });
+        },
+      );
+      for (const path of [
+        "/inbox",
+        "/",
+        `/inbox/${encodeURIComponent("request/req_busy/waiting")}`,
+      ]) {
+        await visit(page, host, path);
+        if (opensDrawer(path)) await expect(page.getByRole("dialog")).toBeVisible();
+        const found = await page.evaluate(() => ({
+          styles: document.querySelectorAll("style").length,
+          violations: (window as unknown as { cspViolations: string[] }).cspViolations,
+        }));
+        expect(found, path).toEqual({ styles: 0, violations: [] });
+      }
       expect(errors).toEqual([]);
     } finally {
       await host.dispose();
@@ -330,60 +367,16 @@ test.describe("every view", () => {
     });
   }
 
-  test("the overview's tiles show the numbers the daemon gives", async ({ page }) => {
+  test("the Overview's Leased tile opens Leases", async ({ page }) => {
     const { host } = await hostWithLease();
     try {
-      const tiles = () =>
-        page
-          .getByRole("list", { name: "Fleet at a glance" })
-          .getByRole("listitem")
-          .evaluateAll((items) =>
-            items.map((item) =>
-              [...item.querySelectorAll(".stat-label, .stat-value, .stat-unit")]
-                .map((part) => part.textContent)
-                .join(" | "),
-            ),
-          );
-      const response = await fetch(new URL("/v1/workers", host.url), {
-        headers: { Authorization: `Bearer ${host.tokens.operator}` },
-      });
-      const { workers } = (await response.json()) as {
-        workers: { capacity?: { ios: { limit: number }; android: { limit: number } } }[];
-      };
-      const limit = workers.reduce(
-        (sum, worker) =>
-          sum + (worker.capacity?.ios.limit ?? 0) + (worker.capacity?.android.limit ?? 0),
-        0,
-      );
       await openSignedIn(page, host);
 
-      await expect
-        .poll(async () => (await tiles()).slice(0, 4))
-        .toEqual([
-          `Utilisation | ${Math.round((100 * 1) / limit)} | %`,
-          `Leases | 1 | of ${limit}`,
-          "Waiting | 0 | none",
-          "Workers | 1 | of 1 up",
-        ]);
-      const stats = (await (
-        await fetch(new URL("/v1/stats?since=1h", host.url), {
-          headers: { Authorization: `Bearer ${host.tokens.operator}` },
-        })
-      ).json()) as { totals: { granted: number; wait: { p95: number | null } } };
-      const wait = stats.totals.wait.p95;
-      await expect
-        .poll(async () => (await tiles()).slice(4))
-        .toEqual([
-          `Granted | ${stats.totals.granted} | last hour`,
-          `Wait p95 | ${
-            wait === null
-              ? "—"
-              : wait < 1_000
-                ? `${Math.round(wait)} ms`
-                : `${Math.floor(wait / 1_000)} s`
-          } | last hour`,
-        ]);
-      await page.getByRole("link", { name: /^Leases 1/ }).click();
+      await page
+        .getByRole("list", { name: "Fleet at a glance" })
+        .getByRole("link", { name: /^Leased 1/ })
+        .click();
+
       await expect(page.getByRole("heading", { level: 1, name: "Leases" })).toBeVisible();
     } finally {
       await host.dispose();

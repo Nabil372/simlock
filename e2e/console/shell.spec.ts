@@ -1,5 +1,5 @@
 import { AxeBuilder } from "@axe-core/playwright";
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 
 import {
   expect,
@@ -109,7 +109,7 @@ test.describe("the shell", () => {
     await expect(page.getByLabel("Operator token")).toBeVisible();
   });
 
-  test("the sidebar shows Overview and Attention, then the Operate group, then the Observe group, each with its label", async ({
+  test("the sidebar shows Overview and Inbox, then the Operate group, then the Observe group, each with its label", async ({
     daemon,
     page,
   }) => {
@@ -120,7 +120,7 @@ test.describe("the shell", () => {
     await expect(nav.getByRole("link")).toHaveText([...NAV_LABELS]);
     expect(NAV.map((entry) => `${entry.label} ${entry.path}`)).toEqual([
       "Overview /",
-      "Attention /attention",
+      "Inbox /inbox",
       "Fleet /fleet",
       "Leases /leases",
       "Queue /queue",
@@ -135,7 +135,7 @@ test.describe("the shell", () => {
       await expect(section.getByRole("link")).toHaveText([...group.links]);
     }
     await expect(nav.getByRole("link", { name: "Overview" })).toHaveCount(1);
-    await expect(nav.getByRole("group").getByRole("link", { name: "Attention" })).toHaveCount(0);
+    await expect(nav.getByRole("group").getByRole("link", { name: "Inbox" })).toHaveCount(0);
   });
 
   test("/fleet, /queue and /activity open the pages titled Fleet, Queue and Activity; /workers, /waiting and /events show Not found", async ({
@@ -222,7 +222,7 @@ test.describe("the shell", () => {
   });
 
   for (const colorScheme of ["light", "dark"] as const) {
-    test(`the shell passes an automated WCAG AA contrast check in both themes (${colorScheme})`, async ({
+    test(`the shell, and Overview and Inbox empty and busy, pass an automated WCAG AA contrast check (${colorScheme})`, async ({
       daemon,
       page,
     }) => {
@@ -247,6 +247,69 @@ test.describe("the shell", () => {
       await signIn(page, daemon.tokens.operator);
       await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
       await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
+      expect(await audit()).toEqual([]);
+
+      await page.goto("/inbox");
+      await expect(page.getByRole("heading", { level: 1, name: "Inbox" })).toBeVisible();
+      await expect(page.getByText("Nothing needs you.")).toBeVisible();
+      expect(await audit()).toEqual([]);
+
+      // why: a request that has waited two minutes and a lease about to end fill the Inbox's groups
+      // and the Overview's panel; neither can be had quickly from a real daemon, so both are stubbed.
+      await page.route(
+        (url) => url.pathname === "/v1/lease-requests",
+        async (route: Route) => {
+          const response = await route.fetch();
+          const now = new Date(response.headers().date ?? "").getTime();
+          await route.fulfill({
+            json: {
+              requests: [
+                {
+                  createdAt: now - 125_000,
+                  id: "req_busy",
+                  queuePosition: 1,
+                  requesterId: "busy-agent",
+                  spec: { platform: "ios" },
+                  stage: "queued",
+                },
+              ],
+            },
+            response,
+          });
+        },
+      );
+      await page.route(
+        (url) => url.pathname === "/v1/leases",
+        async (route: Route) => {
+          const response = await route.fetch();
+          const now = new Date(response.headers().date ?? "").getTime();
+          await route.fulfill({
+            json: {
+              leases: [
+                {
+                  deviceId: "dev_busy",
+                  grantedAt: now - 60_000,
+                  id: "lse_busy",
+                  idChosenByRequester: false,
+                  lastRenewedAt: now - 30_000,
+                  ownerId: "tok_busy",
+                  requesterId: "tok_busy",
+                  ttlDeadline: now + 60_000,
+                  ttlMs: 900_000,
+                },
+              ],
+            },
+            response,
+          });
+        },
+      );
+      await page.goto("/inbox");
+      await expect(page.getByRole("region", { name: "Needs a look" })).toBeVisible();
+      await expect(page.getByRole("region", { name: "Heads-up" })).toBeVisible();
+      expect(await audit()).toEqual([]);
+
+      await page.goto("/");
+      await expect(page.getByRole("region", { name: "Needs you" })).toBeVisible();
       expect(await audit()).toEqual([]);
     });
   }
