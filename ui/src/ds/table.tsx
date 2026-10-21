@@ -80,10 +80,16 @@ export function DataTable<T extends RowData>(props: {
           : { pageIndex: paging.page - 1, pageSize: paging.size },
     },
   });
-  if (rows.length === 0) return <p className="muted">{empty}</p>;
+  if (rows.length === 0) {
+    return (
+      <div className="table-card">
+        <p className="muted table-empty">{empty}</p>
+      </div>
+    );
+  }
   const classes = ["table", wide ? "table-wide" : undefined, className].filter(Boolean).join(" ");
   return (
-    <>
+    <div className="table-card">
       <table className={classes}>
         <thead>
           <tr>
@@ -152,7 +158,7 @@ export function DataTable<T extends RowData>(props: {
         </tbody>
       </table>
       {paging === undefined ? null : <Pager label={label} paging={paging} />}
-    </>
+    </div>
   );
 }
 

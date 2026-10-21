@@ -2,6 +2,7 @@ import "./sidebar.css";
 
 import { type ReactNode, useId, useState } from "react";
 
+import { Button } from "./button";
 import { Icon, type IconName } from "./icon";
 import { Link } from "./link";
 
@@ -50,9 +51,10 @@ export function Sidebar(props: {
   readonly entries: readonly NavEntry[];
   readonly collapsed: boolean;
   readonly onToggle: () => void;
+  readonly onSearch: () => void;
   readonly footer: (collapsed: boolean) => ReactNode;
 }) {
-  const { collapsed, entries, footer, onToggle } = props;
+  const { collapsed, entries, footer, onSearch, onToggle } = props;
   const [menuOpen, setMenuOpen] = useState(false);
   const groups = [...new Set(entries.flatMap((entry) => (entry.group ? [entry.group] : [])))];
   const nav = { collapsed, onNavigate: () => setMenuOpen(false) };
@@ -79,6 +81,18 @@ export function Sidebar(props: {
         </button>
       </div>
       <div className="sidebar-nav">
+        <button
+          type="button"
+          className="sidebar-search"
+          title={collapsed ? "Search or jump to…" : undefined}
+          onClick={() => {
+            onSearch();
+            setMenuOpen(false);
+          }}
+        >
+          <Icon name="search" />
+          <span className="nav-label">Search or jump to…</span>
+        </button>
         <NavList entries={entries.filter((entry) => entry.group === undefined)} {...nav} />
         {groups.map((group) => (
           <NavGroup
@@ -91,8 +105,8 @@ export function Sidebar(props: {
       </div>
       <div className="sidebar-foot">
         {footer(collapsed)}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
           className="sidebar-toggle"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -101,7 +115,7 @@ export function Sidebar(props: {
         >
           <Icon name={collapsed ? "expand" : "collapse"} />
           <span className="nav-label">Collapse</span>
-        </button>
+        </Button>
       </div>
     </nav>
   );

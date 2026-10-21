@@ -224,6 +224,14 @@ put together from them and draws nothing of its own that one of them already dra
 - **Long ids** (a lease's, a worker's, a device's) stay on one line, cut with
   an ellipsis. The whole id is in the element's `title`, in the text a copy or
   a screen reader reads, and on the details page.
+- **Search.** A dialog near the top of the page over a dim layer (`--bg`, 1px `--border-strong`),
+  36rem wide at most: a box, then the results in groups, each group an uppercase label in
+  `--text-muted` over its rows. The highlighted row is `--field` with the same 2px `--accent`
+  inset edge as the current page in the sidebar; orange marks interaction only. A group still
+  loading, or one that failed, shows one `--text-muted` line in place of rows. The box is a
+  combobox and the list a listbox, and the highlight is the active descendant; it is kept by the
+  result's id, not its place, so a group that fills in above never moves it. It sits under the
+  confirm dialog, so an action's confirm opens over it.
 - **Buttons.** Primary: filled `--accent` with `--on-accent` text. Secondary:
   outlined in `--border-strong`, `--text`. Quiet: text only. All are labels.
 - **Inputs.** A `--field` fill and a 1px `--border-strong` border. A select is
@@ -236,7 +244,7 @@ put together from them and draws nothing of its own that one of them already dra
   `--accent`, an area with a faint fill of it (8%), horizontal grid lines in
   `--border`, axis labels in Geist Mono `--text-muted`. Every colour comes from
   the stylesheet by class. Nothing moves: animation is off. Every chart has a
-  title saying what it counts, its numbers as a line of text under it, and every bucket as a table behind a disclosure named by the bucket width ("Minute by minute", "Every 5 minutes", "Hour by hour"), so
+  title saying what it counts, its numbers as a line of text under it, and every bucket in a table only a screen reader reads, so
   nothing is visible only in the picture. A chart can be focused, and the
   arrow keys step through it. Its focus ring goes round the whole chart, for
   keyboard focus only: a click on a chart draws none.
@@ -271,6 +279,8 @@ put together from them and draws nothing of its own that one of them already dra
   for keyboard focus (`:focus-visible`), not on a mouse click.
 - The first control on every signed-in page is "Skip to content", visible only
   when focused.
+- ⌘K and Ctrl+K open the search while the console has focus and no drawer or dialog is open; the
+  browser's own use of the chord is stopped. Closing the search returns focus to where it was.
 
 ## Motion
 

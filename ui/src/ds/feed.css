@@ -4,6 +4,24 @@
 
 .feed {
   position: relative;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* As a page's last part the feed fills the page's height; the box's height comes from the page,
+ * never from its rows, so it still scrolls inside itself. */
+.page > .feed:last-child,
+.page > :last-child > .feed:last-child {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.page > .feed:last-child .feed-box,
+.page > :last-child > .feed:last-child .feed-box {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 20rem;
 }
 
 .feed-box {
@@ -11,7 +29,6 @@
   overflow-y: auto;
   overflow-anchor: none;
   overscroll-behavior: contain;
-  border-top: 1px solid var(--border);
 }
 
 .feed-box:focus-visible {
