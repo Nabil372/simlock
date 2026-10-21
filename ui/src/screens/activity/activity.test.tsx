@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { LoadView } from "../../ds";
 import type { EventDetail, EventRow, EventsPage } from "../../state/events";
-import { EventsContent } from ".";
+import { ActivityContent, EventDrawerBody } from ".";
 
 function text(html: string): string {
   return html
@@ -47,16 +47,31 @@ function page(over: Partial<EventsPage> = {}): EventsPage {
     },
     chosen: { detail: DETAIL, kind: "event" },
     chosenIndex: 0,
+    end: undefined,
     held: 1,
-    named: false,
+    loadOlder: () => {},
+    query: "",
     rows: [row(1)],
     subject: "all",
+    urlId: "evt_1",
     ...over,
   };
 }
 
 function render(view: LoadView<EventsPage>): string {
-  return renderToStaticMarkup(<EventsContent view={view} onSubject={() => {}} />);
+  return renderToStaticMarkup(
+    <ActivityContent
+      view={view}
+      onSubject={() => {}}
+      onSearch={() => {}}
+      onClose={() => {}}
+      finalFocus={() => null}
+    />,
+  );
+}
+
+function drawer(over: Partial<EventsPage> = {}): string {
+  return renderToStaticMarkup(<EventDrawerBody page={page(over)} />);
 }
 
 function ready(over: Partial<EventsPage> = {}): string {
@@ -126,12 +141,20 @@ describe("the events page", () => {
   });
 
   it("says why an empty list is empty", () => {
-    expect(text(ready({ chosen: { kind: "none" }, held: 0, rows: [] }))).toContain(
-      "No events in the last hour.",
-    );
+    expect(text(ready({ chosen: { kind: "none" }, held: 0, rows: [] }))).toContain("Loading…");
+    expect(
+      text(
+        ready({
+          chosen: { kind: "none" },
+          end: { retry: false, text: "No events yet." },
+          held: 0,
+          rows: [],
+        }),
+      ),
+    ).toContain("No events yet.");
     expect(
       text(ready({ chosen: { kind: "none" }, held: 5, rows: [], subject: "device" })),
-    ).toContain("No events of this kind.");
+    ).toContain("No device events among those loaded.");
   });
 
   it("says it is loading, or why it could not load", () => {
@@ -144,41 +167,33 @@ describe("the events page", () => {
   it("shows a refusal above the events it keeps", () => {
     const html = render({ data: page(), kind: "ready", refusal: "Internal error" });
 
-    expect(html).toMatch(/^<p class="refusal" role="alert">Internal error<\/p>/);
+    expect(html).toContain('<p class="refusal" role="alert">Internal error</p>');
     expect(text(html)).toContain("lease.granted");
-  });
-
-  it("opens on the phone at the inspector only when the URL names an event", () => {
-    expect(ready({ named: true })).toContain("focus-detail");
-    expect(ready({ named: false })).toContain("focus-list");
   });
 });
 
-describe("the events page's inspector", () => {
-  it("is titled with the event's name and says when and what", () => {
-    const html = ready();
+describe("the events page's drawer", () => {
+  it("says when and what the event was", () => {
+    const html = drawer();
 
-    expect(html).toMatch(
-      /<h2 [^>]*class="inspector-title mono"[^>]*><span>lease\.granted<\/span><\/h2>/,
-    );
     expect(text(html)).toContain("11:30:00 today · claude-1 · mac-1");
   });
 
   it("shows the payload whole, keys as the daemon spelled them", () => {
-    const html = ready();
+    const html = drawer();
 
     expect(html).toContain('<dl class="facts facts-raw">');
     expect(text(html)).toContain('leaseId lse_1 nested {"deep":true}');
   });
 
   it("says when there is no payload", () => {
-    expect(text(ready({ chosen: { detail: { ...DETAIL, pairs: [] }, kind: "event" } }))).toContain(
+    expect(text(drawer({ chosen: { detail: { ...DETAIL, pairs: [] }, kind: "event" } }))).toContain(
       "No payload.",
     );
   });
 
   it("links to what the event is about when the console has a page for it", () => {
-    const withAction = ready({
+    const withAction = drawer({
       chosen: {
         detail: { ...DETAIL, action: { label: "Open lease", to: "/leases/lse_1/" } },
         kind: "event",
@@ -188,13 +203,14 @@ describe("the events page's inspector", () => {
     expect(withAction).toContain(
       '<a class="button button-secondary" href="/leases/lse_1/">Open lease</a>',
     );
-    expect(ready()).not.toContain("Open lease");
+    expect(drawer()).not.toContain("Open lease");
   });
 
-  it("says an event older than the hour is not there, and links back to the list", () => {
-    const html = ready({ chosen: { id: "evt_old", kind: "missing" }, named: true });
+  it("says an event that is not among those loaded is not, and where older ones come from", () => {
+    const html = drawer({ chosen: { id: "evt_old", kind: "missing" } });
 
-    expect(text(html)).toContain("Event not in the last hour.");
-    expect(html).toContain('<a href="/activity">Back to Activity</a>');
+    expect(text(html)).toContain(
+      "This event is not among those loaded. Older events load as you scroll the list, or with Load older events.",
+    );
   });
 });

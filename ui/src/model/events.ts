@@ -9,6 +9,9 @@ export interface ConsoleEvent {
 
 export const MAX_EVENTS = 10_000;
 
+// why: the size of one page of older events the console asks for.
+export const OLDER_PAGE = 100;
+
 // why: the same window as `simlock events --since 1h`, so the two show the same events.
 export const RECENT = "1h";
 
@@ -35,6 +38,62 @@ export function readReplay(body: unknown): readonly ConsoleEvent[] {
   const events = (body as { readonly events?: unknown } | null)?.events;
   if (!Array.isArray(events)) throw new SyntaxError("The answer has no events list");
   return events.flatMap((data: unknown) => readEvent(data) ?? []);
+}
+
+export interface OlderPage {
+  readonly events: readonly ConsoleEvent[];
+  // why: counted on the raw reply, before malformed events are dropped, so a page that was full on
+  // the wire is not taken for the history's end.
+  readonly full: boolean;
+}
+
+export function readOlder(body: unknown): OlderPage {
+  const events = readReplay(body);
+  const raw = (body as { readonly events: readonly unknown[] }).events.length;
+  return { events, full: raw >= OLDER_PAGE };
+}
+
+// why: where the older events stand: more may come, the history has started, the daemon no longer
+// keeps older events, or the last ask failed and may be repeated.
+export type HistoryState = "more" | "start" | "gone" | "failed";
+
+export interface HistoryEnd {
+  readonly text: string;
+  readonly retry: boolean;
+}
+
+function localMinute(timestamp: number): string {
+  const date = new Date(timestamp);
+  const part = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())} ${part(date.getHours())}:${part(date.getMinutes())}`;
+}
+
+// why: the last row says why the list stops; nothing is said while more may still load.
+export function historyEnd(
+  state: HistoryState,
+  held: readonly ConsoleEvent[],
+): HistoryEnd | undefined {
+  if (held.length >= MAX_EVENTS) {
+    return {
+      retry: false,
+      text: `Showing the newest ${MAX_EVENTS.toLocaleString("en-US")} events.`,
+    };
+  }
+  const oldest = held.at(-1);
+  if (state === "start") {
+    return {
+      retry: false,
+      text:
+        oldest === undefined
+          ? "No events yet."
+          : `Start of the history (${localMinute(oldest.timestamp)})`,
+    };
+  }
+  if (state === "gone") return { retry: false, text: "Older events are no longer kept." };
+  if (state === "failed") {
+    return { retry: true, text: "Older events are not available right now." };
+  }
+  return undefined;
 }
 
 // why: identity is the `id` alone, so an event seen twice, by the stream and by the `since` window,

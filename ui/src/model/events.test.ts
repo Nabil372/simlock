@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   type ConsoleEvent,
   eventsOfWorker,
+  MAX_EVENTS,
   mergeEvents,
   payloadPairs,
   readEvent,
+  readOlder,
   readReplay,
   sinceFor,
   subjectOf,
@@ -64,6 +66,40 @@ describe("the events the console holds", () => {
     const held = [event("lease.granted")];
 
     expect(mergeEvents(held, [event("lease.granted")])).toBe(held);
+  });
+});
+
+describe("the events an older page adds", () => {
+  const at = (seq: number): ConsoleEvent => ({
+    ...event("lease.renewed", {}, seq),
+    timestamp: T0 + seq,
+  });
+
+  it("go below the newer ones in order, show once an event the stream also brought, and give way to the newer ones past the cap", () => {
+    const held = [at(9), at(8), at(7)];
+    const page = [at(4), at(5), at(6), at(7)];
+
+    const merged = mergeEvents(held, page);
+
+    expect(merged.map((entry) => entry.seq)).toEqual([9, 8, 7, 6, 5, 4]);
+    const full = Array.from({ length: MAX_EVENTS }, (_, index) => at(1_000 + MAX_EVENTS - index));
+    const capped = mergeEvents(full.slice(0, MAX_EVENTS - 2), [at(3), at(2), at(1)]);
+    expect(capped).toHaveLength(MAX_EVENTS);
+    expect(capped.at(-1)?.seq).toBe(2);
+  });
+});
+
+describe("a page of older events", () => {
+  it("is full when the reply held 100 events, even if some were malformed, and not full with 99", () => {
+    const body = (count: number) => ({
+      events: Array.from({ length: count }, (_, index) =>
+        index === 0 ? { malformed: true } : event("lease.renewed", {}, index),
+      ),
+    });
+
+    expect(readOlder(body(100)).full).toBe(true);
+    expect(readOlder(body(100)).events).toHaveLength(99);
+    expect(readOlder(body(99)).full).toBe(false);
   });
 });
 
