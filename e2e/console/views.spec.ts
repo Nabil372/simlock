@@ -37,7 +37,7 @@ async function hostWithLease(): Promise<{ readonly host: RunningDaemon; readonly
     pages: {
       lease: `/leases/${encodeURIComponent(lease)}/`,
       views: NAV.map((entry) => ({ label: entry.label, path: entry.path })),
-      worker: `/workers/${encodeURIComponent(worker?.id ?? "")}`,
+      worker: `/fleet/${encodeURIComponent(worker?.id ?? "")}`,
     },
   };
 }
@@ -54,7 +54,13 @@ async function openSignedIn(page: Page, host: RunningDaemon): Promise<void> {
 
 async function visit(page: Page, host: RunningDaemon, path: string): Promise<void> {
   await page.goto(new URL(path, host.url).toString());
-  await expect(page.locator("#main").getByRole("heading").first()).toBeVisible();
+  // why: an open drawer hides the page behind it from assistive technology, so there the heading is found by hidden role too.
+  await expect(
+    page
+      .locator("#main")
+      .getByRole("heading", { includeHidden: /^\/leases\/./.test(path) })
+      .first(),
+  ).toBeVisible();
   await expect(page.locator("#main")).not.toContainText("Loading…");
   await settled(page);
 }
@@ -90,7 +96,8 @@ test.describe("every view", () => {
     const { host, pages } = await hostWithLease();
     try {
       await openSignedIn(page, host);
-      for (const path of every(pages)) {
+      // why: a drawer traps the keyboard inside itself, so the lease page is left out of this order.
+      for (const path of every(pages).filter((candidate) => candidate !== pages.lease)) {
         await visit(page, host, path);
         // why: a radio group is one stop, at its checked radio, and nothing inside a closed
         // disclosure is a stop, so those are left out of the order Tab should follow; neither is
@@ -133,16 +140,12 @@ test.describe("every view", () => {
       await page.locator("#main summary").first().focus();
       await page.keyboard.press("Enter");
       await expect(page.getByRole("columnheader", { name: "Leases held" })).toBeVisible();
-      await visit(page, host, "/events");
+      await visit(page, host, "/activity");
       await page.getByRole("radio", { name: "All" }).focus();
       await page.keyboard.press("ArrowRight");
       await expect(page.getByRole("radio", { name: "Leases" })).toBeChecked();
       await visit(page, host, pages.lease);
-      await page
-        .getByRole("navigation", { name: "Breadcrumb" })
-        .getByRole("link", { name: "Leases" })
-        .focus();
-      await page.keyboard.press("Enter");
+      await page.keyboard.press("Escape");
       await expect(page).toHaveURL(/\/leases$/);
     } finally {
       await host.dispose();
@@ -159,7 +162,7 @@ test.describe("every view", () => {
         ["/", "Leases held, last hour", 0],
         ["/", "Requests in the queue, last hour", 1],
         ["/", "Device slots in use, last hour", 2],
-        ["/events", "Events", 0],
+        ["/activity", "Activity", 0],
       ] as const) {
         await visit(page, host, path);
         if (path === "/") await expect(page.locator("#main .chart")).toHaveCount(3);
@@ -240,6 +243,7 @@ test.describe("every view", () => {
 
       for (const path of every(pages)) {
         await visit(page, host, path);
+        if (path === pages.lease) await expect(page.getByRole("dialog")).toBeVisible();
         const chart = page.locator(".chart svg").first();
         if ((await chart.count()) > 0) {
           await chart.hover();
@@ -326,7 +330,7 @@ test.describe("every view", () => {
       for (const width of [1280, 1024, 768, 360]) {
         await page.setViewportSize({ height: 800, width });
         await visit(page, host, pages.lease);
-        const shown = page.locator("#main .id", { hasText: id });
+        const shown = page.locator(".drawer .id", { hasText: id });
         await expect(shown).toHaveAttribute("title", id);
         const shape = await shown.evaluate((element) => ({
           lines: Math.round(

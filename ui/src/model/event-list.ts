@@ -5,6 +5,7 @@ import {
   payloadPairs,
   type Subject,
   subjectOf,
+  textField,
   timeOfDay,
   workerIdOf,
 } from "./events";
@@ -93,7 +94,7 @@ export function eventRows(
       name: event.event,
       summary: eventSummary(event, workers),
       time: timeOfDay(event.timestamp),
-      to: `${itemPath("/events", event.id)}${query}`,
+      to: `${itemPath("/activity", event.id)}${query}`,
       ...(tone === undefined ? {} : { tone }),
     };
   });
@@ -120,12 +121,6 @@ export interface EventPlaces {
   readonly requests: readonly WaitingRequest[];
 }
 
-function textField(payload: unknown, key: string): string | undefined {
-  if (typeof payload !== "object" || payload === null) return undefined;
-  const value = (payload as Record<string, unknown>)[key];
-  return typeof value === "string" && value !== "" ? value : undefined;
-}
-
 // why: a link goes only where the console has a page now: a released lease, an answered request or
 // an unlisted worker has none. A relayed worker event names the lease as the worker did, and a
 // gateway lists it as `<workerId>.<id>`, so both spellings are tried.
@@ -145,7 +140,7 @@ export function eventAction(event: ConsoleEvent, places: EventPlaces): EventActi
   const requestId = textField(payload, "requestId");
   const request = places.requests.find((entry) => entry.id === requestId);
   if (request !== undefined) {
-    return { label: "Open request", to: itemPath("/waiting", request.id) };
+    return { label: "Open request", to: itemPath("/queue", request.id) };
   }
   const deviceId = textField(payload, "deviceId");
   const item = attentionItems(places.workers).find(

@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import type { statusLeaseSchema, tokenRecordSchema } from "../../../src/contract/schemas";
 import { defined } from "./defined";
+import { type ConsoleEvent, textField, workerIdOf } from "./events";
 import { formatDuration } from "./time";
 import { type WorkerDevice, type WorkerView, workerName, workerPath } from "./workers";
 
@@ -155,6 +156,8 @@ export interface LeaseRowView {
   readonly remaining: string;
   readonly expiring: boolean;
   readonly percent: number;
+  readonly model: string;
+  readonly worker?: string;
   readonly sub: string;
   readonly platform?: string;
 }
@@ -168,18 +171,20 @@ export function leaseRows(input: {
   const { leases, now, tokens, workers } = input;
   return inGrantOrder(leases).map((lease) => {
     const device = deviceOfLease(lease, workers);
-    const sub = [device?.spec.model ?? lease.deviceId, workerNameOfLease(lease, workers)]
-      .filter((part) => part !== undefined)
-      .join(" · ");
+    const model = device?.spec.model ?? lease.deviceId;
+    const worker = workerNameOfLease(lease, workers);
+    const sub = [model, worker].filter((part) => part !== undefined).join(" · ");
     return {
       expiring: isExpiring(lease.ttlDeadline, now),
       holder: holderTitle(holderOf(lease.requesterId, tokens)),
       id: lease.id,
       key: `${lease.workerId ?? ""} ${lease.id}`,
+      model,
       percent: percentLeft(lease.ttlDeadline, now, lease.ttlMs),
       remaining: formatDuration(lease.ttlDeadline - now),
       sub,
       to: leasePath(lease.id),
+      ...(worker === undefined ? {} : { worker }),
       ...(device === undefined ? {} : { platform: device.spec.platform }),
     };
   });
@@ -192,6 +197,19 @@ export function filterLeaseRows(
   if (filter === "all") return rows;
   if (filter === "expiring") return rows.filter((row) => row.expiring);
   return rows.filter((row) => row.platform === filter);
+}
+
+export function searchLeaseRows(
+  rows: readonly LeaseRowView[],
+  query: string,
+): readonly LeaseRowView[] {
+  const wanted = query.toLowerCase();
+  if (wanted === "") return rows;
+  return rows.filter((row) =>
+    [row.holder, row.model, row.worker, row.id].some((field) =>
+      field?.toLowerCase().includes(wanted),
+    ),
+  );
 }
 
 export interface StreamOffer {
@@ -315,4 +333,21 @@ function leaseWorker(
   const name = workerNameOfLease(named, workers);
   if (name === undefined) return undefined;
   return worker === undefined ? { name } : { name, to: workerPath(worker.id) };
+}
+
+// why: a worker names its lease `lse_x` in its events, and a gateway lists the same lease as
+// `<workerId>.lse_x`, so a relayed event matches under both spellings; the gateway's own events
+// name the lease as listed.
+export function eventsOfLease(
+  events: readonly ConsoleEvent[],
+  leaseId: string,
+): readonly ConsoleEvent[] {
+  return events
+    .filter((event) => {
+      const named = textField(event.payload, "leaseId");
+      if (named === undefined) return false;
+      const workerId = workerIdOf(event);
+      return named === leaseId || (workerId !== undefined && `${workerId}.${named}` === leaseId);
+    })
+    .toSorted((a, b) => b.timestamp - a.timestamp || b.seq - a.seq);
 }

@@ -9,14 +9,21 @@ describe("an item's page path", () => {
     }
   });
 
+  it("round-trips an id with a slash for /fleet, /queue and /activity", () => {
+    for (const section of ["/fleet", "/queue", "/activity"] as const) {
+      expect(itemPath(section, "a/b c"), section).toBe(`${section}/a%2Fb%20c`);
+      expect(itemIdFrom(section, itemPath(section, "a/b c")), section).toBe("a/b c");
+    }
+  });
+
   it("names no item on the section's own page or on another section's", () => {
-    expect(itemIdFrom("/events", "/events")).toBeUndefined();
-    expect(itemIdFrom("/events", "/events/")).toBeUndefined();
-    expect(itemIdFrom("/events", "/eventsx/1")).toBeUndefined();
-    expect(itemIdFrom("/events", "/leases/1")).toBeUndefined();
+    expect(itemIdFrom("/activity", "/activity")).toBeUndefined();
+    expect(itemIdFrom("/activity", "/activity/")).toBeUndefined();
+    expect(itemIdFrom("/activity", "/activityx/1")).toBeUndefined();
+    expect(itemIdFrom("/activity", "/leases/1")).toBeUndefined();
   });
 
   it("keeps a malformed escape as it was typed", () => {
-    expect(itemIdFrom("/events", "/events/%E0%A4%A")).toBe("%E0%A4%A");
+    expect(itemIdFrom("/activity", "/activity/%E0%A4%A")).toBe("%E0%A4%A");
   });
 });

@@ -145,7 +145,7 @@ describe("the workers list", () => {
   it("heads the list with how many workers are up and offers the three filters", () => {
     const markup = html(page(WORKER));
 
-    expect(text(markup)).toContain("Workers 1 / 1 up");
+    expect(text(markup)).toContain("Fleet 1 / 1 up");
     for (const label of ["All", "Issues", "Busy"]) expect(text(markup)).toContain(label);
     expect(markup).toContain('value="issues"');
   });
@@ -268,8 +268,8 @@ describe("a worker's inspector", () => {
   it("says that no worker has the id in the URL, with a link back to the list", () => {
     const markup = html(page(undefined, { missing: "wrk_nope" }, [WORKER]));
 
-    expect(text(markup)).toContain("Worker not found. All workers");
-    expect(markup).toContain('href="/workers"');
+    expect(text(markup)).toContain("Worker not found. Back to Fleet");
+    expect(markup).toContain('href="/fleet"');
   });
 });
 

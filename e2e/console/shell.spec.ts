@@ -1,7 +1,16 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 
-import { expect, NAV, NAV_LABELS, openFromNav, settled, signIn, test } from "./fixtures.js";
+import {
+  expect,
+  NAV,
+  NAV_GROUPS,
+  NAV_LABELS,
+  openFromNav,
+  settled,
+  signIn,
+  test,
+} from "./fixtures.js";
 
 async function hasHorizontalScroll(page: Page): Promise<boolean> {
   return page.evaluate(
@@ -22,11 +31,11 @@ test.describe("the shell", () => {
 
     await signIn(page, daemon.tokens.operator);
     const nav = page.getByRole("navigation", { name: "Console" });
-    await expect(nav.getByRole("link", { name: "Workers" })).toBeHidden();
+    await expect(nav.getByRole("link", { name: "Fleet" })).toBeHidden();
     for (const label of NAV_LABELS) {
       await openFromNav(page, label);
       await expect(page.getByRole("heading", { level: 1, name: label })).toBeVisible();
-      await expect(nav.getByRole("link", { name: "Workers" })).toBeHidden();
+      await expect(nav.getByRole("link", { name: "Fleet" })).toBeHidden();
       expect(await hasHorizontalScroll(page)).toBe(false);
     }
     await page.goto("/no-such-page");
@@ -100,6 +109,57 @@ test.describe("the shell", () => {
     await expect(page.getByLabel("Operator token")).toBeVisible();
   });
 
+  test("the sidebar shows Overview and Attention, then the Operate group, then the Observe group, each with its label", async ({
+    daemon,
+    page,
+  }) => {
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await page.goto("/");
+    await signIn(page, daemon.tokens.operator);
+    const nav = page.getByRole("navigation", { name: "Console" });
+    await expect(nav.getByRole("link")).toHaveText([...NAV_LABELS]);
+    expect(NAV.map((entry) => `${entry.label} ${entry.path}`)).toEqual([
+      "Overview /",
+      "Attention /attention",
+      "Fleet /fleet",
+      "Leases /leases",
+      "Queue /queue",
+      "Activity /activity",
+      "Usage /usage",
+    ]);
+
+    await expect(nav.getByRole("group")).toHaveCount(NAV_GROUPS.length);
+    for (const group of NAV_GROUPS) {
+      const section = nav.getByRole("group", { name: group.label });
+      await expect(nav.getByText(group.label, { exact: true })).toBeVisible();
+      await expect(section.getByRole("link")).toHaveText([...group.links]);
+    }
+    await expect(nav.getByRole("link", { name: "Overview" })).toHaveCount(1);
+    await expect(nav.getByRole("group").getByRole("link", { name: "Attention" })).toHaveCount(0);
+  });
+
+  test("/fleet, /queue and /activity open the pages titled Fleet, Queue and Activity; /workers, /waiting and /events show Not found", async ({
+    daemon,
+    page,
+  }) => {
+    const heading = page.getByRole("heading", { level: 1 });
+    await page.goto("/");
+    await signIn(page, daemon.tokens.operator);
+    await expect(heading).toHaveText("Overview");
+    for (const [path, title] of [
+      ["/fleet", "Fleet"],
+      ["/queue", "Queue"],
+      ["/activity", "Activity"],
+    ] as const) {
+      await page.goto(path);
+      await expect(heading).toHaveText(title);
+    }
+    for (const path of ["/workers", "/waiting", "/events"]) {
+      await page.goto(path);
+      await expect(heading).toHaveText("Page not found");
+    }
+  });
+
   test("the sidebar collapses to icons on request, keeps every link's name, and stays collapsed on every page and after a reload", async ({
     daemon,
     page,
@@ -108,12 +168,12 @@ test.describe("the shell", () => {
     await page.goto("/");
     await signIn(page, daemon.tokens.operator);
     const nav = page.getByRole("navigation", { name: "Console" });
-    const label = nav.getByText("Workers", { exact: true });
+    const label = nav.getByText("Fleet", { exact: true });
     await expect(label).toBeVisible();
 
     await nav.getByRole("button", { name: "Collapse sidebar" }).click();
     await expect(label).toBeHidden();
-    await expect(nav.getByRole("link", { name: "Workers" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Fleet" })).toBeVisible();
     await expect(nav.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute(
       "aria-expanded",
       "false",
