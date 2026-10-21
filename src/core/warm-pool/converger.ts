@@ -54,7 +54,7 @@ export interface WarmPoolOptions {
     CapacityCoordinator,
     "canBoot" | "canProvision" | "runningCapacity" | "tryReserveBoot" | "tryReserveProvisioning"
   >;
-  readonly claims: Pick<DeviceOperationClaims, "isClaimed" | "operationFor" | "tryClaim">;
+  readonly claims: Pick<DeviceOperationClaims, "claim" | "isClaimed" | "operationFor" | "tryClaim">;
   readonly clock: Clock;
   readonly config: WarmPoolConfig;
   readonly decisions: Pick<SerializedDecision, "run">;
@@ -75,22 +75,24 @@ export interface WarmPoolOptions {
 /** The tick that re-runs a pass when no event does, so a slot freed silently is still used. */
 export const WARM_POOL_TICK_MS = 30_000;
 
-/** A target boot or creation that runs beside the pass: the target's spec, and its end. */
+/** why: a boot or creation of the pool that runs beside the pass, for a target or a waiter: its spec, and its end. */
 interface Flight {
+  readonly creation: boolean;
   readonly spec: VirtualSpec;
   done: Promise<void>;
 }
 
 /**
- * Observes the bus and runs one pass at a time over the pool: it resolves the operator's targets,
+ * why: observes the bus and runs one pass at a time over the pool: it resolves the operator's targets,
  * reads a snapshot, asks the policy what to shut down, boot and create, and does each through the
  * device lifecycle and the provisioner, revalidating the device first (safety rule 2). A trigger
  * that arrives during a pass asks for one more, not one each.
  *
  * Every action that is attempted ends in `kick()`, whether it worked or not, so a request waiting
  * on a boot the pool started plans again either way; one declined before it began does not. A
- * boot or creation for a target runs beside the pass, up to `maxConcurrentBoots` at a time, and
- * asks for the next pass when it ends.
+ * boot or creation for a target or for a waiting request runs beside the pass, up to
+ * `maxConcurrentBoots` at a time with the waiting requests' own, and asks for the next pass when
+ * it ends.
  */
 export class WarmPool {
   readonly #logger: Logger;
@@ -481,6 +483,7 @@ export class WarmPool {
       isClaimed: (deviceId) => this.options.claims.isClaimed(deviceId),
       leases,
       now: this.options.clock.now(),
+      onItsWay: this.#onItsWay(devices),
       resetDevices: new Set(this.#reset),
       retry: this.#schedule,
       spared: this.#spared,
@@ -489,39 +492,79 @@ export class WarmPool {
     };
   }
 
+  /**
+   * why: a request waits for a device that is `provisioning`, or shut down under an ownerless
+   * `boot` claim, so the policy matches those to waiters. A creation in flight has no device until
+   * it registers, and counts once: only the flights beyond the spec's `provisioning` devices.
+   */
+  #onItsWay(devices: readonly VirtualDevice[]): { spec: VirtualSpec; deviceId?: string }[] {
+    const entries: { spec: VirtualSpec; deviceId?: string }[] = devices.flatMap((device) => {
+      const claim = this.options.claims.claim(device.id);
+      const onItsWay =
+        (device.state === "provisioning" || device.state === "shutdown") &&
+        claim?.kind === "boot" &&
+        claim.owner === undefined;
+      return onItsWay ? [{ deviceId: device.id, spec: device.spec }] : [];
+    });
+    const creations = [...this.#flights].filter((flight) => flight.creation);
+    for (const [index, flight] of creations.entries()) {
+      const earlier = creations
+        .slice(0, index)
+        .filter((other) => sameSpec(other.spec, flight.spec));
+      const registered = entries.filter(
+        (entry) =>
+          sameSpec(entry.spec, flight.spec) &&
+          devices.some((device) => device.id === entry.deviceId && device.state === "provisioning"),
+      );
+      if (earlier.length >= registered.length) entries.push({ spec: flight.spec });
+    }
+    return entries;
+  }
+
   async #act(proposal: WarmProposal): Promise<void> {
     if (this.options.acquisition.maintenanceActive) return;
     if (proposal.action === "provision") {
-      this.#launch(proposal.target, () => this.#provision(proposal.spec, proposal.target));
+      this.#launch(proposal.target, true, () => this.#provision(proposal.spec, proposal.target));
       return;
     }
-    // A failed keep boot releases its reservation, which changes capacity and so triggers the next
+    // why: a failed keep boot releases its reservation, which changes capacity and so triggers the next
     // pass at once; without a pause that would retry a broken one in a loop. A failed shutdown
     // frees nothing, but any other trigger that comes soon would propose it again, so it is held
-    // back the same way. A target's boot is held back by the retry schedule instead, which the
-    // policy reads before it proposes one.
+    // back the same way. A target's or a waiter's boot is held back by the retry schedule instead,
+    // which the policy reads before it proposes one.
+    const owner = this.#ownerOf(proposal);
     if (
-      proposal.target === undefined &&
+      owner === undefined &&
       (this.#retryAfter.get(proposal.deviceId) ?? 0) > this.options.clock.now()
     ) {
       return;
     }
     if (proposal.action === "shutdown") await this.#shutdown(proposal.deviceId);
-    else if (proposal.target === undefined) await this.#boot(proposal.deviceId, undefined);
-    else {
-      const target = proposal.target;
-      this.#launch(target, () => this.#boot(proposal.deviceId, target));
+    else if (owner === undefined) await this.#boot(proposal.deviceId, undefined);
+    else this.#launch(owner, false, () => this.#boot(proposal.deviceId, owner));
+  }
+
+  /** why: the spec a boot or creation is held back by, when it is one of a target's or a waiter's. */
+  #ownerOf(proposal: Exclude<WarmProposal, { action: "provision" }>): VirtualSpec | undefined {
+    if (proposal.action === "boot" && proposal.reason === "waiting-request") {
+      return this.#specOf(proposal.deviceId);
     }
+    return proposal.target;
+  }
+
+  #specOf(deviceId: string): VirtualSpec | undefined {
+    return this.options.registry.snapshot.virtualDevices.find((device) => device.id === deviceId)
+      ?.spec;
   }
 
   /**
-   * Starts a target's boot or creation beside the pass, which does not wait for it: the policy
+   * why: starts a boot or creation for a target or a waiter beside the pass, which does not wait for it: the policy
    * counts it toward `maxConcurrentBoots` until it ends, and its end asks for the next pass when
    * an attempt was made. One that was declined (the device or the budget was gone by then) asks
    * for none: the same view would propose it again at once, and the pool would spin.
    */
-  #launch(spec: VirtualSpec, run: () => Promise<boolean>): void {
-    const flight: Flight = { done: Promise.resolve(), spec };
+  #launch(spec: VirtualSpec, creation: boolean, run: () => Promise<boolean>): void {
+    const flight: Flight = { creation, done: Promise.resolve(), spec };
     this.#flights.add(flight);
     flight.done = run()
       .catch((error: unknown) => {
@@ -692,4 +735,5 @@ const TRIGGERS = [
   "device.deleted",
   "cleanup.executed",
   "capacity.changed",
+  "lease.queued",
 ] as const;

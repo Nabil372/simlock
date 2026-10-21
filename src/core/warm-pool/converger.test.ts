@@ -4,12 +4,13 @@ import { EventBus } from "../../bus/index.js";
 import { FakeClock, JsonLinesLogger, MemoryLogSink } from "../../ports/index.js";
 import type { RunningCapacity } from "../capacity/index.js";
 import { DeviceOperationClaims } from "../device-operation-claims.js";
-import type {
-  VirtualDevice,
-  VirtualSpec,
-  LeaseRecord,
-  TargetResolution,
-  WaitingDemand,
+import {
+  exactRequirement,
+  type VirtualDevice,
+  type VirtualSpec,
+  type LeaseRecord,
+  type TargetResolution,
+  type WaitingDemand,
 } from "../domain.js";
 import { BootTimeoutError, type DeviceRequest } from "../driver.js";
 import { SerializedDecision } from "../serialized-decision.js";
@@ -60,6 +61,17 @@ function leaseOn(deviceId: string): LeaseRecord {
   };
 }
 
+function waiter(spec: VirtualSpec, inFlight = false): WaitingDemand {
+  return {
+    classOf: () => undefined,
+    inFlight,
+    mode: "full",
+    platform: spec.platform,
+    requirement: exactRequirement(spec),
+    spec,
+  };
+}
+
 function harness(
   initial: readonly VirtualDevice[],
   options: {
@@ -85,6 +97,7 @@ function harness(
     /** The budget's reservation call throws, which no refusal does. */
     reserveThrows?: boolean;
     refusedPlatforms?: readonly ("ios" | "android")[];
+    provisioning?: Promise<void>;
   } = {},
 ) {
   const clock = new FakeClock(now);
@@ -125,6 +138,13 @@ function harness(
   }[] = [];
   const provisionReservations: { released: number }[] = [];
   const reserveAttempts = { count: 0 };
+  const finishProvisioning = async (id: string): Promise<void> => {
+    if (options.provisioning === undefined) return;
+    await options.provisioning;
+    state.devices = state.devices.map((item) =>
+      item.id === id ? { ...item, state: "ready" } : item,
+    );
+  };
   const poolOptions: WarmPoolOptions = {
     acquisition: {
       kick,
@@ -195,6 +215,7 @@ function harness(
       },
     },
     claims: {
+      claim: (id) => claims.claim(id),
       isClaimed: (id) => claims.isClaimed(id),
       operationFor: (id) => claims.operationFor(id),
       tryClaim: (id, operation) =>
@@ -257,7 +278,7 @@ function harness(
           mode: "full",
           readyAt: clock.now(),
           spec,
-          state: "ready",
+          state: options.provisioning === undefined ? "ready" : "provisioning",
         };
         state.devices = [...state.devices, created];
         const claim = claims.tryClaim(
@@ -268,6 +289,7 @@ function harness(
         if (claim === undefined) throw new Error("the new device is already claimed");
         provisionOptions.reservation.release();
         record.deviceId = id;
+        await finishProvisioning(id);
         return { claim, device: created };
       },
     },
@@ -777,6 +799,7 @@ describe("warm pool converger", () => {
       ["device.shutdown", { deviceId: "d", initiator: "test" }],
       ["device.deleted", { deviceId: "d", initiator: "test", physical: false }],
       ["cleanup.executed", { action: "shutdown", reason: "r", ruleName: "n", target: "d" }],
+      ["lease.queued", { queuePosition: 2, requestId: "r" }],
     ] as const;
     const rig = harness([]);
     rig.pool.start();
@@ -849,6 +872,43 @@ describe("warm pool targets", () => {
     expect(rig.claims.isClaimed("new-1")).toBe(false);
     expect(rig.state.devices.map((item) => item.state)).toEqual(["ready"]);
     expect(rig.kick).toHaveBeenCalled();
+  });
+
+  it("runs a waiting-request creation under an ownerless boot claim and a provisioning reservation, releases the claim once ready, kicks, and on a throw logs once and holds the spec back a minute", async () => {
+    const behind = { ...kind, model: "iPhone 16" };
+    const waiting = [waiter({ ...kind, model: "iPhone 15" }, true), waiter(behind)];
+    const ok = harness([], { maxConcurrentBoots: 2, waiting: () => waiting });
+
+    await ok.pool.pass();
+    await ok.pool.settle();
+
+    expect(ok.provisionCalls).toHaveLength(1);
+    expect(ok.provisionCalls[0]?.spec).toEqual(behind);
+    expect(ok.provisionCalls[0]?.claim).toEqual({ kind: "boot" });
+    expect(ok.provisionReservations).toHaveLength(1);
+    expect(ok.claims.isClaimed("new-1")).toBe(false);
+    expect(ok.kick).toHaveBeenCalled();
+
+    const failing = harness([], {
+      maxConcurrentBoots: 2,
+      provision: async () => {
+        throw new Error("the runtime would not boot");
+      },
+      waiting: () => waiting,
+    });
+    await failing.pool.pass();
+    await failing.pool.settle();
+    failing.clock.advance(WARM_POOL_TICK_MS);
+    await failing.pool.settle();
+
+    expect(failing.provisionCalls).toHaveLength(1);
+    const warnings = failing.sink.records.filter(
+      (record) => record.message === "warm pool creation of a device failed",
+    );
+    expect(warnings).toHaveLength(1);
+    failing.clock.advance(minute);
+    await failing.pool.settle();
+    expect(failing.provisionCalls).toHaveLength(2);
   });
 
   it("boots a shut-down device of the target's kind before creating one, and counts the target filled", async () => {
@@ -960,6 +1020,93 @@ describe("warm pool targets", () => {
     gate.finish();
     await rig.pool.settle();
     expect(rig.provisionCalls).toHaveLength(3);
+  });
+
+  it("runs waiting-request boots beside the pass, three at once under maxConcurrentBoots 3, and counts them in the next pass's inFlight", async () => {
+    const gate = held();
+    const shutDown = ["a", "b", "c", "d"].map((id) => device(id, "shutdown", 20 * minute));
+    const rig = harness(shutDown, {
+      boot: async (target) => {
+        await gate.gate;
+        const ready = { ...target, state: "ready" as const };
+        rig.state.devices = rig.state.devices.map((item) => (item.id === target.id ? ready : item));
+        return ready;
+      },
+      maxConcurrentBoots: 3,
+      waiting: () => shutDown.map((item) => waiter(item.spec)),
+    });
+
+    const first = rig.pool.pass();
+    await flush();
+    expect(rig.bootCalls).toEqual(["a", "b", "c"]);
+
+    const second = rig.pool.pass();
+    await flush();
+    expect(rig.bootCalls).toEqual(["a", "b", "c"]);
+
+    gate.finish();
+    await Promise.all([first, second]);
+    await rig.pool.settle();
+    expect(rig.bootCalls).toContain("d");
+  });
+
+  it("builds onItsWay with one entry per on-its-way device and one per creation flight not yet registered, never two for one creation and never one short", async () => {
+    const x = device("shut-x", "shutdown", 20 * minute).spec;
+    const head = waiter({ ...kind, model: "iPad Pro" }, true);
+    const x2 = waiter(x);
+    const x3 = waiter(x);
+    const x4 = waiter(x);
+    const run = async (
+      devices: readonly VirtualDevice[],
+      first: readonly WaitingDemand[],
+      provisioning?: Promise<void>,
+      registers = false,
+      owner?: string,
+    ) => {
+      let waiting: readonly WaitingDemand[] = first;
+      const gate = held();
+      const rig = harness(devices, {
+        boot: async () => gate.gate.then(() => undefined),
+        maxConcurrentBoots: 10,
+        provision: async () => gate.gate,
+        ...(provisioning === undefined ? {} : { provisioning }),
+        waiting: () => waiting,
+      });
+      const counts = () => [rig.bootCalls.length, rig.provisionCalls.length];
+      if (owner !== undefined) rig.claims.tryClaim("shut-x", "boot", owner);
+      void rig.pool.pass();
+      await flush();
+      const started = counts();
+      if (registers) {
+        gate.finish();
+        await flush();
+      }
+      void rig.pool.pass();
+      await flush();
+      const again = counts();
+      waiting = [...first, x4];
+      void rig.pool.pass();
+      await flush();
+      return { again, later: counts(), started };
+    };
+
+    const unregistered = await run([], [head, x2]);
+    expect(unregistered).toEqual({ again: [0, 1], later: [0, 2], started: [0, 1] });
+
+    const registered = await run([], [head, x2], new Promise<void>(() => undefined), true);
+    expect(registered).toEqual({ again: [0, 1], later: [0, 2], started: [0, 1] });
+
+    const bootAndCreation = await run([device("shut-x", "shutdown", 20 * minute)], [head, x2, x3]);
+    expect(bootAndCreation).toEqual({ again: [1, 1], later: [1, 2], started: [1, 1] });
+
+    const owned = await run(
+      [device("shut-x", "shutdown", 20 * minute)],
+      [head, x2],
+      undefined,
+      false,
+      "an-agent",
+    );
+    expect(owned).toEqual({ again: [0, 1], later: [0, 2], started: [0, 1] });
   });
 
   it("does not return from a pass for a creation it started, and settle waits for it", async () => {
