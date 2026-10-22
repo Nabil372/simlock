@@ -1,9 +1,39 @@
 import { asDaemonRefusal, UsageError } from "../errors.js";
 import { connectDaemonClient } from "../connect.js";
+import { stopRunningDaemon } from "../daemon-service.js";
 import { commandArgs, isHelp, subcommand, writeResult } from "../args.js";
 import { consoleLines, formatStatus } from "../format.js";
 import type { StatusGetOutput } from "../../admin/index.js";
+import type { ServiceDefinition, ServiceManager } from "../../ports/index.js";
 import type { CommandContext } from "../tree.js";
+
+function serviceAccess(
+  environment: CommandContext["environment"],
+  command: "install" | "uninstall",
+): {
+  readonly manager: ServiceManager;
+  readonly definition: () => Promise<ServiceDefinition>;
+} {
+  const { service } = environment;
+  if (service?.manager === undefined) {
+    throw new UsageError(`daemon ${command} is supported on macOS only`);
+  }
+  return { manager: service.manager, definition: service.definition };
+}
+
+async function startDaemon(context: CommandContext): Promise<StatusGetOutput> {
+  const { environment, token } = context;
+  const client = await connectDaemonClient(environment, token, { launch: true });
+  try {
+    return await client.getStatus();
+  } finally {
+    await client.close();
+  }
+}
+
+function runningLines(status: StatusGetOutput): string {
+  return `${["Daemon running", ...consoleLines(status.daemon)].join("\n")}\n`;
+}
 
 // fallow-ignore-next-line complexity -- daemon subcommand parsing is a single CLI boundary.
 async function run(argv: readonly string[], context: CommandContext): Promise<number> {
@@ -15,23 +45,69 @@ async function run(argv: readonly string[], context: CommandContext): Promise<nu
     json: { type: "boolean" },
   });
   if (command === undefined || isHelp(command) || values.help) {
-    environment.stdout.write("Usage: simlock daemon <start|stop|status|logs [--follow]>\n");
+    environment.stdout.write(
+      "Usage: simlock daemon <start|stop|status|logs [--follow]|install|uninstall>\n",
+    );
     return 0;
   }
   if (values.positionals.length > 0) throw new UsageError("daemon accepts exactly one subcommand");
   if (values.follow && command !== "logs") throw new UsageError("--follow applies only to logs");
   if (command === "start") {
-    const client = await connectDaemonClient(environment, token, { launch: true });
-    let status: StatusGetOutput;
-    try {
-      status = await client.getStatus();
-    } finally {
-      await client.close();
-    }
+    const status = await startDaemon(context);
     if (values.json) writeResult((value) => environment.stdout.write(value), { status: "running" });
+    else environment.stdout.write(runningLines(status));
+    return 0;
+  }
+  if (command === "install") {
+    const { manager, definition } = serviceAccess(environment, "install");
+    const service = await definition();
+    const stopped = await stopRunningDaemon(environment, token);
+    await manager.install(service);
+    const status = await startDaemon(context);
+    if (values.json) {
+      writeResult((value) => environment.stdout.write(value), {
+        status: "installed",
+        ...(stopped ? { stopped: true } : {}),
+        service: {
+          state: "installed",
+          manager: manager.manager,
+          name: service.name,
+          path: service.path,
+        },
+      });
+    } else {
+      if (stopped) environment.stdout.write("Stopped the running daemon; leases are kept.\n");
+      environment.stdout.write(`Service installed: ${service.name} (${manager.manager})\n`);
+      environment.stdout.write(runningLines(status));
+      environment.stdout.write("To start after a reboot, turn on automatic login for this user.\n");
+    }
+    return 0;
+  }
+  if (command === "uninstall") {
+    const { manager, definition } = serviceAccess(environment, "uninstall");
+    const service = await definition();
+    const state = await manager.state(service);
+    const writeJson = (status: string, extra: Record<string, unknown>): void =>
+      writeResult((value) => environment.stdout.write(value), {
+        status,
+        ...extra,
+        service: {
+          state: "not-installed",
+          manager: manager.manager,
+          name: service.name,
+        },
+      });
+    if (state.state === "not-installed") {
+      if (values.json) writeJson("not-installed", {});
+      else environment.stdout.write(`Service not installed: ${service.name}\n`);
+      return 0;
+    }
+    const stopped = await stopRunningDaemon(environment, token);
+    await manager.uninstall(service);
+    if (values.json) writeJson("removed", stopped ? { stopped: true } : {});
     else {
-      const lines = ["Daemon running", ...consoleLines(status.daemon)];
-      environment.stdout.write(`${lines.join("\n")}\n`);
+      if (stopped) environment.stdout.write("Daemon stopping\n");
+      environment.stdout.write(`Service removed: ${service.name} (${manager.manager})\n`);
     }
     return 0;
   }
