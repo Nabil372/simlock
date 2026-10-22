@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 import type { Filesystem } from "./filesystem.js";
 import type { DaemonRole } from "./paths.js";
@@ -21,6 +21,7 @@ export interface ServiceDefinition {
 }
 
 export interface ServiceDefinitionInput {
+  readonly manager?: ServiceManagerName;
   readonly role: DaemonRole;
   readonly root: string;
   readonly dataDirectory: string;
@@ -47,19 +48,30 @@ function homeHash(root: string): string {
   return createHash("sha256").update(root).digest("hex").slice(0, 6);
 }
 
+function unitDirectory(input: ServiceDefinitionInput): string {
+  const configured = input.env.XDG_CONFIG_HOME;
+  const config =
+    configured !== undefined && isAbsolute(configured) ? configured : join(input.home, ".config");
+  return join(config, "systemd", "user");
+}
+
 export function serviceDefinition(input: ServiceDefinitionInput): ServiceDefinition {
   const environment: Record<string, string> = { SIMLOCK_HOME: input.root };
   for (const variable of SAVED_VARIABLES) {
     const value = input.env[variable];
     if (value !== undefined) environment[variable] = value;
   }
+  const manager = input.manager ?? "launchd";
   const base = `com.callstack.simlock.${input.role}`;
   const name =
     input.root === join(input.home, ".simlock") ? base : `${base}.${homeHash(input.root)}`;
   return {
     role: input.role,
     name,
-    path: join(input.home, "Library", "LaunchAgents", `${name}.plist`),
+    path:
+      manager === "systemd"
+        ? join(unitDirectory(input), `${name}.service`)
+        : join(input.home, "Library", "LaunchAgents", `${name}.plist`),
     command: input.nodePath,
     args: [input.mainPath, ...(input.role === "gateway" ? ["--gateway"] : [])],
     environment,
@@ -194,6 +206,15 @@ function isExistsError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
 }
 
+async function ensureLog(filesystem: Filesystem, logPath: string): Promise<void> {
+  await filesystem.mkdirp(dirname(logPath));
+  try {
+    await filesystem.writeFileExclusive(logPath, "", { mode: 0o600 });
+  } catch (error: unknown) {
+    if (!isExistsError(error)) throw error;
+  }
+}
+
 export class LaunchdServiceManager implements ServiceManager {
   readonly manager = "launchd";
 
@@ -234,12 +255,7 @@ export class LaunchdServiceManager implements ServiceManager {
   async install(definition: ServiceDefinition): Promise<void> {
     const { filesystem } = this.options;
     await this.launchctl(["bootout", `${this.domain()}/${definition.name}`]);
-    await filesystem.mkdirp(dirname(definition.logPath));
-    try {
-      await filesystem.writeFileExclusive(definition.logPath, "", { mode: 0o600 });
-    } catch (error: unknown) {
-      if (!isExistsError(error)) throw error;
-    }
+    await ensureLog(filesystem, definition.logPath);
     await filesystem.mkdirp(dirname(definition.path));
     await filesystem.writeFileAtomic(definition.path, plistFor(definition));
     const bootstrapArgs = ["bootstrap", this.domain(), definition.path];
@@ -264,6 +280,117 @@ export class LaunchdServiceManager implements ServiceManager {
   }
 }
 
+export interface SystemdServiceManagerOptions {
+  readonly runner: ProcessRunner;
+  readonly filesystem: Filesystem;
+}
+
+function unitFor(definition: ServiceDefinition): string {
+  const variables = Object.entries(definition.environment)
+    .map(([key, value]) => `Environment="${key}=${value}"`)
+    .join("\n");
+  return `[Unit]
+Description=simlock ${definition.role} daemon
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=${[definition.command, ...definition.args].join(" ")}
+${variables}
+Restart=on-failure
+RestartSec=10
+KillMode=process
+TimeoutStopSec=${String(STOP_LIMIT_SECONDS)}
+StandardOutput=append:${definition.logPath}
+StandardError=append:${definition.logPath}
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+function savedUnitPaths(unit: string): readonly string[] {
+  const line = unit.split("\n").find((candidate) => candidate.startsWith("ExecStart="));
+  return (line?.slice("ExecStart=".length).trim().split(/\s+/) ?? [])
+    .slice(0, 2)
+    .filter((path) => path !== "");
+}
+
+export class SystemdServiceManager implements ServiceManager {
+  readonly manager = "systemd";
+
+  constructor(private readonly options: SystemdServiceManagerOptions) {}
+
+  private async systemctl(args: readonly string[]): Promise<ProcessResult> {
+    const userArgs = ["--user", ...args];
+    let result: ProcessResult;
+    try {
+      result = await this.options.runner.run("systemctl", userArgs, {
+        timeoutMs: LAUNCHCTL_TIMEOUT_MS,
+      });
+    } catch (error: unknown) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new ServiceFailedError(`systemctl ${userArgs.join(" ")} failed: ${reason}`);
+    }
+    if (result.code === null) {
+      throw new ServiceFailedError(`systemctl ${userArgs.join(" ")} did not finish within 10 s`);
+    }
+    return result;
+  }
+
+  private async checked(args: readonly string[]): Promise<void> {
+    const result = await this.systemctl(args);
+    if (result.code !== 0) failure("systemctl", ["--user", ...args], result);
+  }
+
+  async state(definition: ServiceDefinition): Promise<ServiceState> {
+    const { filesystem } = this.options;
+    if (!(await filesystem.exists(definition.path))) return { state: "not-installed" };
+    const saved = savedUnitPaths(await filesystem.readFile(definition.path));
+    if (saved.length === 0) {
+      return { state: "broken", path: definition.path, missing: [definition.path] };
+    }
+    const missing: string[] = [];
+    for (const path of saved) if (!(await filesystem.exists(path))) missing.push(path);
+    if (missing.length > 0) return { state: "broken", path: definition.path, missing };
+    const enabled = await this.systemctl(["is-enabled", `${definition.name}.service`]).catch(
+      () => undefined,
+    );
+    const loaded = enabled?.code === 0 && enabled.stdout.trim() === "enabled";
+    return { state: loaded ? "installed" : "not-loaded", path: definition.path };
+  }
+
+  async install(definition: ServiceDefinition): Promise<void> {
+    const { filesystem } = this.options;
+    await ensureLog(filesystem, definition.logPath);
+    await filesystem.mkdirp(dirname(definition.path));
+    await filesystem.writeFileAtomic(definition.path, unitFor(definition));
+    try {
+      await this.checked(["daemon-reload"]);
+      await this.checked(["enable", "--now", `${definition.name}.service`]);
+    } catch (error: unknown) {
+      await filesystem.rm(definition.path);
+      throw error;
+    }
+  }
+
+  async uninstall(definition: ServiceDefinition): Promise<void> {
+    await this.checked(["disable", "--now", `${definition.name}.service`]);
+    const { filesystem } = this.options;
+    const text = await filesystem.readFile(definition.path);
+    await filesystem.rm(definition.path);
+    try {
+      await this.checked(["daemon-reload"]);
+    } catch (error: unknown) {
+      await filesystem.writeFileAtomic(definition.path, text);
+      throw error;
+    }
+  }
+
+  async start(definition: ServiceDefinition): Promise<void> {
+    await this.checked(["start", `${definition.name}.service`]);
+  }
+}
+
 export function productionServiceManager(
   platform: NodeJS.Platform,
   dependencies: {
@@ -272,5 +399,6 @@ export function productionServiceManager(
     readonly uid: number;
   },
 ): ServiceManager | undefined {
+  if (platform === "linux") return new SystemdServiceManager(dependencies);
   return platform === "darwin" ? new LaunchdServiceManager(dependencies) : undefined;
 }

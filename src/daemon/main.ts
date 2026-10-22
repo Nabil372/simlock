@@ -1643,6 +1643,7 @@ export function productionServiceCheck(
 ): { readonly serviceCheck?: ServiceCheck } {
   return serviceCheckFor(role, host.manager, () =>
     serviceDefinition({
+      ...(host.manager === undefined ? {} : { manager: host.manager.manager }),
       role,
       root: host.root,
       dataDirectory: daemonDataDirectory(host.root, role),
