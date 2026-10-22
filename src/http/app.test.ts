@@ -340,6 +340,41 @@ describe("GET /v1/status, /v1/catalog", () => {
   });
 });
 
+describe("a query to a System route", () => {
+  it.each([
+    ["/v1/catalog?platform=windows", 400, "platform must be ios or android", undefined],
+    ["/v1/catalog?platform=ios&platform=android", 200, undefined, { platform: "ios" }],
+    ["/v1/stats?ledger=2", 400, "ledger must be 1", undefined],
+    [
+      "/v1/stats?since=1h&from=2026-10-15T00:00Z",
+      400,
+      "stats takes since or from, not both",
+      undefined,
+    ],
+  ])("%s gets today's answer", async (url, status, message, dispatched) => {
+    const { app, dispatcher } = buildHarness();
+    const seen: unknown[] = [];
+    dispatcher.handlers["catalog.get"] = (input) => {
+      seen.push(input);
+      return { platforms: [] };
+    };
+    dispatcher.handlers["usage.get"] = (input) => {
+      seen.push(input);
+      return {};
+    };
+
+    const response = await app.request(url, { headers: operatorAuth });
+
+    expect(response.status).toBe(status);
+    if (message === undefined) {
+      expect(seen).toEqual([dispatched]);
+    } else {
+      expect(await response.json()).toEqual({ error: { code: "BAD_REQUEST", message } });
+      expect(seen).toEqual([]);
+    }
+  });
+});
+
 describe("GET /v1/components", () => {
   const listing = {
     components: [
@@ -445,6 +480,68 @@ describe("POST /v1/devices and DELETE /v1/devices/{id}", () => {
     expect(response.status).toBe(400);
     expect(((await response.json()) as { error: { code: string } }).error.code).toBe("BAD_REQUEST");
   });
+
+  it.each([
+    [
+      "no content type, with a body",
+      undefined,
+      '{"id":"A","platform":"ios"}',
+      415,
+      "UNSUPPORTED_MEDIA_TYPE",
+      "Content-Type must be application/json",
+    ],
+    [
+      "text/plain",
+      "text/plain",
+      '{"id":"A","platform":"ios"}',
+      415,
+      "UNSUPPORTED_MEDIA_TYPE",
+      "Content-Type must be application/json",
+    ],
+    [
+      "application/json; charset=utf-8",
+      "application/json; charset=utf-8",
+      '{"id":"A","platform":"ios"}',
+      200,
+      undefined,
+      undefined,
+    ],
+    [
+      "application/json with malformed JSON",
+      "application/json",
+      '{"id":',
+      400,
+      "BAD_REQUEST",
+      "Invalid JSON body",
+    ],
+  ])(
+    "POST /v1/devices with %s answers 415 without a JSON content type, 400 for malformed JSON, else the dispatcher",
+    async (_case, contentType, body, status, code, message) => {
+      const { app, dispatcher } = buildHarness();
+      const seen: unknown[] = [];
+      dispatcher.handlers["device.add"] = (input) => {
+        seen.push(input);
+        return enrolled;
+      };
+
+      const response = await app.request("/v1/devices", {
+        body: new TextEncoder().encode(body),
+        headers: {
+          ...operatorAuth,
+          ...(contentType === undefined ? {} : { "content-type": contentType }),
+        },
+        method: "POST",
+      });
+
+      expect(response.status).toBe(status);
+      if (code === undefined) {
+        expect(seen).toEqual([{ id: "A", platform: "ios" }]);
+      } else {
+        expect(await response.json()).toEqual({ error: { code, message } });
+        expect(seen).toEqual([]);
+      }
+    },
+  );
 
   it("dispatches device.remove with the path's id, and answers its result as JSON", async () => {
     const { app, dispatcher } = buildHarness();
@@ -2060,7 +2157,7 @@ describe("operator-only listing routes", () => {
     const { app, dispatcher } = buildHarness();
     dispatcher.handlers["list.get"] = (input) => {
       expect(input).toEqual({ kind: "devices" });
-      return [{ id: "dev_1" }, { id: "dev_2" }];
+      return [makeDevice({ id: "dev_1" }), makeDevice({ id: "dev_2" })];
     };
 
     const response = await app.request("/v1/devices", { headers: operatorAuth });

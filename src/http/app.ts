@@ -1,5 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
-import { type Context, Hono } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
+import type { Context } from "hono";
 import { z } from "zod";
 
 import type { EventBus } from "../bus/index.js";
@@ -7,6 +8,7 @@ import {
   type ComponentProgress,
   describeSchemaIssues,
   eventsPageQuery,
+  OPERATIONS,
   refuseModelWithClass,
   deviceClassSchema,
   leaseIdSchema,
@@ -30,6 +32,18 @@ import {
   unknownRequest,
 } from "./errors.js";
 import { LeaseNoticeBuffer } from "./notices.js";
+import {
+  catalogRoute,
+  deviceAddRoute,
+  deviceRemoveRoute,
+  devicesReplySchema,
+  devicesRoute,
+  healthzRoute,
+  identityRoute,
+  statsRoute,
+  statusRoute,
+} from "./route-declarations.js";
+import { validationHook } from "./routes.js";
 import { OutputRelay } from "./output-relay.js";
 import { pipeSse } from "./sse.js";
 import type { Auth, Identity } from "../auth/index.js";
@@ -136,8 +150,6 @@ const componentInstallBodySchema = z
   })
   .strict();
 
-const deviceAddBodySchema = z.object({ id: z.string(), platform: z.string() }).strict();
-
 function jsonBody<Schema extends z.ZodType>(schema: Schema) {
   return zValidator("json", schema, (result, c) => {
     if (!result.success) {
@@ -185,8 +197,8 @@ export interface HttpAppDisposable {
 }
 
 // fallow-ignore-next-line complexity -- route wiring for one focused resource surface; splitting it would scatter the shared closures (tracker, notices) across files for no clarity gain.
-export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposable {
-  const app = new Hono<Env>();
+export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpAppDisposable {
+  const app = new OpenAPIHono<Env>({ defaultHook: validationHook });
   const logger = deps.logger.child("http");
   const tracker = new LeaseRequestTracker({
     clock: deps.clock,
@@ -227,24 +239,22 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
     });
   });
 
-  app.get("/v1/healthz", (c) => c.json({ ok: true }));
+  app.openapi(healthzRoute, (c) => c.json({ ok: true as const }, 200));
 
-  app.get("/v1/status", agentAuth, async (c) =>
-    c.json(await deps.dispatch("status.get", {}, buildHttpSession(c.get("identity")))),
+  app.openapi({ ...statusRoute, middleware: [agentAuth] }, async (c) =>
+    c.json(await deps.dispatch("status.get", {}, buildHttpSession(c.get("identity"))), 200),
   );
 
-  app.get("/v1/catalog", agentAuth, async (c) => {
-    const platform = c.req.query("platform");
-    if (platform !== undefined && platform !== "ios" && platform !== "android") {
-      throw badRequest("platform must be ios or android");
-    }
-    const result = await deps.dispatch(
-      "catalog.get",
-      platform === undefined ? {} : { platform },
-      buildHttpSession(c.get("identity")),
-    );
-    return c.json(result);
-  });
+  app.openapi({ ...catalogRoute, middleware: [agentAuth] }, async (c) =>
+    c.json(
+      await deps.dispatch(
+        "catalog.get",
+        OPERATIONS["catalog.get"].input.parse(c.req.valid("query")),
+        buildHttpSession(c.get("identity")),
+      ),
+      200,
+    ),
+  );
 
   app.get("/v1/components", agentAuth, async (c) => {
     const platform = c.req.query("platform");
@@ -276,23 +286,23 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
     return c.json(result);
   });
 
-  app.post("/v1/devices", agentAuth, jsonBody(deviceAddBodySchema), async (c) => {
-    const result = await deps.dispatch(
-      "device.add",
-      c.req.valid("json"),
-      buildHttpSession(c.get("identity")),
-    );
-    return c.json(result);
-  });
+  app.openapi({ ...deviceAddRoute, middleware: [agentAuth] }, async (c) =>
+    c.json(
+      await deps.dispatch("device.add", c.req.valid("json"), buildHttpSession(c.get("identity"))),
+      200,
+    ),
+  );
 
-  app.delete("/v1/devices/:id", agentAuth, async (c) => {
-    const result = await deps.dispatch(
-      "device.remove",
-      { id: c.req.param("id") },
-      buildHttpSession(c.get("identity")),
-    );
-    return c.json(result);
-  });
+  app.openapi({ ...deviceRemoveRoute, middleware: [agentAuth] }, async (c) =>
+    c.json(
+      await deps.dispatch(
+        "device.remove",
+        { id: c.req.valid("param").id },
+        buildHttpSession(c.get("identity")),
+      ),
+      200,
+    ),
+  );
 
   app.post("/v1/lease-requests", agentAuth, jsonBody(leaseRequestBodySchema), async (c) => {
     const identity = c.get("identity");
@@ -640,17 +650,17 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
     c.json(await deps.dispatch("token.list", {}, buildHttpSession(c.get("identity")))),
   );
 
-  app.get("/v1/identity", agentAuth, async (c) =>
-    c.json(await deps.dispatch("identity.get", {}, buildHttpSession(c.get("identity")))),
+  app.openapi({ ...identityRoute, middleware: [agentAuth] }, async (c) =>
+    c.json(await deps.dispatch("identity.get", {}, buildHttpSession(c.get("identity"))), 200),
   );
 
-  app.get("/v1/devices", agentAuth, async (c) => {
+  app.openapi({ ...devicesRoute, middleware: [agentAuth] }, async (c) => {
     const devices = await deps.dispatch(
       "list.get",
       { kind: "devices" },
       buildHttpSession(c.get("identity")),
     );
-    return c.json({ devices });
+    return c.json(devicesReplySchema.parse({ devices }), 200);
   });
 
   // ADR 0005 §23's worker routes, registered in both modes (ADR 0012 §3). A worker answers them
@@ -710,14 +720,13 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
     return c.json({ events });
   });
 
-  app.get("/v1/stats", agentAuth, async (c) => {
-    const ledger = c.req.query("ledger");
-    if (ledger !== undefined && ledger !== "1") throw badRequest("ledger must be 1");
+  app.openapi({ ...statsRoute, middleware: [agentAuth] }, async (c) => {
+    const query = c.req.valid("query");
     const asked = usageWindow(
       {
-        ...optionalQuery(c.req.query("from"), "from"),
-        ...optionalQuery(c.req.query("since"), "since"),
-        ...optionalQuery(c.req.query("to"), "to"),
+        ...optionalQuery(query.from, "from"),
+        ...optionalQuery(query.since, "since"),
+        ...optionalQuery(query.to, "to"),
       },
       deps.clock.now(),
     );
@@ -725,9 +734,10 @@ export function createHttpApp(deps: HttpGatewayDeps): Hono<Env> & HttpAppDisposa
     return c.json(
       await deps.dispatch(
         "usage.get",
-        ledger === undefined ? asked.window : { ...asked.window, includeLedger: true },
+        query.ledger === undefined ? asked.window : { ...asked.window, includeLedger: true },
         buildHttpSession(c.get("identity")),
       ),
+      200,
     );
   });
 
