@@ -3514,7 +3514,11 @@ describe("Dispatcher: device.exec", () => {
         "device.exec",
         { args: [], leaseId, tool: "simctl" },
         session({
-          onOutput: () => new Promise<void>(() => {}),
+          onOutput: () =>
+            new Promise<void>(() => {
+              // why: A consumer whose backpressure never clears -- a dead SSE write, a socket that
+              // never drains.
+            }),
           principal: "tok_agent",
         }),
       );
@@ -3533,7 +3537,12 @@ describe("Dispatcher: device.exec", () => {
         "device.exec",
         { args: [], leaseId, tool: "simctl" },
         session({
-          onOutput: () => new Promise<void>(() => {}),
+          onOutput: () =>
+            new Promise<void>(() => {
+              // why: Never resolves: the stream is paused on this chunk's delivery for the rest
+              // of the test, exactly as a client that opened the stream and stopped reading
+              // would leave it.
+            }),
           principal: "tok_agent",
         }),
       );
