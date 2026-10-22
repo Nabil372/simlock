@@ -150,3 +150,46 @@ describe("test lanes (package.json)", () => {
     expect(quality).toMatch(/needs:\s*\[[^\]]*\btiming\b/);
   });
 });
+
+/** why: a job's block is its two-space-indented key and every line up to the next one. */
+function ciJobs(ci: string): ReadonlyMap<string, string> {
+  const body = /\njobs:\n([\s\S]*)$/.exec(ci)?.[1] ?? "";
+  const jobs = new Map<string, string>();
+  for (const block of body.split(/\n(?= {2}[a-z][\w-]*:\n)/)) {
+    const id = /^ {2}([a-z][\w-]*):\n/.exec(block)?.[1];
+    if (id !== undefined) jobs.set(id, block);
+  }
+  return jobs;
+}
+
+// why: main's console lane needs about 33 minutes of one runner's two workers (#852), so each
+// of four shards runs about 8 inside the 15-minute job timeout.
+const CONSOLE_SHARDS_AT_LEAST = 4;
+
+describe("the console lane in CI (.github/workflows/ci.yml)", () => {
+  it("runs the console lane over a matrix of at least four shards, each passing its `--shard=<i>/<n>` in both browser modes, and the required `Console` check needs that job and fails when it does not pass", () => {
+    const ci = readFileSync(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+    const jobs = [...ciJobs(ci)];
+    const lanes = jobs.filter(([, job]) => job.includes("pnpm test:console"));
+    const required = jobs.find(([, job]) => /\n {4}name: Console\n/.test(job));
+
+    expect(lanes.map(([id]) => id)).toHaveLength(1);
+    const [laneId, lane] = lanes[0] ?? ["", ""];
+    const shards = /\n {8}shard: \[([^\]]*)\]/.exec(lane)?.[1]?.split(",") ?? [];
+    expect(shards.length, "shards in the console lane's matrix").toBeGreaterThanOrEqual(
+      CONSOLE_SHARDS_AT_LEAST,
+    );
+    const runs = lane.match(/pnpm test:console[^\n]*/g) ?? [];
+    expect(runs, "the lane's chromium-only and every-browser commands").toHaveLength(2);
+    for (const run of runs) {
+      expect(/--shard[= ]"?\S+\/(\d+)"?/.exec(run)?.[1], run).toBe(String(shards.length));
+    }
+
+    expect(required, "a job named Console").toBeDefined();
+    const [requiredId, requiredJob] = required ?? ["", ""];
+    expect(requiredId).not.toBe(laneId);
+    expect(requiredJob).toMatch(new RegExp(`\\n {4}needs: \\[[^\\]]*\\b${laneId}\\b`));
+    expect(requiredJob).toMatch(/\n {4}if: (\$\{\{ )?always\(\)/);
+    expect(requiredJob).toContain("needs.*.result");
+  });
+});
