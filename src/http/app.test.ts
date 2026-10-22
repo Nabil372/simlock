@@ -1530,6 +1530,12 @@ describe("lease routes", () => {
   it.each([
     ["renew", "/v1/leases/lse_1/renew", '{"ttlMs":60000}', "lease.renew"],
     ["exec", "/v1/leases/lse_1/exec", '{"args":["list"],"tool":"simctl"}', "device.exec"],
+    [
+      "install",
+      "/v1/components/install",
+      '{"platform":"android","version":"35"}',
+      "component.install",
+    ],
   ])(
     "a caller sends the %s body without a JSON content type and gets 415 UNSUPPORTED_MEDIA_TYPE; with application/json it reaches the dispatcher",
     async (_route, path, body, operation) => {
@@ -1543,6 +1549,12 @@ describe("lease routes", () => {
         ttlDeadline: 2_000,
       });
       dispatcher.handlers["device.exec"] = () => ({ exitCode: 0 });
+      dispatcher.handlers["component.install"] = () => ({
+        component: "35",
+        outcome: "installed",
+        platform: "android",
+        version: "35",
+      });
       const send = (contentType: string | undefined) =>
         app.request(path, {
           body,
@@ -2361,6 +2373,7 @@ describe("operator-only listing routes", () => {
     ["before=evt_abc&limit=501", "limit must be a whole number from 1 to 500"],
     ["before=evt_abc&limit=x", "limit must be a whole number from 1 to 500"],
     ["before=not-an-id", "before must be an event id"],
+    ["since=abc", "Invalid duration: abc"],
     ["before=evt_abc&since=1h", "before and since cannot be used together"],
     ["limit=50&since=1h", "limit and since cannot be used together"],
   ])("GET /v1/events?%s answers 400 BAD_REQUEST before dispatching", async (query, message) => {
