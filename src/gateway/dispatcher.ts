@@ -39,6 +39,7 @@ import { createUsageReader, type UsageReader } from "../core/index.js";
 import type { EventHistoryHandle } from "../history/index.js";
 import {
   consoleUrlField,
+  isSimlockError,
   EVENTS_PAGE_DEFAULT,
   OPERATIONS,
   requestedDevice,
@@ -59,7 +60,7 @@ import { NoopLogger } from "../ports/index.js";
 import { aggregateCatalog, aggregateStatus, type AggregateStatusOptions } from "./aggregate.js";
 import { relayComponentInstall } from "./component-relay.js";
 import type { FleetLeaseCoordinator } from "./fleet-coordinator.js";
-import type { WorkerDirectory } from "./fleet-ports.js";
+import { isUplinkLost, liveClient, type WorkerDirectory } from "./fleet-ports.js";
 import type { FleetLeaseIndex } from "./lease-index.js";
 import type { WorkerRegistry } from "./worker-registry.js";
 
@@ -92,6 +93,16 @@ export type AlertTestOutcome =
       readonly status?: number;
       readonly error?: string;
     };
+
+type DaemonUpdateOutput = z.infer<(typeof OPERATIONS)["daemon.update"]["output"]>;
+
+// why: ADR 0042 §6: the gateway's own update has no lease wait and goes straight to installing; `src/daemon` supplies it.
+export interface GatewayUpdate {
+  request(
+    input: z.infer<(typeof OPERATIONS)["daemon.update"]["input"]>,
+  ): Promise<Omit<DaemonUpdateOutput, "health" | "version">>;
+  state(): Pick<DaemonUpdateOutput, "lastUpdateFailure" | "latestVersion" | "update">;
+}
 
 export interface GatewayDispatcherOptions {
   readonly historyPath?: string;
@@ -126,6 +137,7 @@ export interface GatewayDispatcherOptions {
   readonly health: () => "starting" | "running" | "failed";
   readonly version: string;
   readonly latestVersion: () => string | null;
+  readonly update: GatewayUpdate;
   readonly host: AggregateStatusOptions["host"];
   readonly load?: () => AggregateStatusOptions["load"];
   readonly awaitReady: () => Promise<void>;
@@ -193,6 +205,8 @@ function alertTestError(
   }
 }
 
+const UPDATE_UPLINK_BOUND_MS = 90_000;
+
 export class GatewayDispatcher {
   readonly #logger: Logger;
   readonly #dispatchLogger: Logger;
@@ -233,11 +247,9 @@ export class GatewayDispatcher {
       "worker.drain": this.#workerDrain,
       "worker.undrain": this.#workerUndrain,
       "worker.remove": this.#workerRemove,
+      "worker.update": this.#workerUpdate,
       "alerts.test": this.#alertsTest,
-      "daemon.update": unsupportedByDesign(
-        "daemon.update",
-        "daemon.update updates one machine's daemon; a gateway cannot update itself yet",
-      ),
+      "daemon.update": this.#daemonUpdate,
       "worker.install-component": this.#workerInstallComponent,
       "lease.list": this.#leaseList,
       "list.get": this.#listGet,
@@ -326,9 +338,7 @@ export class GatewayDispatcher {
           health: "starting",
           mode: "gateway",
           version: this.options.version,
-          update: null,
-          lastUpdateFailure: null,
-          latestVersion: this.options.latestVersion(),
+          ...this.options.update.state(),
           ...consoleUrl,
         },
         history,
@@ -340,6 +350,7 @@ export class GatewayDispatcher {
       health: this.options.health(),
       version: this.options.version,
       latestVersion: this.options.latestVersion(),
+      progress: this.options.update.state(),
       host: this.options.host,
       ...(load === undefined ? {} : { load }),
       physicalQueueDepth: this.options.coordinator.physicalQueueDepth,
@@ -410,6 +421,63 @@ export class GatewayDispatcher {
     await this.options.workers.setDrained(input.workerId, false);
     return { drained: false, workerId: input.workerId };
   };
+
+  #daemonUpdate: Handler<"daemon.update"> = async (input) => ({
+    ...(await this.options.update.request(input)),
+    health: this.options.health(),
+    version: this.options.version,
+  });
+
+  #workerUpdate: Handler<"worker.update"> = async (input) => {
+    const view = this.options.workers.view(input.workerId);
+    if (view === undefined) {
+      throw new DispatchError("UNKNOWN_WORKER", `Unknown worker: ${input.workerId}`, {
+        workerId: input.workerId,
+      });
+    }
+    const target = this.options.directory.target(input.workerId);
+    const client = liveClient(target);
+    if (view.connection === "disconnected" || client === undefined || target === undefined) {
+      throw new DispatchError("WORKER_NOT_CONNECTED", `worker ${input.workerId} is not connected`, {
+        workerId: input.workerId,
+      });
+    }
+    const { workerId, ...request } = input;
+    const answer = await this.#withinUplinkBound(
+      client.updateDaemon(request).catch((error: unknown) => {
+        throw relayedUpdateError(error, workerId);
+      }),
+      workerId,
+    );
+    this.options.workers.refreshUpdate(workerId, answer);
+    await target.refresh();
+    return { ...answer, workerId };
+  };
+
+  // why: above the worker's own npm `view` and `root -g` (30 s each); at the limit the view catches up on the next read.
+  #withinUplinkBound<Value>(call: Promise<Value>, workerId: string): Promise<Value> {
+    return new Promise<Value>((resolve, reject) => {
+      const timer = this.options.clock.setTimer(UPDATE_UPLINK_BOUND_MS, () => {
+        reject(
+          new DispatchError(
+            "WORKER_NOT_CONNECTED",
+            `worker ${workerId} did not answer within 90 s; check simlock worker list`,
+            { workerId },
+          ),
+        );
+      });
+      call.then(
+        (value) => {
+          this.options.clock.cancel(timer);
+          resolve(value);
+        },
+        (error: unknown) => {
+          this.options.clock.cancel(timer);
+          reject(error);
+        },
+      );
+    });
+  }
 
   #alertsTest: Handler<"alerts.test"> = async (input) => {
     const { destination } = input;
@@ -659,4 +727,16 @@ function unsupportedByDesign(
 // why: relays run from a gateway to its workers, so a gateway's own front door has none.
 function relayRefused(): never {
   throw new DispatchError("FORBIDDEN", "A gateway does not accept relay operations");
+}
+
+// why: a worker's refusal keeps its code and message so HTTP and the CLI answer it as the worker would (409, 502); a link that closed under the call
+// never answered, so it is WORKER_NOT_CONNECTED like the 90 s limit.
+function relayedUpdateError(error: unknown, workerId: string): unknown {
+  if (!isSimlockError(error)) return error;
+  if (isUplinkLost(error)) {
+    return new DispatchError("WORKER_NOT_CONNECTED", `worker ${workerId} is not connected`, {
+      workerId,
+    });
+  }
+  return new DispatchError(error.code, error.message, error.details);
 }

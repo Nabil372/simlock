@@ -2563,7 +2563,7 @@ describe("POST /v1/update", () => {
       }),
     );
 
-  it("answers 202 when the call began the update and 200 when it followed one or nothing was needed, dispatches daemon.update with the body, refuses an agent and a bad body, and passes a gateway's refusal on", async () => {
+  it("answers 202 when the call began the update and 200 when it followed one or nothing was needed, dispatches daemon.update with the body, refuses an agent and a bad body", async () => {
     const { app, dispatcher } = buildHarness();
     // why: `daemon.update`'s own role check runs through the contract's real pipeline; the route adds none.
     let reply: Record<string, unknown> = answer({ started: true, resolved: "0.4.0" });
@@ -2615,17 +2615,78 @@ describe("POST /v1/update", () => {
       expect({ body, status: refused.status }).toEqual({ body, status: 400 });
     }
     expect(dispatcher.calls).toHaveLength(callsBefore);
+  });
+});
 
-    dispatcher.handlers["daemon.update"] = () => {
-      throw new DispatchError("UNSUPPORTED_IN_GATEWAY_MODE", "daemon.update is refused", {
-        operation: "daemon.update",
+describe("POST /v1/workers/{id}/update", () => {
+  const answer = (overrides: Record<string, unknown> = {}) => ({
+    started: false,
+    upToDate: false,
+    resolved: null,
+    version: "0.3.0",
+    health: "running",
+    update: null,
+    lastUpdateFailure: null,
+    latestVersion: null,
+    workerId: "wrk_1",
+    ...overrides,
+  });
+
+  it("answers 202 when the call began the update and 200 when it followed one, dispatches worker.update with the id from the path and the body, refuses an agent and a bad body", async () => {
+    const { app, dispatcher } = buildHarness({ config: testConfig({}, "gateway") });
+    let reply: Record<string, unknown> = answer({ started: true, resolved: "0.4.0" });
+    dispatcher.handlers["worker.update"] = (input, session) =>
+      runDispatch("worker.update", input, session, {
+        handlers: { "worker.update": () => reply },
       });
-    };
-    const onGateway = await post(app, {});
-    expect(onGateway.status).toBe(501);
-    expect(await onGateway.json()).toMatchObject({
-      error: { code: "UNSUPPORTED_IN_GATEWAY_MODE", operation: "daemon.update" },
-    });
+    const post = (body?: unknown, headers: Record<string, string> = operatorAuth) =>
+      Promise.resolve(
+        app.request("/v1/workers/wrk_1/update", {
+          headers: {
+            ...headers,
+            ...(body === undefined ? {} : { "content-type": "application/json" }),
+          },
+          method: "POST",
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+      );
+
+    const started = await post({ version: "0.4.0", force: true });
+    expect(started.status).toBe(202);
+    expect(await started.json()).toEqual(reply);
+    expect(dispatcher.calls.map(({ operation, input }) => ({ operation, input }))).toEqual([
+      { operation: "worker.update", input: { force: true, version: "0.4.0", workerId: "wrk_1" } },
+    ]);
+
+    reply = answer({ upToDate: true, resolved: "0.3.0" });
+    const following = await post();
+    expect(following.status).toBe(200);
+    expect(dispatcher.calls.at(-1)?.input).toEqual({ workerId: "wrk_1" });
+
+    const asAgent = await post({}, agentAuth);
+    expect(asAgent.status).toBe(403);
+
+    const callsBefore = dispatcher.calls.length;
+    for (const body of [{ version: "latest" }, { query: true }, { force: "yes" }]) {
+      const refused = await post(body);
+      expect({ body, status: refused.status }).toEqual({ body, status: 400 });
+    }
+    expect(dispatcher.calls).toHaveLength(callsBefore);
+
+    for (const [code, status] of [
+      ["WORKER_NOT_CONNECTED", 409],
+      ["UPDATE_UNSUPPORTED_INSTALL", 409],
+      ["UPDATE_SHARED_INSTALL", 409],
+      ["UPDATE_RESOLVE_FAILED", 502],
+      ["UNKNOWN_WORKER", 404],
+    ] as const) {
+      dispatcher.handlers["worker.update"] = () => {
+        throw new DispatchError(code, "refused");
+      };
+      const refusal = await post();
+      expect({ code, status: refusal.status }).toEqual({ code, status });
+      expect(((await refusal.json()) as { error: { code: string } }).error.code).toBe(code);
+    }
   });
 });
 

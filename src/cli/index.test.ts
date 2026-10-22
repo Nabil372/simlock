@@ -65,7 +65,7 @@ import type {
   StatusGetOutput,
   TokenListOutput,
 } from "../simlock-client/client.js";
-import { connectSimlockAdmin } from "../admin/index.js";
+import { connectSimlockAdmin, type WorkerView } from "../admin/index.js";
 import { RELEASE_TIMEOUT_MS } from "../lease-policy/index.js";
 import { runCli, type CliEnvironment, type CliEnvironmentPorts } from "./index.js";
 import { buildCliEnvironment } from "./environment.js";
@@ -4283,6 +4283,70 @@ describe("CLI: worker commands (ADR 0005 §8/§23)", () => {
     expect(output.stdout).toContain("protocol 4-4 vs gateway 5-5");
   });
 
+  it("worker list shows a worker's version, the latest only when newer, and its update stage", async () => {
+    const waiting = {
+      forced: false,
+      from: "0.3.0",
+      leases: 2,
+      stage: "waiting",
+      startedAt: 1_000,
+      to: "0.4.0",
+    } as const;
+    const cases: readonly {
+      expected: string;
+      latestVersion: string | null;
+      update: WorkerView["update"];
+      version: string | undefined;
+    }[] = [
+      {
+        expected: " -- simlock 0.3.0 (0.4.0 available) -- updating to 0.4.0: waiting for 2 leases",
+        latestVersion: "0.4.0",
+        update: waiting,
+        version: "0.3.0",
+      },
+      {
+        expected: " -- simlock 0.3.0 (0.4.0 available) -- updating to 0.4.0: installing",
+        latestVersion: "0.4.0",
+        update: {
+          forced: false,
+          from: "0.3.0",
+          stage: "installing",
+          startedAt: 1_000,
+          to: "0.4.0",
+        },
+        version: "0.3.0",
+      },
+      {
+        expected: " -- updating to 0.4.0: waiting for 1 lease",
+        latestVersion: null,
+        update: { ...waiting, leases: 1 },
+        version: undefined,
+      },
+      { expected: " -- simlock 0.4.0", latestVersion: "0.4.0", update: null, version: "0.4.0" },
+      { expected: " -- simlock 0.5.0", latestVersion: "0.4.0", update: null, version: "0.5.0" },
+      { expected: " -- simlock 0.4.0", latestVersion: null, update: null, version: "0.4.0" },
+    ];
+    for (const { expected, latestVersion, update, version } of cases) {
+      const output = outputCapture();
+      const worker = {
+        ...connectedWorker,
+        latestVersion,
+        update,
+        ...(version === undefined ? {} : { version }),
+      };
+      const environment = output.environmentWith({
+        connectAdmin: async () =>
+          fakeClient({ listWorkers: () => Promise.resolve({ workers: [worker] }) }),
+      });
+
+      await runCli(["worker", "list"], environment);
+
+      expect(output.stdout.trimEnd().slice(-expected.length)).toBe(expected);
+      if (!expected.includes("available")) expect(output.stdout).not.toContain("available");
+      if (update === null) expect(output.stdout).not.toContain("updating");
+    }
+  });
+
   it("emits the raw contract value under --json", async () => {
     const output = outputCapture();
     const environment = output.environmentWith({
@@ -7724,6 +7788,18 @@ function fakeClient(overrides: Partial<SimlockAdminClient> = {}): SimlockAdminCl
     undrainWorker: (input) =>
       Promise.resolve({ drained: false as const, workerId: input.workerId }),
     removeWorker: (input) => Promise.resolve({ removed: true, workerId: input.workerId }),
+    updateWorker: (input) =>
+      Promise.resolve({
+        health: "running" as const,
+        lastUpdateFailure: null,
+        latestVersion: null,
+        resolved: null,
+        started: false,
+        update: null,
+        upToDate: false,
+        version: "0.3.0",
+        workerId: input.workerId,
+      }),
     testAlertDestination: (input) =>
       Promise.resolve({ destination: input.destination, status: 200 }),
     installComponent: (input) =>
@@ -8406,6 +8482,7 @@ describe("simlock list --requests", () => {
       ["incompatible", "ios", undefined, "protocol mismatch"],
       ["not-ready", "ios", undefined, "not ready yet"],
       ["unhealthy", "ios", undefined, "not running"],
+      ["updating", "ios", undefined, "updating"],
       ["drained", "ios", undefined, "drained"],
       ["busy", "ios", undefined, "busy with its own queue"],
       ["no-driver", "ios", undefined, "no iOS support"],
@@ -9845,5 +9922,176 @@ describe("CLI: a service manager call fails, or the platform has none (#830)", (
       code: "SERVICE_FAILED",
       message: `launchctl kickstart gui/501/${name} failed: Could not find service`,
     });
+  });
+});
+
+describe("simlock worker update", () => {
+  type UpdateAnswer = Awaited<ReturnType<SimlockAdminClient["updateWorker"]>>;
+  type View = Awaited<ReturnType<SimlockAdminClient["listWorkers"]>>["workers"][number];
+  const view = (overrides: Partial<View> = {}): View => ({
+    connection: "connected",
+    drained: false,
+    id: "3f81a2c4",
+    label: "mac-studio-2",
+    lastSeenAt: 1_000,
+    version: "0.3.0",
+    ...overrides,
+  });
+  const run = { forced: false, from: "0.3.0", startedAt: 1_000, to: "0.4.0" } as const;
+  const answer = (overrides: Partial<UpdateAnswer> = {}): UpdateAnswer => ({
+    health: "running",
+    lastUpdateFailure: null,
+    latestVersion: "0.4.0",
+    resolved: "0.4.0",
+    started: true,
+    update: { ...run, stage: "installing" },
+    upToDate: false,
+    version: "0.3.0",
+    workerId: "3f81a2c4",
+    ...overrides,
+  });
+
+  it("follows the update to is running, reports a failure with exit 1, says why the worker is up to date, detaches, and refuses on a worker daemon", async () => {
+    const failure = {
+      at: 2_000,
+      from: "0.3.0",
+      message: "npm exited 1",
+      stage: "installing",
+      to: "0.4.0",
+    } as const;
+    const cases: readonly {
+      readonly name: string;
+      readonly argv: readonly string[];
+      readonly answer: UpdateAnswer | SimlockError;
+      readonly lists?: readonly View[];
+      readonly code: number;
+      readonly stdout?: string;
+      readonly stderr?: string;
+      readonly polls?: number;
+    }[] = [
+      {
+        name: "follows to running",
+        argv: ["worker", "update", "3f81a2c4", "--version", "0.4.0", "--force"],
+        answer: answer(),
+        lists: [
+          view({ update: { ...run, leases: 2, stage: "waiting" } }),
+          view({ update: { ...run, stage: "installing" } }),
+          view({ connection: "disconnected", update: { ...run, stage: "restarting" } }),
+          view({ update: { ...run, stage: "restarting" }, version: "0.4.0" }),
+          view({ update: null, version: "0.4.0" }),
+        ],
+        code: 0,
+        stdout: "mac-studio-2 (3f81a2c4) is running 0.4.0\n",
+        polls: 5,
+      },
+      {
+        name: "fails with the stage and message",
+        argv: ["worker", "update", "3f81a2c4"],
+        answer: answer(),
+        lists: [view({ lastUpdateFailure: failure, update: null })],
+        code: 1,
+        stdout: "Update failed (installing): npm exited 1\n",
+        polls: 1,
+      },
+      {
+        name: "already on the latest",
+        argv: ["worker", "update", "3f81a2c4"],
+        answer: answer({ started: false, update: null, upToDate: true, version: "0.4.0" }),
+        code: 0,
+        stdout: "mac-studio-2 (3f81a2c4) is already on the latest (0.4.0)\n",
+        polls: 1,
+      },
+      {
+        name: "already running the requested version",
+        argv: ["worker", "update", "3f81a2c4", "--version", "0.4.0"],
+        answer: answer({ started: false, update: null, upToDate: true, version: "0.4.0" }),
+        code: 0,
+        stdout: "mac-studio-2 (3f81a2c4) is already running 0.4.0\n",
+        polls: 1,
+      },
+      {
+        name: "newer than the latest",
+        argv: ["worker", "update", "3f81a2c4"],
+        answer: answer({
+          resolved: "0.3.0",
+          started: false,
+          update: null,
+          upToDate: true,
+          version: "0.4.0",
+        }),
+        code: 0,
+        stdout:
+          "mac-studio-2 (3f81a2c4) is newer than the latest (0.3.0). Use --version to install another version.\n",
+        polls: 1,
+      },
+      {
+        name: "detach",
+        argv: ["worker", "update", "3f81a2c4", "--detach"],
+        answer: answer(),
+        code: 0,
+        stdout:
+          "Updating mac-studio-2 (3f81a2c4) 0.3.0 → 0.4.0. Follow it with simlock worker list.\n",
+        polls: 1,
+      },
+      {
+        name: "worker daemon",
+        argv: ["worker", "update", "3f81a2c4"],
+        answer: new SimlockError(
+          "UNSUPPORTED_IN_WORKER_MODE",
+          "domain",
+          "worker.update is a gateway operation",
+          { operation: "worker.update" },
+        ),
+        code: 2,
+        stderr: "worker.update is a gateway operation",
+        polls: 0,
+      },
+    ];
+    for (const spec of cases) {
+      const output = outputCapture();
+      const clock = new FakeClock(0);
+      const sent: unknown[] = [];
+      const lists = [...(spec.lists ?? [view()])];
+      let polls = 0;
+      const environment = output.environmentWith({
+        clock,
+        connectAdmin: async () =>
+          fakeClient({
+            listWorkers: async () => {
+              polls += 1;
+              const next = lists.length > 1 ? lists.shift() : lists[0];
+              return { workers: next === undefined ? [] : [next] };
+            },
+            updateWorker: async (input) => {
+              sent.push(input);
+              if (spec.answer instanceof Error) throw spec.answer;
+              return spec.answer;
+            },
+          }),
+        // why: a follow that never reaches an outcome fails on this line, not by timing out.
+        sleep: async (milliseconds) => {
+          if (polls > (spec.lists ?? []).length + 2)
+            throw new Error(`${spec.name}: the follow never ended`);
+          clock.advance(milliseconds);
+        },
+      });
+
+      const code = await runCli(spec.argv, environment);
+
+      expect({ code, name: spec.name, stdout: output.stdout }).toEqual({
+        code: spec.code,
+        name: spec.name,
+        stdout: spec.stdout ?? "",
+      });
+      if (spec.stderr !== undefined) expect(output.stderr).toContain(spec.stderr);
+      expect({ name: spec.name, polls }).toEqual({ name: spec.name, polls: spec.polls ?? 0 });
+      expect(sent).toEqual([
+        {
+          workerId: "3f81a2c4",
+          ...(spec.argv.includes("--version") ? { version: "0.4.0" } : {}),
+          ...(spec.argv.includes("--force") ? { force: true } : {}),
+        },
+      ]);
+    }
   });
 });
