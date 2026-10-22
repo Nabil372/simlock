@@ -3514,9 +3514,7 @@ describe("Dispatcher: device.exec", () => {
         "device.exec",
         { args: [], leaseId, tool: "simctl" },
         session({
-          onOutput: () =>
-            new Promise<void>(() => {
-            }),
+          onOutput: () => new Promise<void>(() => {}),
           principal: "tok_agent",
         }),
       );
@@ -3535,9 +3533,7 @@ describe("Dispatcher: device.exec", () => {
         "device.exec",
         { args: [], leaseId, tool: "simctl" },
         session({
-          onOutput: () =>
-            new Promise<void>(() => {
-            }),
+          onOutput: () => new Promise<void>(() => {}),
           principal: "tok_agent",
         }),
       );

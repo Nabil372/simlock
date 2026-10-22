@@ -2003,7 +2003,6 @@ describe("DaemonServer lease liveness (ADR 0004)", () => {
       payload: { ttlDeadline: 1_050 },
     });
 
-
     const second = await createHarness({
       clock: new FakeClock(1_010),
       driver: first.driver,
