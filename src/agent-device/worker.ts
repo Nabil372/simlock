@@ -1,10 +1,10 @@
 import type { HttpDispatch } from "../http/dispatcher-session.js";
 import type { Identity } from "../auth/index.js";
 import type { Clock } from "../ports/index.js";
-import type { WorkerContext, WorkerModule } from "../modules/index.js";
+import type { ModuleRegistryView, WorkerContext, WorkerModule } from "../modules/index.js";
 import type { AgentDeviceModuleConfig } from "./definition.js";
 import { FrontMap } from "./front/front-map.js";
-import { InProcessHostLink, type LinkStatus } from "./front/host-link.js";
+import { RoutedHostLink, type LinkStatus } from "./front/host-link.js";
 import { Renewals } from "./front/renewals.js";
 import {
   AgentDeviceSupervisor,
@@ -25,18 +25,32 @@ import {
 import { frontReplyFor, notAvailable } from "./shared/replies.js";
 
 interface AgentDeviceEdgeParts extends AgentDeviceFrontParts {
-  readonly leaseEnd: AgentDeviceLeaseEnd;
+  readonly link: RoutedHostLink;
+  // why: one participant per daemon; for each ended lease only the one whose record holds its scope sends a release.
+  readonly leaseEnds: readonly AgentDeviceLeaseEnd[];
 }
 
 function createAgentDeviceEdgeParts(
   upstream: AgentDeviceUpstream,
+  phoneUpstream: AgentDeviceUpstream,
   clock: Clock,
   platforms: readonly AgentDevicePlatform[],
+  registry: ModuleRegistryView,
 ): AgentDeviceEdgeParts {
-  const record = new ReleaseScopeRecord();
+  const simulatorRecord = new ReleaseScopeRecord();
+  const phoneRecord = new ReleaseScopeRecord();
   return {
-    leaseEnd: new AgentDeviceLeaseEnd(upstream, record),
-    link: new InProcessHostLink(new AgentDeviceHost(upstream, platforms, record)),
+    leaseEnds: [
+      new AgentDeviceLeaseEnd(upstream, simulatorRecord),
+      new AgentDeviceLeaseEnd(phoneUpstream, phoneRecord),
+    ],
+    link: new RoutedHostLink(
+      {
+        phones: new AgentDeviceHost(phoneUpstream, platforms, phoneRecord),
+        simulators: new AgentDeviceHost(upstream, platforms, simulatorRecord),
+      },
+      registry,
+    ),
     map: new FrontMap(clock),
     renewals: new Renewals(clock),
   };
@@ -45,19 +59,23 @@ function createAgentDeviceEdgeParts(
 // why: a relayed request's tenant is the gateway's prefixed principal, which the host treats as the requester, so the worker's own tokens never share a session with it.
 function agentDeviceRelayTarget(
   parts: AgentDeviceEdgeParts,
-): (request: Request, tenant: string) => Promise<Response> {
-  return async (request, tenant) => {
-    const status = await parts.link.status();
+): (request: Request, tenant: string, leaseId: string | undefined) => Promise<Response> {
+  return async (request, tenant, leaseId) => {
+    const status = await parts.link.status(leaseId);
     if (status.state === "unavailable") {
       return frontReplyFor(request, notAvailable(status.reason));
     }
-    return parts.link.forward(request, {
-      principal: tenant,
-      name: tenant,
-      role: "agent",
-      via: "relay",
-      ambient: false,
-    });
+    return parts.link.forward(
+      request,
+      {
+        principal: tenant,
+        name: tenant,
+        role: "agent",
+        via: "relay",
+        ambient: false,
+      },
+      leaseId,
+    );
   };
 }
 
@@ -82,6 +100,7 @@ function agentDeviceCapabilitySource(parts: AgentDeviceEdgeParts): {
 
 export interface AgentDeviceFakes {
   readonly upstream?: AgentDeviceUpstream;
+  readonly phoneUpstream?: AgentDeviceUpstream;
   readonly health?: AgentDeviceHealthProbe;
 }
 
@@ -114,8 +133,10 @@ export function createWorkerWith(
     const phoneSupervisor = supervise("phones");
     const parts = createAgentDeviceEdgeParts(
       fakes.upstream ?? new SupervisorAgentDeviceUpstream(supervisor),
+      fakes.phoneUpstream ?? new SupervisorAgentDeviceUpstream(phoneSupervisor),
       ctx.clock,
       ctx.platforms,
+      ctx.registry,
     );
     return {
       capability: agentDeviceCapabilitySource(parts),
@@ -131,7 +152,13 @@ export function createWorkerWith(
             void supervisor.start().then(() => phoneSupervisor.start());
           }
         },
-        beforeDeviceReclaim: (ended, signal) => parts.leaseEnd.leaseEnded(ended, signal),
+        beforeDeviceReclaim: async (ended, signal) => {
+          try {
+            await Promise.all(parts.leaseEnds.map((end) => end.leaseEnded(ended, signal)));
+          } finally {
+            parts.link.forget(ended.leaseId);
+          }
+        },
         beforeDrain: async () => {
           disposeAgentDeviceEdge(parts);
           await cancelWaitingAllocates(parts, (id) => ctx.cancelPending(id));
