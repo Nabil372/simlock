@@ -9,10 +9,6 @@ import {
   describeSchemaIssues,
   eventsPageQuery,
   OPERATIONS,
-  refuseModelWithClass,
-  deviceClassSchema,
-  leaseIdSchema,
-  imageTagSchema,
   parseDurationMs,
   usageWindow,
   type UsageWindowRefusal,
@@ -31,6 +27,22 @@ import {
   unknownLease,
   unknownRequest,
 } from "./errors.js";
+import {
+  type leaseRequestBodySchema,
+  leaseEventsRoute,
+  leaseExecRoute,
+  leaseGetRoute,
+  leaseListRoute,
+  leaseReleaseRoute,
+  leaseRenewRoute,
+  leaseRequestCancelRoute,
+  leaseRequestCreateRoute,
+  leaseRequestEventsRoute,
+  leaseRequestGetRoute,
+  leaseRequestListRoute,
+  type leaseRequestViewSchema,
+  requestsReplySchema,
+} from "./lease-declarations.js";
 import { LeaseNoticeBuffer } from "./notices.js";
 import {
   catalogRoute,
@@ -110,38 +122,6 @@ type Env = AuthEnv;
 /** Upper bound on `?wait=` long-polls; bounds how long an abandoned poll can pin resources. */
 const MAX_LONG_POLL_SECONDS = 60;
 
-const leaseRequestBodySchema = z
-  .object({
-    allowDownload: z.boolean().optional(),
-    class: deviceClassSchema.optional(),
-    device: z.string().min(1).optional(),
-    imageTag: imageTagSchema.optional(),
-    leaseId: leaseIdSchema.optional(),
-    mode: z.enum(["slim", "full"]).optional(),
-    noWait: z.boolean().optional(),
-    // Forwarded, not dropped: the dispatcher's `lease.request` handler alone decides whether this token may set it.
-    owner: z.string().min(1).optional(),
-    os: z.string().min(1).optional(),
-    physical: z.boolean().optional(),
-    platform: z.enum(["ios", "android"]),
-    timeoutMs: z.number().int().positive().optional(),
-    ttlMs: z.number().int().positive().optional(),
-  })
-  .strict()
-  .superRefine((body, context) =>
-    refuseModelWithClass("device")({ model: body.device, class: body.class }, context),
-  );
-
-/** `stdin` and `requesterId` also accept `null` and normalize it to omitted: the documented example sends them as `null`. */
-const execBodySchema = z
-  .object({
-    tool: z.string().min(1),
-    args: z.array(z.string()),
-    stdin: z.string().nullish().transform(nullToUndefined),
-    requesterId: z.string().nullish().transform(nullToUndefined),
-  })
-  .strict();
-
 const componentInstallBodySchema = z
   .object({
     platform: z.string(),
@@ -156,10 +136,6 @@ function jsonBody<Schema extends z.ZodType>(schema: Schema) {
       return errorResponse(c, badRequest(describeSchemaIssues(result.error.issues)));
     }
   });
-}
-
-function nullToUndefined<Value>(value: Value | null | undefined): Value | undefined {
-  return value ?? undefined;
 }
 
 function toLeaseRequestInput(body: z.infer<typeof leaseRequestBodySchema>): LeaseRequestInput {
@@ -304,53 +280,50 @@ export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpApp
     ),
   );
 
-  app.post("/v1/lease-requests", agentAuth, jsonBody(leaseRequestBodySchema), async (c) => {
+  app.openapi({ ...leaseRequestCreateRoute, middleware: [agentAuth] }, async (c) => {
     const identity = c.get("identity");
     const body = c.req.valid("json");
     const idempotencyKey = c.req.header("Idempotency-Key");
     const outcome = await tracker.submit(identity, toLeaseRequestInput(body), idempotencyKey);
-    if (outcome.kind === "rejected") {
-      return errorResponse(c, outcome.error);
-    }
+    if (outcome.kind === "rejected") throw outcome.error;
     c.header("Location", `/v1/lease-requests/${outcome.view.id}`);
     return c.json({ request: serializeRequest(outcome.view) }, 201);
   });
 
-  // Every request waiting for a device, whoever sent it. Operator-role in effect: `list.get` is
-  // an admin operation, so an agent token gets `FORBIDDEN`/403 from the shared dispatcher.
-  app.get("/v1/lease-requests", agentAuth, async (c) => {
+  // why: operator-role in effect: `list.get` is an admin operation, so an agent token gets `FORBIDDEN`/403 from the shared dispatcher.
+  app.openapi({ ...leaseRequestListRoute, middleware: [agentAuth] }, async (c) => {
     const requests = await deps.dispatch(
       "list.get",
       { kind: "requests" },
       buildHttpSession(c.get("identity")),
     );
-    return c.json({ requests });
+    return c.json(requestsReplySchema.parse({ requests }), 200);
   });
 
-  app.get("/v1/lease-requests/:id", agentAuth, async (c) => {
-    const id = c.req.param("id");
+  app.openapi({ ...leaseRequestGetRoute, middleware: [agentAuth] }, async (c) => {
+    const id = c.req.valid("param").id;
     const initial = tracker.get(id);
     if (initial === undefined) throw unknownRequest(id);
     requireOwnRequest(c.get("identity"), initial.ownerId);
 
-    const waitParam = c.req.query("wait");
-    if (waitParam !== undefined) {
-      const seconds = Number(waitParam);
-      if (!Number.isFinite(seconds) || seconds < 0) {
-        throw badRequest("wait must be a non-negative number of seconds");
-      }
+    const { wait } = c.req.valid("query");
+    if (wait !== undefined) {
       // Clamped, not rejected: an oversized wait still long-polls correctly -- the client
       // simply re-polls sooner than it asked -- and the clamp bounds how long an abandoned
       // poll can pin its listener and timer. Aborting the request releases them immediately.
-      await tracker.waitForChange(id, Math.min(seconds, MAX_LONG_POLL_SECONDS), c.req.raw.signal);
+      await tracker.waitForChange(
+        id,
+        Math.min(Number(wait), MAX_LONG_POLL_SECONDS),
+        c.req.raw.signal,
+      );
     }
 
     const view = tracker.get(id) ?? initial;
-    return c.json({ request: serializeRequest(view) });
+    return c.json({ request: serializeRequest(view) }, 200);
   });
 
-  app.get("/v1/lease-requests/:id/events", agentAuth, (c) => {
-    const id = c.req.param("id");
+  app.openapi({ ...leaseRequestEventsRoute, middleware: [agentAuth] }, (c) => {
+    const id = c.req.valid("param").id;
     const initial = tracker.get(id);
     if (initial === undefined) throw unknownRequest(id);
     requireOwnRequest(c.get("identity"), initial.ownerId);
@@ -384,8 +357,8 @@ export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpApp
     );
   });
 
-  app.delete("/v1/lease-requests/:id", agentAuth, async (c) => {
-    const id = c.req.param("id");
+  app.openapi({ ...leaseRequestCancelRoute, middleware: [agentAuth] }, async (c) => {
+    const id = c.req.valid("param").id;
     const existing = tracker.get(id);
     if (existing === undefined) throw unknownRequest(id);
     requireOwnRequest(c.get("identity"), existing.ownerId);
@@ -404,10 +377,10 @@ export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpApp
     );
   });
 
-  app.get("/v1/leases/:id", agentAuth, async (c) => {
+  app.openapi({ ...leaseGetRoute, middleware: [agentAuth] }, async (c) => {
     const identity = c.get("identity");
     const session = buildHttpSession(identity);
-    const lease = await findOwnedLease(deps, session, c.req.param("id"));
+    const lease = await findOwnedLease(deps, session, c.req.valid("param").id);
     const device = findDevice(deps, lease);
     if (device === undefined) throw unknownLease(lease.id);
     // ADR 0004: `ttlMs` comes off the lease record itself, so a payload served after a daemon
@@ -415,20 +388,17 @@ export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpApp
     // per-request value this gateway no longer remembers. `requestId` is still gateway-side
     // bookkeeping, and is still the one field a restart can drop.
     const requestId = tracker.requestIdForLease(lease.id);
-    return c.json({
-      lease: buildLeasePayload(device, lease, requestId === undefined ? {} : { requestId }),
-    });
+    return c.json(
+      { lease: buildLeasePayload(device, lease, requestId === undefined ? {} : { requestId }) },
+      200,
+    );
   });
 
-  app.post("/v1/leases/:id/renew", agentAuth, async (c) => {
+  app.openapi({ ...leaseRenewRoute, middleware: [agentAuth, emptyBodyAsNone] }, async (c) => {
     const identity = c.get("identity");
     const session = buildHttpSession(identity);
-    const id = c.req.param("id");
-
-    const ttlMs = await parseRenewBody(c);
-    if (ttlMs !== undefined && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
-      throw badRequest("ttlMs must be a positive number");
-    }
+    const id = c.req.valid("param").id;
+    const { ttlMs } = c.req.valid("json");
 
     // why: Dispatched directly (not via `findOwnedLease`/`lease.list`) so `lease.renew`'s own
     // `ownsLease` authorize hook answers -- an unowned lease is `FORBIDDEN`/403, matching the
@@ -446,16 +416,19 @@ export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpApp
       session,
     );
 
-    return c.json({
-      expiresAt: new Date(renewed.ttlDeadline).toISOString(),
-      leaseId: renewed.id,
-      notices: notices.drain(id),
-    });
+    return c.json(
+      {
+        expiresAt: new Date(renewed.ttlDeadline).toISOString(),
+        leaseId: renewed.id,
+        notices: notices.drain(id),
+      },
+      200,
+    );
   });
 
-  app.post("/v1/leases/:id/exec", agentAuth, jsonBody(execBodySchema), async (c) => {
+  app.openapi({ ...leaseExecRoute, middleware: [agentAuth] }, async (c) => {
     const identity = c.get("identity");
-    const leaseId = c.req.param("id");
+    const leaseId = c.req.valid("param").id;
     const { requesterId, ...body } = c.req.valid("json");
     // Requester identity is the token's over HTTP, never the body's -- except for an
     // `operator` token, which is the proxying case `device.exec` reads it for. An agent
@@ -592,9 +565,9 @@ export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpApp
     });
   });
 
-  app.get("/v1/leases/:id/events", agentAuth, async (c) => {
+  app.openapi({ ...leaseEventsRoute, middleware: [agentAuth] }, async (c) => {
     const identity = c.get("identity");
-    const lease = await findOwnedLease(deps, buildHttpSession(identity), c.req.param("id"));
+    const lease = await findOwnedLease(deps, buildHttpSession(identity), c.req.valid("param").id);
 
     return pipeSse(
       c,
@@ -611,10 +584,10 @@ export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpApp
     );
   });
 
-  app.delete("/v1/leases/:id", agentAuth, async (c) => {
+  app.openapi({ ...leaseReleaseRoute, middleware: [agentAuth] }, async (c) => {
     const identity = c.get("identity");
     const session = buildHttpSession(identity);
-    const id = c.req.param("id");
+    const id = c.req.valid("param").id;
 
     // Best-effort lookup, only to decorate the response with the device id/state --
     // `lease.release`'s output schema is `{ leaseId }` alone (no `deviceId`), so this is still
@@ -633,14 +606,14 @@ export function createHttpApp(deps: HttpGatewayDeps): OpenAPIHono<Env> & HttpApp
     return c.json(
       {
         device: { id: lease?.deviceId ?? id, state: device?.state ?? "reclaiming" },
-        released: true,
+        released: true as const,
       },
       202,
     );
   });
 
-  app.get("/v1/leases", agentAuth, async (c) =>
-    c.json(await deps.dispatch("lease.list", {}, buildHttpSession(c.get("identity")))),
+  app.openapi({ ...leaseListRoute, middleware: [agentAuth] }, async (c) =>
+    c.json(await deps.dispatch("lease.list", {}, buildHttpSession(c.get("identity"))), 200),
   );
 
   // The token records, for a console to name a lease's holder by its token's label. `token.list`
@@ -834,26 +807,26 @@ async function findLeaseForDecoration(
 
 function serializeRequest(
   view: Pick<TrackedRequestView, "id" | "createdAt" | "state">,
-): Record<string, unknown> {
-  const base = { createdAt: view.createdAt, id: view.id, state: view.state.stage };
+): z.infer<typeof leaseRequestViewSchema> {
+  const base = { createdAt: view.createdAt, id: view.id };
   switch (view.state.stage) {
     case "queued":
-      return { ...base, queuePosition: view.state.queuePosition };
+      return { ...base, queuePosition: view.state.queuePosition, state: "queued" };
     case "downloading": {
       // `component`, `waiting` and `percent` when there is one, as the tracker built them.
       const { stage: _stage, ...download } = view.state;
-      return { ...base, ...download };
+      return { ...base, ...download, state: "downloading" };
     }
     case "provisioning":
     case "booting":
     case "reclaiming":
-      return { ...base, etaSeconds: view.state.etaSeconds };
+      return { ...base, etaSeconds: view.state.etaSeconds, state: view.state.stage };
     case "granted":
-      return { ...base, lease: view.state.lease };
+      return { ...base, lease: view.state.lease, state: "granted" };
     case "failed":
-      return { ...base, error: view.state.error };
+      return { ...base, error: view.state.error, state: "failed" };
     case "cancelled":
-      return base;
+      return { ...base, state: "cancelled" };
   }
 }
 
@@ -869,22 +842,15 @@ function findDevice(
   );
 }
 
-async function parseRenewBody(c: {
-  req: { text(): Promise<string> };
-}): Promise<number | undefined> {
-  const raw = await c.req.text();
-  if (raw.trim() === "") return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch {
-    throw badRequest("Invalid JSON body");
+// why: an empty body is no body whatever its content type: a renew without one keeps the lease's own width.
+async function emptyBodyAsNone(c: Context, next: () => Promise<void>): Promise<void> {
+  const isJson = /^application\/([a-z-.]+\+)?json/i.test(c.req.header("content-type") ?? "");
+  if ((await c.req.text()).trim() === "") {
+    // why: the validator reads the body only under a JSON content type, so an empty one is relabelled; `bodyCache.text` is typed as the string but holds the pending read, and the JSON validator parses what it holds, so `{}` stands in for the empty text.
+    if (!isJson) c.req.raw.headers.set("content-type", "application/json");
+    Object.assign(c.req.bodyCache, { text: Promise.resolve("{}") });
   }
-  if (typeof parsed !== "object" || parsed === null) throw badRequest("Body must be a JSON object");
-  const ttlMs = (parsed as Record<string, unknown>).ttlMs;
-  if (ttlMs === undefined) return undefined;
-  if (typeof ttlMs !== "number") throw badRequest("ttlMs must be a number");
-  return ttlMs;
+  await next();
 }
 
 /** HTTP-only sugar translating `?since=5m` into the absolute `sinceTs` `events.replay` takes --

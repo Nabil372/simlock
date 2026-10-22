@@ -1,7 +1,8 @@
 import { z } from "@hono/zod-openapi";
 
 import { deviceRecordSchema, OPERATIONS, statusDeviceSchema } from "../contract/index.js";
-import { declareRoute } from "./routes.js";
+import { LEASE_ROUTES } from "./lease-declarations.js";
+import { declareRoute, firstValue } from "./routes.js";
 
 export const healthzRoute = declareRoute({
   method: "get",
@@ -37,10 +38,6 @@ export const deviceAddRoute = declareRoute({
     501: ["UNSUPPORTED_IN_GATEWAY_MODE"],
   },
 });
-
-function firstValue<Schema extends z.ZodType>(schema: Schema) {
-  return z.preprocess((value) => (Array.isArray(value) ? value[0] : value), schema);
-}
 
 const catalogQuerySchema = z
   .object({ platform: firstValue(z.string().openapi({ enum: ["ios", "android"] })).optional() })
@@ -130,4 +127,5 @@ export const DECLARED_ROUTES = [
   identityRoute,
   devicesRoute,
   statsRoute,
+  ...LEASE_ROUTES,
 ] as const;

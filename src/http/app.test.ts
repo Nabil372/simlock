@@ -120,6 +120,11 @@ const otherAgentAuth = { authorization: "Bearer slk_other" };
 const operatorAuth = { authorization: "Bearer slk_operator" };
 const defaultBody = { device: "iPhone 17 Pro", platform: "ios" };
 
+// why: a route's validators add microtask hops before its handler runs, so a test cannot count ticks.
+function settle(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function postLeaseRequest(
   app: App,
   body: Record<string, unknown>,
@@ -1017,8 +1022,7 @@ describe("full lease-request lifecycle via GET / long-poll / SSE", () => {
     const { id, callIndex } = await createLeaseRequest(app, dispatcher);
 
     const waitPromise = app.request(`/v1/lease-requests/${id}?wait=30`, { headers: agentAuth });
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     dispatcher.calls[callIndex]?.session.onProgress?.({ etaMs: 10_000, stage: "provisioning" });
     const response = await waitPromise;
     const body = (await response.json()) as { request: { state: string } };
@@ -1030,8 +1034,7 @@ describe("full lease-request lifecycle via GET / long-poll / SSE", () => {
     const { id } = await createLeaseRequest(app, dispatcher);
 
     const waitPromise = app.request(`/v1/lease-requests/${id}?wait=5`, { headers: agentAuth });
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     clock.advance(5_000);
     const response = await waitPromise;
     const body = (await response.json()) as { request: { state: string; queuePosition: number } };
@@ -1522,6 +1525,127 @@ describe("lease routes", () => {
       method: "POST",
     });
     expect(response.status).toBe(200);
+  });
+
+  it.each([
+    ["renew", "/v1/leases/lse_1/renew", '{"ttlMs":60000}', "lease.renew"],
+    ["exec", "/v1/leases/lse_1/exec", '{"args":["list"],"tool":"simctl"}', "device.exec"],
+  ])(
+    "a caller sends the %s body without a JSON content type and gets 415 UNSUPPORTED_MEDIA_TYPE; with application/json it reaches the dispatcher",
+    async (_route, path, body, operation) => {
+      const { app, dispatcher } = buildHarness();
+      dispatcher.handlers["lease.renew"] = () => ({
+        deviceId: "dev_1",
+        grantedAt: 1_000,
+        id: "lse_1",
+        ownerId: "tok_agent",
+        requesterId: "tok_agent",
+        ttlDeadline: 2_000,
+      });
+      dispatcher.handlers["device.exec"] = () => ({ exitCode: 0 });
+      const send = (contentType: string | undefined) =>
+        app.request(path, {
+          body,
+          headers: {
+            ...agentAuth,
+            ...(contentType === undefined ? {} : { "content-type": contentType }),
+          },
+          method: "POST",
+        });
+
+      for (const contentType of [undefined, "text/plain"]) {
+        const refused = await send(contentType);
+        expect(refused.status).toBe(415);
+        expect(await refused.json()).toEqual({
+          error: {
+            code: "UNSUPPORTED_MEDIA_TYPE",
+            message: "Content-Type must be application/json",
+          },
+        });
+      }
+      expect(dispatcher.calls.filter((call) => call.operation === operation)).toEqual([]);
+
+      const accepted = await send("application/json");
+      expect(accepted.status).toBe(200);
+      expect(dispatcher.calls.filter((call) => call.operation === operation)).toHaveLength(1);
+    },
+  );
+
+  it("a caller sends a bad wait or renew body and gets 400 with today's message; a renew with no body, an empty body under any content type or an extra key renews", async () => {
+    const { app, dispatcher } = buildHarness();
+    const { id } = await createLeaseRequest(app, dispatcher);
+    const renewals: unknown[] = [];
+    dispatcher.handlers["lease.renew"] = (input) => {
+      renewals.push(input);
+      return {
+        deviceId: "dev_1",
+        grantedAt: 1_000,
+        id: "lse_1",
+        ownerId: "tok_agent",
+        requesterId: "tok_agent",
+        ttlDeadline: 2_000,
+      };
+    };
+    const renew = (
+      body: string | undefined,
+      contentType: string | undefined = "application/json",
+    ) =>
+      app.request("/v1/leases/lse_1/renew", {
+        ...(body === undefined ? {} : { body }),
+        headers: {
+          ...agentAuth,
+          ...(contentType === undefined ? {} : { "content-type": contentType }),
+        },
+        method: "POST",
+      });
+    const refusedWait = "wait must be a non-negative number of seconds";
+
+    const refusals: [string, Response | Promise<Response>, string][] = [
+      [
+        "wait=-1",
+        app.request(`/v1/lease-requests/${id}?wait=-1`, { headers: agentAuth }),
+        refusedWait,
+      ],
+      [
+        "wait=abc",
+        app.request(`/v1/lease-requests/${id}?wait=abc`, { headers: agentAuth }),
+        refusedWait,
+      ],
+      [
+        "wait=-1 on an unknown request",
+        app.request("/v1/lease-requests/unknown?wait=-1", { headers: agentAuth }),
+        refusedWait,
+      ],
+      ["ttlMs a string", renew('{"ttlMs":"60s"}'), "ttlMs must be a number"],
+      ["ttlMs negative", renew('{"ttlMs":-1}'), "ttlMs must be a positive number"],
+      ["ttlMs zero", renew('{"ttlMs":0}'), "ttlMs must be a positive number"],
+      ["a number", renew("5"), "Body must be a JSON object"],
+      ["an array", renew("[]"), "Body must be a JSON object"],
+      ["malformed JSON", renew("{"), "Invalid JSON body"],
+    ];
+    for (const [name, pending, message] of refusals) {
+      const response = await pending;
+      expect(response.status, name).toBe(400);
+      expect(await response.json()).toEqual({ error: { code: "BAD_REQUEST", message } });
+    }
+    expect(renewals).toEqual([]);
+
+    for (const response of [
+      await renew(undefined, undefined),
+      await renew("", "application/json"),
+      await renew("", "text/plain"),
+      await renew("", "application/x-www-form-urlencoded"),
+      await renew('{"ttlMs":60000,"note":"x"}'),
+    ]) {
+      expect(response.status).toBe(200);
+    }
+    expect(renewals).toEqual([
+      { leaseId: "lse_1" },
+      { leaseId: "lse_1" },
+      { leaseId: "lse_1" },
+      { leaseId: "lse_1" },
+      { leaseId: "lse_1", ttlMs: 60_000 },
+    ]);
   });
 
   it("404s a renew for an unknown lease", async () => {
@@ -2368,8 +2492,7 @@ describe("hardening from review", () => {
     const waitPromise = app.request(`/v1/lease-requests/${id}?wait=999999`, {
       headers: agentAuth,
     });
-    await Promise.resolve();
-    await Promise.resolve();
+    await settle();
     clock.advance(60_000);
     const response = await waitPromise;
     expect(((await response.json()) as { request: { state: string } }).request.state).toBe(
