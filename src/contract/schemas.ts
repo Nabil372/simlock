@@ -562,6 +562,44 @@ export const statusWarmPoolSchema = z.object({
 
 export const daemonHealthSchema = z.enum(["starting", "running", "failed"]);
 
+const UPDATE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+const UPDATE_VERSION_MAX = 64;
+const UPDATE_MESSAGE_MAX = 2000;
+const updateVersionSchema = z.string().max(UPDATE_VERSION_MAX);
+
+export const updateRequestedVersionSchema = updateVersionSchema.regex(UPDATE_VERSION_PATTERN);
+
+const updateStateBase = {
+  from: updateVersionSchema,
+  to: updateVersionSchema,
+  forced: z.boolean(),
+  startedAt: z.number().int().min(0),
+};
+
+const updateStateSchema = z.discriminatedUnion("stage", [
+  z.object({ stage: z.literal("waiting"), leases: z.number().int().min(0), ...updateStateBase }),
+  z.object({ stage: z.literal("installing"), ...updateStateBase }),
+  z.object({ stage: z.literal("restarting"), ...updateStateBase }),
+]);
+
+export const updateFailureSchema = z.object({
+  stage: z.enum(["installing", "restarting"]),
+  from: updateVersionSchema,
+  to: updateVersionSchema,
+  message: z.string().max(UPDATE_MESSAGE_MAX),
+  at: z.number().int().min(0),
+});
+
+export type UpdateState = z.infer<typeof updateStateSchema>;
+export type UpdateFailure = z.infer<typeof updateFailureSchema>;
+
+export const daemonUpdateFields = {
+  version: updateVersionSchema,
+  update: updateStateSchema.nullable(),
+  lastUpdateFailure: updateFailureSchema.nullable(),
+  latestVersion: updateVersionSchema.nullable(),
+};
+
 /**
  * Limits on the catalog's other names and images. A worker's catalog is a claim the gateway
  * parses off the wire, so every string and list in these fields has a bound well above any

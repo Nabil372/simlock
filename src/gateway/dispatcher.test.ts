@@ -246,6 +246,7 @@ function harness(
     eventHistory: options.eventHistory ?? ringEventHistory(eventBus),
     ...(options.historyPath === undefined ? {} : { historyPath: options.historyPath }),
     health: () => options.health ?? "running",
+    version: "0.0.0-test",
     host: GATEWAY_HOST,
     ...(options.load === undefined ? {} : { load: options.load }),
     leaseIndex,
@@ -422,6 +423,10 @@ describe("GatewayDispatcher", () => {
       consoleUrl: "http://127.0.0.1:4700/",
       health: "starting",
       mode: "gateway",
+      version: "0.0.0-test",
+      update: null,
+      lastUpdateFailure: null,
+      latestVersion: null,
     });
     expect(status.host).toEqual(GATEWAY_HOST);
   });
@@ -455,8 +460,19 @@ describe("GatewayDispatcher", () => {
       consoleUrl: "http://localhost:4711/",
       health: "running",
       mode: "gateway",
+      version: "0.0.0-test",
+      update: null,
+      lastUpdateFailure: null,
+      latestVersion: null,
     });
-    expect(off.daemon).toEqual({ health: "running", mode: "gateway" });
+    expect(off.daemon).toEqual({
+      health: "running",
+      mode: "gateway",
+      version: "0.0.0-test",
+      update: null,
+      lastUpdateFailure: null,
+      latestVersion: null,
+    });
     expect("consoleUrl" in off.daemon).toBe(false);
   });
 
@@ -1285,6 +1301,20 @@ describe("GatewayDispatcher", () => {
         code: "UNSUPPORTED_IN_GATEWAY_MODE",
         details: { operation: "component.remove" },
         message: "component.remove removes a component from one machine; run it against a worker",
+      });
+    });
+  });
+
+  describe("daemon.update", () => {
+    it("answers UNSUPPORTED_IN_GATEWAY_MODE to an admin session, saying a gateway cannot update itself yet", async () => {
+      const { dispatcher } = harness();
+
+      await expect(
+        dispatcher.dispatch("daemon.update", {}, session({ role: "admin" })),
+      ).rejects.toMatchObject({
+        code: "UNSUPPORTED_IN_GATEWAY_MODE",
+        details: { operation: "daemon.update" },
+        message: "daemon.update updates one machine's daemon; a gateway cannot update itself yet",
       });
     });
   });

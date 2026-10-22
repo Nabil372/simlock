@@ -93,8 +93,10 @@ import {
   serviceDefinition,
   type ServiceDefinition,
   type ServiceManager,
+  NodeNpmCli,
   NodeProcessSupervisor,
   NodeSystemStats,
+  NodeUpdaterLauncher,
   NodeBytePipeLauncher,
   NodeTcpProbe,
   NodeTcpStreamConnector,
@@ -131,6 +133,8 @@ import { classifyError } from "./error-code.js";
 import { createModuleHost, type OptionalModuleDefinition } from "../modules/index.js";
 import { optionalModules } from "../module-registry/index.js";
 import { DaemonServer } from "./server.js";
+import { socketHeld } from "../updater/index.js";
+import { createUpdateCoordinator } from "./update-coordinator.js";
 import {
   DaemonAlreadyRunningError,
   DaemonEndpointHost,
@@ -594,6 +598,29 @@ async function composeDaemon(
     resolveRole: { resolve: (hello) => auth.resolveHelloRole(hello) },
     adminSecret: auth.adminSecret,
     tokens: auth.tokens,
+    update: createUpdateCoordinator({
+      npm: new NodeNpmCli({ runner: baseProcessRunner, filesystem, dataDirectory }),
+      launcher: new NodeUpdaterLauncher(),
+      leasing,
+      registry,
+      eventBus,
+      clock,
+      filesystem,
+      otherRoleRunning: () =>
+        socketHeld(
+          ipc,
+          resolveDaemonSocketPath(
+            daemonDataDirectory(resolveSimlockHome(), role === "worker" ? "gateway" : "worker"),
+          ),
+        ),
+      version,
+      packageRoot: fileURLToPath(new URL("../../", import.meta.url)),
+      simlockHome: resolveSimlockHome(),
+      dataDirectory,
+      role,
+      logPath: join(dataDirectory, "daemon.log"),
+      pid: process.pid,
+    }),
     version: version,
     converge: convergeStartup,
     settle: async () => {
@@ -906,6 +933,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
     directory: gatewayService,
     eventHistory,
     health: () => daemon.health,
+    version: options.version,
     host: fitHostFacts({ ...options.hostSystem, tools: [] }),
     ...(hostLoad === undefined ? {} : { load: () => fitHostLoad(hostLoad.current()) }),
     leaseIndex,
