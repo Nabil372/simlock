@@ -30,6 +30,7 @@ import {
   NodeIpcTransport,
   NoopLogger,
   serviceDefinition,
+  type ServiceManager,
   type ServiceState,
   type Filesystem,
   type IdGenerator,
@@ -1979,6 +1980,45 @@ describe("CLI: auto-launch's handshake cut short by the launched daemon (#684)",
   });
 });
 
+async function runDaemonStatus(
+  testCase: {
+    readonly role: "worker" | "gateway";
+    readonly running: boolean;
+    readonly state: ServiceState | undefined;
+  },
+  json: boolean,
+): Promise<{ readonly stdout: string }> {
+  const home = "/Users/me";
+  const output = outputCapture();
+  const manager =
+    testCase.state === undefined ? undefined : new FakeServiceManager({ state: testCase.state });
+  const environment = output.environmentWith({
+    daemonHome: { role: testCase.role, dataDirectory: "/simlock", gatewayPresent: false },
+    connectExistingAdmin: async () => {
+      if (!testCase.running) throw new Error("connect ECONNREFUSED");
+      return fakeClient();
+    },
+    service: {
+      manager,
+      platform: manager === undefined ? "linux" : "darwin",
+      definition: async () =>
+        serviceDefinition({
+          role: testCase.role,
+          root: `${home}/.simlock`,
+          dataDirectory: "/simlock",
+          home,
+          nodePath: "/Users/me/.nvm/versions/node/v22.13.0/bin/node",
+          mainPath: "/Users/me/simlock/dist/daemon/main.js",
+          env: {},
+        }),
+    },
+  });
+  await expect(
+    runCli(["daemon", "status", ...(json ? ["--json"] : [])], environment),
+  ).resolves.toBe(0);
+  return output;
+}
+
 describe("CLI: daemon status (ADR 0003 §11)", () => {
   it.each([
     { name: "the socket cannot be reached at all", error: () => new Error("connect ECONNREFUSED") },
@@ -2047,6 +2087,143 @@ describe("CLI: daemon status (ADR 0003 §11)", () => {
     expect(output.stdout.split("\n")[0]).toBe("Daemon: running (worker)");
   });
 
+  it("daemon status prints the Service: line and the service field in --json, for a worker or a gateway, running or stopped, and none on an unsupported platform", async () => {
+    const home = "/Users/me";
+    const node = "/Users/me/.nvm/versions/node/v22.13.0/bin/node";
+    const main = "/Users/me/simlock/dist/daemon/main.js";
+    const worker = "com.callstack.simlock.worker";
+    const gateway = "com.callstack.simlock.gateway";
+    const plist = (name: string) => `${home}/Library/LaunchAgents/${name}.plist`;
+    const cases: readonly {
+      readonly label: string;
+      readonly role: "worker" | "gateway";
+      readonly running: boolean;
+      readonly state: ServiceState | undefined;
+      readonly line: string | undefined;
+      readonly service: Record<string, unknown> | undefined;
+    }[] = [
+      {
+        label: "not installed, stopped",
+        role: "worker",
+        running: false,
+        state: { state: "not-installed" },
+        line: "Service: not installed",
+        service: { state: "not-installed", manager: "launchd", name: worker },
+      },
+      {
+        label: "installed, running",
+        role: "worker",
+        running: true,
+        state: { state: "installed", path: plist(worker) },
+        line: `Service: installed (launchd, ${worker})`,
+        service: { state: "installed", manager: "launchd", name: worker, path: plist(worker) },
+      },
+      {
+        label: "not loaded, running",
+        role: "worker",
+        running: true,
+        state: { state: "not-loaded", path: plist(worker) },
+        line: `Service: not loaded (launchd, ${worker}): commands start the daemon without it`,
+        service: { state: "not-loaded", manager: "launchd", name: worker, path: plist(worker) },
+      },
+      {
+        label: "Node path gone, stopped",
+        role: "worker",
+        running: false,
+        state: { state: "broken", path: plist(worker), missing: [node] },
+        line: `Service: broken (launchd, ${worker}): ${node} is gone; run simlock daemon install`,
+        service: {
+          state: "broken",
+          manager: "launchd",
+          name: worker,
+          path: plist(worker),
+          missing: [node],
+        },
+      },
+      {
+        label: "both paths gone, stopped",
+        role: "worker",
+        running: false,
+        state: { state: "broken", path: plist(worker), missing: [node, main] },
+        line: `Service: broken (launchd, ${worker}): ${node}, ${main} are gone; run simlock daemon install`,
+        service: {
+          state: "broken",
+          manager: "launchd",
+          name: worker,
+          path: plist(worker),
+          missing: [node, main],
+        },
+      },
+      {
+        label: "gateway, running",
+        role: "gateway",
+        running: true,
+        state: { state: "installed", path: plist(gateway) },
+        line: `Service: installed (launchd, ${gateway})`,
+        service: { state: "installed", manager: "launchd", name: gateway, path: plist(gateway) },
+      },
+      {
+        label: "unsupported platform",
+        role: "worker",
+        running: true,
+        state: undefined,
+        line: undefined,
+        service: undefined,
+      },
+    ];
+    for (const testCase of cases) {
+      const human = await runDaemonStatus(testCase, false);
+      const lines = human.stdout.trimEnd().split("\n");
+      expect(
+        [lines[0], ...lines.filter((line) => line.startsWith("Service:"))],
+        testCase.label,
+      ).toEqual([
+        testCase.running ? "Daemon: running (worker)" : "Daemon stopped",
+        ...(testCase.line === undefined ? [] : [testCase.line]),
+      ]);
+      if (testCase.line !== undefined)
+        expect(lines.at(-1), `${testCase.label} last line`).toBe(testCase.line);
+      const json = JSON.parse((await runDaemonStatus(testCase, true)).stdout) as {
+        readonly service?: unknown;
+      };
+      expect(json.service, `${testCase.label} --json`).toEqual(testCase.service);
+    }
+  });
+
+  it("daemon status fails with the service manager's error instead of printing Daemon stopped", async () => {
+    const output = outputCapture();
+    const environment = output.environmentWith({
+      daemonHome: { role: "worker", dataDirectory: "/simlock", gatewayPresent: false },
+      connectExistingAdmin: async () => {
+        throw new Error("connect ECONNREFUSED");
+      },
+      service: {
+        manager: {
+          manager: "launchd",
+          state: async () => {
+            throw new Error("launchctl timed out");
+          },
+        } as unknown as ServiceManager,
+        platform: "darwin",
+        definition: async () =>
+          serviceDefinition({
+            role: "worker",
+            root: "/Users/me/.simlock",
+            dataDirectory: "/simlock",
+            home: "/Users/me",
+            nodePath: "/n",
+            mainPath: "/m.js",
+            env: {},
+          }),
+      },
+    });
+
+    await expect(runCli(["daemon", "status"], environment)).resolves.not.toBe(0);
+
+    expect(output.stdout).not.toContain("Daemon stopped");
+    expect(output.stderr).toContain("launchctl timed out");
+  });
+
   it("asks the daemon to purge orphans only once the operator has confirmed", async () => {
     const output = outputCapture();
     const seen: unknown[] = [];
@@ -2106,6 +2283,47 @@ describe("CLI: daemon status (ADR 0003 §11)", () => {
       "Missing [ios] xcode: Xcode is not installed. Run `xcode-select`.",
     ]);
     expect(JSON.parse(output.stdout)).toEqual({ findings });
+  });
+
+  it("simlock doctor prints a service-broken finding to stderr, naming each missing path, and keeps the finding in the JSON report", async () => {
+    const node = "/Users/me/.nvm/versions/node/v22.13.0/bin/node";
+    const main = "/Users/me/simlock/dist/daemon/main.js";
+    for (const testCase of [
+      {
+        missing: [node],
+        line: `Service broken: com.callstack.simlock.worker (launchd) names missing ${node}. Run \`simlock daemon install\` again.`,
+      },
+      {
+        missing: [node, main],
+        line: `Service broken: com.callstack.simlock.worker (launchd) names missing ${node}, ${main}. Run \`simlock daemon install\` again.`,
+      },
+    ]) {
+      const output = outputCapture();
+      const findings = [
+        {
+          kind: "service-broken" as const,
+          manager: "launchd" as const,
+          name: "com.callstack.simlock.worker",
+          missing: testCase.missing,
+          remedy: "Run `simlock daemon install` again.",
+        },
+      ];
+
+      await expect(
+        runCli(
+          ["doctor"],
+          output.environmentWith({
+            connectAdmin: async () =>
+              fakeClient({ runDoctor: () => Promise.resolve({ findings }) }),
+          }),
+        ),
+      ).resolves.toBe(0);
+
+      expect(output.stderr.split("\n").filter((line) => line.startsWith("Service broken"))).toEqual(
+        [testCase.line],
+      );
+      expect(JSON.parse(output.stdout)).toEqual({ findings });
+    }
   });
 
   it("simlock doctor prints a driver-advisory finding to stderr as `Warning [<platform>] <code>: <message>`", async () => {

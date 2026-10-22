@@ -24,6 +24,7 @@ import {
   type Platform,
   type ModelPreferences,
   type PrerequisiteCheck,
+  type ServiceCheck,
   CleanupReaper,
   ComponentInstaller,
   DEVICE_CLASSES,
@@ -88,6 +89,10 @@ import {
   NodeHostInfo,
   NodeIpcTransport,
   NodeProcessRunner,
+  productionServiceManager,
+  serviceDefinition,
+  type ServiceDefinition,
+  type ServiceManager,
   NodeProcessSupervisor,
   NodeSystemStats,
   NodeBytePipeLauncher,
@@ -154,6 +159,7 @@ export interface StartDaemonOptions {
   readonly relayTargets?: RelayTargets;
   readonly role?: DaemonMode;
   readonly prerequisiteChecks?: readonly PrerequisiteCheck[];
+  readonly serviceCheck?: ServiceCheck;
   readonly filesystem?: Filesystem;
   readonly hostInfo?: HostInfo;
   readonly hostLoadProbe?: HostLoadProbe | null;
@@ -393,6 +399,7 @@ async function composeDaemon(
     modelPreferences,
     optionalModules: () => moduleHost.findings(),
     prerequisiteChecks,
+    ...(options.serviceCheck === undefined ? {} : { serviceCheck: options.serviceCheck }),
     registry,
     state,
     systemStats,
@@ -1585,6 +1592,68 @@ function logFatalStart(role: DaemonMode | undefined, message: string, extra: obj
   process.exitCode = 1;
 }
 
+/** why: only a worker has a service check; a gateway and an unsupported platform (no manager) have none. */
+export function serviceCheckFor(
+  role: DaemonMode,
+  manager: ServiceManager | undefined,
+  definition: () => ServiceDefinition,
+): { readonly serviceCheck?: ServiceCheck } {
+  if (manager === undefined || role !== "worker") return {};
+  const { name } = definition();
+  return {
+    serviceCheck: {
+      manager: manager.manager,
+      name,
+      check: async () => {
+        const state = await manager.state(definition());
+        return state.state === "broken" ? state.missing : [];
+      },
+    },
+  };
+}
+
+/** why: the process facts the production service check reads, injectable so a test can prove the definition it builds. */
+export interface ServiceCheckHost {
+  readonly manager: ServiceManager | undefined;
+  readonly root: string;
+  readonly home: string;
+  readonly nodePath: string;
+  readonly mainPath: string;
+  readonly env: NodeJS.ProcessEnv;
+}
+
+function currentServiceCheckHost(): ServiceCheckHost {
+  return {
+    manager: productionServiceManager(process.platform, {
+      runner: new NodeProcessRunner(),
+      filesystem: new NodeFilesystem(),
+      uid: process.getuid?.() ?? 0,
+    }),
+    root: resolveSimlockHome(),
+    home: homedir(),
+    nodePath: process.execPath,
+    mainPath: fileURLToPath(import.meta.url),
+    env: process.env,
+  };
+}
+
+export function productionServiceCheck(
+  role: DaemonMode,
+  host: ServiceCheckHost = currentServiceCheckHost(),
+): { readonly serviceCheck?: ServiceCheck } {
+  return serviceCheckFor(role, host.manager, () =>
+    serviceDefinition({
+      role,
+      root: host.root,
+      dataDirectory: daemonDataDirectory(host.root, role),
+      home: host.home,
+      nodePath: host.nodePath,
+      mainPath: host.mainPath,
+      env: host.env,
+    }),
+  );
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   filterSqliteExperimentalWarning();
   const argv = process.argv.slice(2);
@@ -1597,6 +1666,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     let removeAdminSecret: (() => Promise<void>) | undefined;
     void startDaemon({
       role,
+      ...productionServiceCheck(role),
       onAdminSecretWritten: (remove) => {
         removeAdminSecret = remove;
       },
