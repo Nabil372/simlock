@@ -94,6 +94,7 @@ import {
   type ServiceDefinition,
   type ServiceManager,
   NodeNpmCli,
+  type NpmCli,
   NodeProcessSupervisor,
   NodeSystemStats,
   NodeUpdaterLauncher,
@@ -135,6 +136,7 @@ import { optionalModules } from "../module-registry/index.js";
 import { DaemonServer } from "./server.js";
 import { socketHeld } from "../updater/index.js";
 import { createUpdateCoordinator } from "./update-coordinator.js";
+import { startVersionCheck, type VersionCheck } from "./version-check.js";
 import {
   DaemonAlreadyRunningError,
   DaemonEndpointHost,
@@ -170,6 +172,8 @@ export interface StartDaemonOptions {
   readonly idGenerator?: IdGenerator;
   readonly ipc?: IpcConnector & IpcListenerFactory;
   readonly logger?: Logger;
+  /** why: test-only, replaces the npm CLI the version check and the update coordinator run. */
+  readonly npm?: NpmCli;
   readonly processRunner?: ProcessRunner;
   readonly processSupervisor?: ProcessSupervisor;
   readonly socketPath?: string;
@@ -183,11 +187,20 @@ export interface StartDaemonOptions {
 /** Constructs the daemon's real adapters once; all state remains in the daemon. */
 export async function startDaemon(options: StartDaemonOptions = {}): Promise<DaemonServer> {
   let opened: StateDatabase | undefined;
+  let check: VersionCheck | undefined;
   try {
-    return await composeDaemon(options, (state) => {
-      opened = state;
-    });
+    return await composeDaemon(
+      options,
+      (state) => {
+        opened = state;
+      },
+      (started) => {
+        check = started;
+      },
+    );
   } catch (error: unknown) {
+    // why: the check's 24 h timer would keep a failed start's process alive and re-ask npm; a running daemon disposes it in `dispose`.
+    check?.dispose();
     // why: a start that fails after `state.db` opened must not hold the file; a running daemon closes it in `dispose`.
     opened?.close();
     throw error;
@@ -198,6 +211,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Dae
 async function composeDaemon(
   options: StartDaemonOptions,
   onStateOpened: (state: StateDatabase) => void,
+  onVersionCheck: (check: VersionCheck) => void,
 ): Promise<DaemonServer> {
   const version = options.version ?? readPackageVersion();
   const role = options.role ?? "worker";
@@ -290,6 +304,15 @@ async function composeDaemon(
   // roots, loads no registry, and runs no reaper, health monitor or capacity strategy -- so the
   // branch is here, before any of that is built, rather than as a set of conditionals threaded
   // through the worker's composition below.
+  const npm =
+    options.npm ?? new NodeNpmCli({ runner: baseProcessRunner, filesystem, dataDirectory });
+  const versionCheck = startVersionCheck({
+    npm,
+    clock,
+    logger: logger.child("version-check"),
+    enabled: config.update.check,
+  });
+  onVersionCheck(versionCheck);
   if (role === "gateway") {
     return startGatewayDaemon({
       auth,
@@ -310,6 +333,7 @@ async function composeDaemon(
       socketPath,
       state,
       version: version,
+      versionCheck,
       ...(options.webhookPoster === undefined ? {} : { webhookPoster: options.webhookPoster }),
     });
   }
@@ -599,7 +623,8 @@ async function composeDaemon(
     adminSecret: auth.adminSecret,
     tokens: auth.tokens,
     update: createUpdateCoordinator({
-      npm: new NodeNpmCli({ runner: baseProcessRunner, filesystem, dataDirectory }),
+      npm,
+      latestVersion: () => versionCheck.latest(),
       launcher: new NodeUpdaterLauncher(),
       leasing,
       registry,
@@ -630,6 +655,7 @@ async function composeDaemon(
     },
     // Every driver is tried even when another throws: Android's disposal is the only thing that can stop the adb server it started.
     dispose: async () => {
+      versionCheck.dispose();
       core.dispose();
       leasing.dispose();
       // Before the drivers: a running install is ended through its signal while its driver
@@ -788,6 +814,7 @@ interface GatewayDaemonOptions {
   readonly socketPath: string;
   readonly state: StateDatabase;
   readonly version: string;
+  readonly versionCheck: VersionCheck;
   readonly webhookPoster?: WebhookPoster;
 }
 
@@ -937,6 +964,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
     host: fitHostFacts({ ...options.hostSystem, tools: [] }),
     ...(hostLoad === undefined ? {} : { load: () => fitHostLoad(hostLoad.current()) }),
     leaseIndex,
+    latestVersion: () => options.versionCheck.latest(),
     logger: logger.child("gateway"),
     // why: `alerts` is built after this dispatcher but before start(), and only with destinations; without any, the option stays out.
     ...(config.gateway.alerts.destinations.length === 0
@@ -981,6 +1009,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
       fleetCoordinator.start();
     },
     dispose: async () => {
+      options.versionCheck.dispose();
       gatewayDispatcher.dispose();
       fleetCoordinator.dispose();
       gatewayOwnerRoutedFacts.dispose();
