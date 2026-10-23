@@ -10,6 +10,7 @@ import {
   startFleet,
   test,
 } from "./fixtures.js";
+import { answerWithLoad } from "./workers-answers.js";
 
 const ONE_DEVICE = { limits: { ios: { maxDevices: 1, maxRunning: 1 }, maxRunning: 1 } };
 const IOS = { availableOsVersions: ["18.4"], knownModels: ["iPhone 16"] };
@@ -166,6 +167,9 @@ test.describe("the console acts", () => {
   test("a worker is drained from Fleet with no dialog, and Undo undrains it", async ({ page }) => {
     const fleet = await startFleet([{ driverScript: { ios: IOS }, label: "drain-a" }]);
     try {
+      // why: reproduces #886. This is the reading of the machine it was seen on, whose data volume
+      // is 98% full; the test reads the host's real load, so it fails there and passes on CI.
+      await answerWithLoad(page, { cpu: 12, disk: 98, memory: 54 });
       await openPage(page, fleet.gateway, "/fleet", "Fleet");
       const row = rowOf(page, "drain-a");
       await expect(row).toBeVisible();
