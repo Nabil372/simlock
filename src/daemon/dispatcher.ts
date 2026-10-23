@@ -58,11 +58,13 @@ import {
   consoleUrlField,
   EVENTS_PAGE_DEFAULT,
   fitPlatformCatalog,
+  inboxItems,
   OPERATIONS,
   requestedDevice,
   type ComponentProgress,
   type OperationName,
   type StatusLoad,
+  waitingRequestSchema,
   WORKER_VIEW_CATALOG_EVENTS,
   WORKER_VIEW_REFRESH_INTERVAL_MS,
   workerViewFields,
@@ -321,6 +323,7 @@ export class Dispatcher {
       "events.unsubscribe": this.#eventsUnsubscribe,
       "identity.get": identityGet,
       "token.create": this.#tokenCreate,
+      "inbox.get": this.#inboxGet,
       "token.list": this.#tokenList,
       "token.revoke": this.#tokenRevoke,
       "component.install": this.#componentInstall,
@@ -1050,6 +1053,26 @@ export class Dispatcher {
   #tokenCreate: Handler<"token.create"> = async (input) => {
     const { record, secret } = await this.#requireTokens().create(input.role, input.label);
     return { secret, token: record };
+  };
+
+  // why: a worker answers as a fleet of one (ADR 0012): the rules read its own view, leases and queue.
+  #inboxGet: Handler<"inbox.get"> = async (_input, session) => {
+    const [listed, tokens] = await Promise.all([
+      this.#workerList({}, session),
+      Promise.resolve()
+        .then(() => this.#requireTokens().list())
+        .catch(() => []),
+    ]);
+    return {
+      items: [
+        ...inboxItems(OPERATIONS["worker.list"].output.parse(listed).workers, {
+          leases: OPERATIONS["lease.list"].output.parse(this.#leaseList({}, session)).leases,
+          now: this.options.clock.now(),
+          requests: z.array(waitingRequestSchema).parse(this.options.queue.waitingRequests()),
+          tokens: OPERATIONS["token.list"].output.parse({ tokens }).tokens,
+        }),
+      ],
+    };
   };
 
   #tokenList: Handler<"token.list"> = async () => ({ tokens: await this.#requireTokens().list() });
