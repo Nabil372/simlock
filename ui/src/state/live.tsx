@@ -8,9 +8,12 @@ import {
   useSyncExternalStore,
 } from "react";
 
+import { useQuery } from "@tanstack/react-query";
+
 import type { ApiPath } from "../data/api";
 import { type DaemonFacts, type DaemonMode, type ModeStore, watchMode } from "../data/mode";
 import { useApi, useSession } from "./services";
+import { createQueries, type Queries, resourceOf } from "./queries";
 import { browserClock, documentVisibility } from "../data/live/browser";
 import {
   type Clock,
@@ -29,6 +32,7 @@ export interface Now {
 export interface Live {
   readonly connection: LiveConnection;
   readonly mode: ModeStore;
+  readonly queries: Queries;
   readonly ticker: Ticker;
 }
 
@@ -48,8 +52,14 @@ export function LiveProvider({ children }: { readonly children: ReactNode }) {
     });
     const ticker = createTicker(browserClock, () => connection.serverNow());
     const mode = watchMode({ api, clock: browserClock, connection });
-    setLive({ connection, mode, ticker });
+    const queries = createQueries({
+      clock: browserClock,
+      connection,
+      visibility: documentVisibility,
+    });
+    setLive({ connection, mode, queries, ticker });
     return () => {
+      queries.dispose();
       mode.dispose();
       ticker.dispose();
       connection.dispose();
@@ -65,14 +75,9 @@ function useLive(): Live {
   return live;
 }
 
-export function useLiveResource<T>(path: ApiPath): ResourceState<T> {
-  const { connection } = useLive();
-  const subscribe = useCallback(
-    (listener: () => void) => connection.watch(path, listener),
-    [connection, path],
-  );
-  const snapshot = useCallback(() => connection.resource<T>(path), [connection, path]);
-  return useSyncExternalStore(subscribe, snapshot);
+export function useRouteQuery<T>(path: ApiPath): ResourceState<T> {
+  const { queries } = useLive();
+  return resourceOf(useQuery(queries.options<T>(path), queries.client));
 }
 
 // why: `undefined` until a read of `GET /v1/status` has said which kind of daemon this is.
