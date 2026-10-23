@@ -756,6 +756,31 @@ describe("the agent-device front, through a gateway", { timeout: 60_000 }, () =>
     expect(member.fake.rpcRequests("agent_device.command").length).toBe(before + 1);
   });
 
+  it("with every worker that can serve agent-device drained, an allocate for a simulator and one for a phone answer `refused by simlock: No worker in the fleet can currently serve this request`, as a drained fleet answers a plain lease, and nothing is leased", async () => {
+    const rig = await setUp({
+      workers: [{ label: "sim" }, { label: "phone", phone: true, platform: "android" }],
+    });
+    const phone = { physical: true, platform: "android" };
+    await granted(rig, 1);
+    await granted(rig, 2, phone);
+    await release(rig, 1);
+    await release(rig, 2);
+    await expect.poll(async () => (await fleetLeases(rig)).length).toBe(0);
+    for (const member of rig.members) {
+      const view = await viewOf(rig, member.label);
+      await rig.gateway.dispatch("worker.drain", { workerId: view?.id ?? "" }, adminSession);
+      await vi.waitFor(async () => expect((await viewOf(rig, member.label))?.drained).toBe(true));
+    }
+
+    const simulator = await envelopeOf(await allocate(rig, 3));
+    const physical = await envelopeOf(await allocate(rig, 4, phone));
+
+    const noCapacity =
+      "refused by simlock: No worker in the fleet can currently serve this request";
+    expect([simulator.error?.message, physical.error?.message]).toEqual([noCapacity, noCapacity]);
+    expect(await fleetLeases(rig)).toEqual([]);
+  });
+
   it("a worker that disconnected does not count as capable", async () => {
     const rig = await setUp();
     const original = first(rig);
