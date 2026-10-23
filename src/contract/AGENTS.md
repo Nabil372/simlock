@@ -32,7 +32,7 @@ park on readiness (all but `status.get`) → handler → parse output.
 every operation but `daemon.stop`, which `DaemonServer` answers.
 
 - `agent`: `catalog.get`, `status.get`, `component.list`, `lease.request`, `lease.cancel`,
-  `lease.renew`, `lease.release`, `lease.list`, `driver.passthrough`, `device.exec`,
+  `lease.renew`, `lease.release`, `lease.list`, `lease.get`, `driver.passthrough`, `device.exec`,
   `doctor.run` without `fix` or `purgeOrphans`.
 - `admin`: every other operation (`list.get`, `config.get`, `daemon.stop`, `events.*`,
   `token.*`, `worker.*`, `component.install`, `device.add`, `relay.request`, ...).
@@ -56,7 +56,7 @@ Three identities:
 
 ## Protocol version
 
-- `PROTOCOL_VERSION_RANGE` in `protocol.ts` holds it, now `{ min: 57, max: 57 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
+- `PROTOCOL_VERSION_RANGE` in `protocol.ts` holds it, now `{ min: 58, max: 58 }`. `DAEMON_PROTOCOL_VERSION` (`src/daemon-protocol/`) is its `max`.
 - Every change to a contract shape bumps it by one in the same PR. Move `min` too, unless
   a compatibility path stays side by side. `.agents/scripts/protocol-bump-check.mjs` checks
   it on push and in CI; it counts every file here as a shape but tests, `index.ts` and the

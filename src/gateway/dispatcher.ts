@@ -158,7 +158,7 @@ export interface GatewayDispatcherOptions {
   >;
   readonly leaseIndex: Pick<
     FleetLeaseIndex,
-    "project" | "all" | "isGatewayRequester" | "requesterPrefix"
+    "project" | "all" | "isGatewayRequester" | "requesterPrefix" | "resolve" | "findByWorkerLease"
   >;
 }
 
@@ -252,6 +252,7 @@ export class GatewayDispatcher {
       "daemon.update": this.#daemonUpdate,
       "worker.install-component": this.#workerInstallComponent,
       "lease.list": this.#leaseList,
+      "lease.get": this.#leaseGet,
       "list.get": this.#listGet,
       "identity.get": identityGet,
 
@@ -519,6 +520,56 @@ export class GatewayDispatcher {
       session.role === "admin" ? this.#fleetLeases() : this.#ownedFleetLeases(session.principal),
   });
 
+  // why: the one place a gateway lease record gets `workerLeaseId` (the worker's own id), so `lease.list`, `lease.get` and `list.get kind=leases` agree and `status.get` (which calls `project` directly) does not carry it.
+  #fleetLease<Lease extends { readonly id: string; readonly requesterId: string }>(
+    raw: Lease,
+    view: { readonly id: string; readonly label?: string | undefined },
+  ) {
+    return {
+      ...this.options.leaseIndex.project(raw, view.id, view.label),
+      workerLeaseId: raw.id,
+    };
+  }
+
+  // why: finds the record `lease.list` would hold for this session without building the list -- a gateway-issued lease through the index (its owner, or an admin), a worker's own local lease for an admin only, by a raw id the index does not rename.
+  #leaseGet: Handler<"lease.get"> = (input, session) => {
+    const isAdmin = session.role === "admin";
+    const entry = this.options.leaseIndex.resolve(input.leaseId);
+    const lease =
+      entry === undefined
+        ? isAdmin
+          ? this.#localLease(input.leaseId)
+          : undefined
+        : isAdmin || entry.ownerId === session.principal
+          ? this.#issuedLease(entry)
+          : undefined;
+    if (lease === undefined) {
+      throw new DispatchError("UNKNOWN_LEASE", `Unknown lease: ${input.leaseId}`, {
+        leaseId: input.leaseId,
+      });
+    }
+    return { lease };
+  };
+
+  #issuedLease(entry: { readonly workerId: string; readonly workerLeaseId: string }) {
+    const view = this.options.workers.view(entry.workerId);
+    const raw = view?.leases?.find((lease) => lease.id === entry.workerLeaseId);
+    return view === undefined || raw === undefined ? undefined : this.#fleetLease(raw, view);
+  }
+
+  #localLease(leaseId: string) {
+    for (const view of this.options.workers.views()) {
+      const raw = view.leases?.find((lease) => lease.id === leaseId);
+      if (
+        raw !== undefined &&
+        this.options.leaseIndex.findByWorkerLease(view.id, raw.id) === undefined
+      ) {
+        return this.#fleetLease(raw, view);
+      }
+    }
+    return undefined;
+  }
+
   /** Every lease this gateway issued to `ownerId`, projected to its fleet-facing form. Looks up
    * each entry's current record from the owning worker's view rather than caching one on the
    * index itself, so a renewed TTL/`lastRenewedAt` is always current. An entry whose worker view
@@ -531,7 +582,7 @@ export class GatewayDispatcher {
       const view = this.options.workers.view(entry.workerId);
       const raw = view?.leases?.find((lease) => lease.id === entry.workerLeaseId);
       if (view === undefined || raw === undefined) continue;
-      leases.push(this.options.leaseIndex.project(raw, view.id, view.label));
+      leases.push(this.#fleetLease(raw, view));
     }
     return leases;
   }
@@ -585,11 +636,7 @@ export class GatewayDispatcher {
   #fleetLeases() {
     return this.options.workers
       .views()
-      .flatMap((view) =>
-        (view.leases ?? []).map((lease) =>
-          this.options.leaseIndex.project(lease, view.id, view.label),
-        ),
-      );
+      .flatMap((view) => (view.leases ?? []).map((lease) => this.#fleetLease(lease, view)));
   }
 
   /**

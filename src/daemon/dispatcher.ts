@@ -304,6 +304,7 @@ export class Dispatcher {
       "lease.renew": this.#leaseRenew,
       "lease.release": this.#leaseRelease,
       "lease.list": this.#leaseList,
+      "lease.get": this.#leaseGet,
       "driver.passthrough": this.#driverPassthrough,
       "device.exec": this.#deviceExec,
       "relay.request": this.#relayRequest,
@@ -622,6 +623,16 @@ export class Dispatcher {
   #leaseReleaseAll: Handler<"lease.release-all"> = async () => {
     const leaseIds = await this.options.leases.releaseAll("killed");
     return { leaseIds: [...leaseIds] };
+  };
+
+  #leaseGet: Handler<"lease.get"> = (input, session) => {
+    const lease = this.options.registry.snapshot.leases.find(
+      (candidate) => candidate.id === input.leaseId,
+    );
+    if (lease === undefined || (session.role !== "admin" && lease.ownerId !== session.principal)) {
+      throw new UnknownLeaseError(input.leaseId);
+    }
+    return { lease };
   };
 
   #leaseList: Handler<"lease.list"> = (_input, session) => {

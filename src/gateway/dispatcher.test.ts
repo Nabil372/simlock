@@ -836,6 +836,97 @@ describe("GatewayDispatcher", () => {
     );
   });
 
+  it("lease.get reads one lease by its gateway id for its owner or an admin, a worker's own local lease for an admin only, and answers UNKNOWN_LEASE otherwise", async () => {
+    const { dispatcher, leaseIndex, workers } = harness();
+    workers.connected("wrk_1", "mac-mini-1", undefined);
+    const issued = {
+      ...leaseFixture("lease_1", "dev_1"),
+      ownerId: "agent-1",
+      requesterId: `${GATEWAY_REQUESTER_PREFIX}agent-1`,
+    };
+    const local = { ...leaseFixture("local_1", "dev_2"), ownerId: "worker-agent" };
+    workers.refresh("wrk_1", { leases: [issued, local] });
+    const owner = session({ principal: "agent-1", role: "agent" });
+    const stranger = session({ principal: "agent-2", role: "agent" });
+    const get = (leaseId: string, who: ReturnType<typeof session>) =>
+      dispatcher.dispatch("lease.get", { leaseId }, who);
+
+    await expect(get("wrk_1.lease_1", owner)).resolves.toEqual({
+      lease: expect.objectContaining({ id: "wrk_1.lease_1", workerId: "wrk_1" }),
+    });
+    await expect(get("wrk_1.lease_1", session())).resolves.toMatchObject({
+      lease: { id: "wrk_1.lease_1" },
+    });
+    await expect(get("local_1", session())).resolves.toMatchObject({
+      lease: { id: "local_1", workerId: "wrk_1" },
+    });
+    const unknown = { code: "UNKNOWN_LEASE", details: { leaseId: expect.any(String) } };
+    await expect(get("wrk_1.lease_1", stranger)).rejects.toMatchObject(unknown);
+    await expect(get("local_1", stranger)).rejects.toMatchObject(unknown);
+    await expect(get("wrk_1.lease_nope", session())).rejects.toMatchObject(unknown);
+    await expect(get("lease_1", session())).rejects.toMatchObject(unknown);
+    // why: an index entry can outlive its worker view, or the view its lease.
+    for (const [workerId, workerLeaseId] of [
+      ["wrk_gone", "lease_9"],
+      ["wrk_1", "lease_gone"],
+    ] as const) {
+      leaseIndex.add({
+        gatewayLeaseId: `${workerId}.${workerLeaseId}`,
+        grantedAt: 1,
+        ownerId: "agent-1",
+        requesterId: `${GATEWAY_REQUESTER_PREFIX}agent-1`,
+        workerId,
+        workerLeaseId,
+      });
+      await expect(get(`${workerId}.${workerLeaseId}`, session())).rejects.toMatchObject(unknown);
+      await expect(get(`${workerId}.${workerLeaseId}`, owner)).rejects.toMatchObject(unknown);
+    }
+  });
+
+  it("names the worker's own lease id as workerLeaseId on the leases of lease.list, lease.get and list.get kind=leases, never on status.get", async () => {
+    const { dispatcher, workers } = harness();
+    workers.connected("wrk_1", "mac-mini-1", undefined);
+    const issued = (id: string, chosen: boolean) => ({
+      ...leaseFixture(id, `dev_${id}`),
+      idChosenByRequester: chosen,
+      ownerId: "agent-1",
+      requesterId: `${GATEWAY_REQUESTER_PREFIX}agent-1`,
+    });
+    workers.refresh("wrk_1", {
+      leases: [
+        issued("lse_42", false),
+        issued("my-lease", true),
+        leaseFixture("local_1", "dev_local"),
+      ],
+    });
+    const expected = [
+      { id: "wrk_1.lse_42", workerLeaseId: "lse_42" },
+      { id: "my-lease", workerLeaseId: "my-lease" },
+      { id: "local_1", workerLeaseId: "local_1" },
+    ];
+    const pick = (leases: readonly { id: string; workerLeaseId?: string | undefined }[]) =>
+      leases.map(({ id, workerLeaseId }) => ({ id, workerLeaseId }));
+
+    const listed = await dispatcher.dispatch("lease.list", {}, session());
+    expect(pick(listed.leases)).toEqual(expected);
+    const fleet = await dispatcher.dispatch("list.get", { kind: "leases" }, session());
+    expect(pick(fleet as never)).toEqual(expected);
+    const owned = await dispatcher.dispatch(
+      "lease.list",
+      {},
+      session({ principal: "agent-1", role: "agent" }),
+    );
+    expect(pick(owned.leases)).toEqual(expected.slice(0, 2));
+    for (const { id, workerLeaseId } of expected) {
+      const { lease } = await dispatcher.dispatch("lease.get", { leaseId: id }, session());
+      expect(lease).toMatchObject({ id, workerLeaseId });
+    }
+    const status = await dispatcher.dispatch("status.get", {}, session());
+    expect((status.leases ?? []).map((lease) => Object.keys(lease))).toEqual(
+      expected.map(() => expect.not.arrayContaining(["workerLeaseId"])),
+    );
+  });
+
   it("lists no device or lease for a worker that is starting, whether the session is an admin or the owner of a lease the gateway indexed on it, and answers worker.list with the view as it is", async () => {
     const { dispatcher, workers } = harness();
     workers.connected("wrk_1", "mac-mini-1", undefined);

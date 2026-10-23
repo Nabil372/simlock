@@ -63,6 +63,7 @@ import { openMemoryStateDatabase } from "../auth/testing.js";
 import type { DispatcherOptions, DispatchSession } from "./dispatcher.js";
 import { Dispatcher, DispatchError } from "./dispatcher.js";
 import { classifyError } from "./error-code.js";
+import { UnknownLeaseError } from "../core/index.js";
 import { RequestCancelledError } from "../leasing/index.js";
 import { createTestEngine, type TestEngine } from "../leasing/testing.js";
 
@@ -1166,6 +1167,7 @@ describe("Dispatcher: ownership", () => {
       session({ principal: "tok_owner", role: "agent" }),
     );
     expect(own.leases).toHaveLength(1);
+    expect(own.leases[0]).not.toHaveProperty("workerLeaseId");
 
     const otherAgent = await dispatcher.dispatch(
       "lease.list",
@@ -1176,6 +1178,33 @@ describe("Dispatcher: ownership", () => {
 
     const admin = await dispatcher.dispatch("lease.list", {}, session({ role: "admin" }));
     expect(admin.leases).toHaveLength(1);
+  });
+
+  it("lease.get: an agent reads its own lease, another agent's or an unknown id is UNKNOWN_LEASE, admin reads any", async () => {
+    const { dispatcher } = await buildDispatcher();
+    const leaseId = await grantLease(dispatcher);
+    const owner = session({ principal: "tok_owner", role: "agent" });
+
+    const own = await dispatcher.dispatch("lease.get", { leaseId }, owner);
+    expect(own).toEqual({ lease: (await dispatcher.dispatch("lease.list", {}, owner)).leases[0] });
+    expect(own.lease).toMatchObject({ id: leaseId, ownerId: "tok_owner" });
+    await expect(
+      dispatcher.dispatch(
+        "lease.get",
+        { leaseId },
+        session({ principal: "tok_other", role: "agent" }),
+      ),
+    ).rejects.toBeInstanceOf(UnknownLeaseError);
+    await expect(
+      dispatcher.dispatch("lease.get", { leaseId: "lse_nope" }, owner),
+    ).rejects.toBeInstanceOf(UnknownLeaseError);
+    await expect(
+      dispatcher.dispatch(
+        "lease.get",
+        { leaseId },
+        session({ principal: "tok_other", role: "admin" }),
+      ),
+    ).resolves.toMatchObject({ lease: { id: leaseId } });
   });
 
   it("lease.cancel: naming a requesterId with no pending request always passes (not-found), admin bypasses too", async () => {
