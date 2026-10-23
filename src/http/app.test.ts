@@ -1498,6 +1498,34 @@ describe("lease routes", () => {
     expect(lease).not.toHaveProperty("mode");
   });
 
+  it("names an Android emulator's adb serial as address, beside its AVD name as udid, on the lease object the POST, the request poll and GET /v1/leases/:id answer", async () => {
+    const emulator = {
+      address: "emulator-5554",
+      driverDeviceId: "simlock_3f9a2c1e",
+      id: "dev_and",
+      spec: { model: "Pixel 8", osVersion: "35", physical: false, platform: "android" },
+    } as const;
+    const { app, dispatcher, registry } = buildHarness();
+    const posted = postLeaseRequest(app, { device: "Pixel 8", platform: "android" });
+    const call = await waitForDispatch(dispatcher, "lease.request");
+    call.resolve(makeGrant({ device: emulator, lease: { deviceId: "dev_and", id: "lse_and" } }));
+    const created = (await (await posted).json()) as { request: { id: string; lease: unknown } };
+    registry.devices = [makeDevice(emulator)];
+    registry.leases = [makeLease({ deviceId: "dev_and", id: "lse_and", ownerId: "tok_agent" })];
+
+    const polled = await app.request(`/v1/lease-requests/${created.request.id}`, {
+      headers: agentAuth,
+    });
+    const read = await app.request("/v1/leases/lse_and", { headers: agentAuth });
+
+    const named = { address: "emulator-5554", udid: "simlock_3f9a2c1e" };
+    expect({
+      get: ((await read.json()) as { lease: unknown }).lease,
+      poll: ((await polled.json()) as { request: { lease: unknown } }).request.lease,
+      post: created.request.lease,
+    }).toMatchObject({ get: named, poll: named, post: named });
+  });
+
   it("404s an unknown lease id", async () => {
     const { app } = buildHarness();
     const response = await app.request("/v1/leases/lse-missing", { headers: agentAuth });
