@@ -3973,6 +3973,31 @@ describe("the agent-device front's request rules", () => {
       expect(flagsOf(unnamed)["device"]).toBe(idOf(rig, 2));
     });
 
+    // why: agent-device 0.21.28 answers an allocate with `{ lease }` and no device; only its `devices` inventory names a device, and its session check matches `--device` by that name alone (#971).
+    it("`test --shard-all` with no `--device` names each of the token's leased devices by the name agent-device's inventory gives it when the allocate reply named no device, for an agent holding one device and one holding two", async () => {
+      const rig = await setUp();
+      rig.fake.nameDeviceInNextReply("none");
+      await granted(rig, 1);
+      rig.fake.nameDeviceInNextReply("none");
+      await granted(rig, 2, {}, { token: secrets.two });
+      rig.fake.nameDeviceInNextReply("none");
+      await granted(rig, 3, {}, { token: secrets.two });
+      rig.fake.listDevices([
+        { id: idOf(rig, 1), name: "simlock-aaaa", platform: "ios" },
+        { id: idOf(rig, 2), name: "simlock-bbbb", platform: "ios" },
+        { id: idOf(rig, 3), name: "simlock-cccc", platform: "ios" },
+      ]);
+
+      const one = await forwarded(rig, () => shard(rig, 1, { shardAll: 1 }));
+      const two = await forwarded(rig, () => shard(rig, 2, {}, secrets.two));
+
+      expect(flagsOf(one)["device"]).toBe("simlock-aaaa");
+      expect(String(flagsOf(two)["device"]).split(",").sort()).toEqual([
+        "simlock-bbbb",
+        "simlock-cccc",
+      ]);
+    });
+
     it('`test --shard-split 2` with `device: " , "` is filled as if no list were sent; from a token that holds no device it is refused with `refused: no device leased; run open first`', async () => {
       const rig = await setUp();
       await granted(rig, 1);
