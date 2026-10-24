@@ -93,3 +93,20 @@ export function renderInstructions(format: "text" | "json"): string {
     ? JSON.stringify({ instructions: AGENT_INSTRUCTIONS })
     : AGENT_INSTRUCTIONS;
 }
+
+export { renderSkill } from "./skill.js";
+export {
+  AGENT_TOOL_IDS,
+  agentToolName,
+  SetupMcpFailedError,
+  SetupRefusedError,
+  setupAgentTools,
+  toolRunner,
+} from "./setup.js";
+export type {
+  AgentTool,
+  SetupAgentToolsOptions,
+  SetupReport,
+  ToolOutcome,
+  RunTool,
+} from "./setup.js";

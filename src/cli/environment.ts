@@ -283,6 +283,11 @@ export function buildCliEnvironment(
           },
         }),
     requesterId,
+    homeDirectory: ports.homeDirectory,
+    workingDirectory: ports.workingDirectory,
+    codexHome: ports.codexHome,
+    runTool: ports.runTool,
+    filesystem,
     connectAdmin: (resolveCredential) => autoLaunch.connect(resolveCredential),
     connectExistingAdmin: (resolveCredential) => connect(ipc, resolveCredential),
     daemonEndpointPresent: async () => {
