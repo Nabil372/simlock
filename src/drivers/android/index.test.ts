@@ -491,6 +491,44 @@ describe("AndroidDriver", () => {
     },
   );
 
+  // why: The emulator starts no gRPC endpoint and writes no discovery file when `-port` is set
+  // without `-grpc`, so tools that drive it over gRPC cannot find a leased device (#639).
+  it.each([
+    ["the first console port", [adbServerPort], 5586, "8586"],
+    ["a console port past a taken one", [adbServerPort, 5586], 5588, "8588"],
+  ])(
+    "boots every launch of an emulator on %s with a token gRPC endpoint at the console port plus 3000",
+    async (_, listening, consolePort, grpcPort) => {
+      const filesystem = await androidFilesystem();
+      const runner = new RecordingRunner(new EmulatorHost(filesystem).runner());
+      const driver = await createDriver(filesystem, runner, {
+        ids: ["one"],
+        tcpProbe: new FakeTcpProbe(listening),
+      });
+      const spec = {
+        physical: false,
+        model: "Pixel 5",
+        osVersion: "34",
+        platform: "android",
+      } as const;
+      await driver.resolveSpec(spec);
+
+      const device = await driver.makeReady(await driver.provision(spec));
+
+      expect(device.driverData).toMatchObject({ port: consolePort });
+      const launches = runner.calls
+        .filter((call) => call.command === binaries.emulator && call.args.includes("-avd"))
+        .map(({ args }) => ({
+          grpc: args.includes("-grpc") ? args[args.indexOf("-grpc") + 1] : undefined,
+          token: args.includes("-grpc-use-token"),
+        }));
+      expect(launches).toEqual([
+        { grpc: grpcPort, token: true },
+        { grpc: grpcPort, token: true },
+      ]);
+    },
+  );
+
   it("cold boots without loading or automatically saving snapshots", async () => {
     const harness = await provisionedHarness();
 
