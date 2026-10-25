@@ -1641,6 +1641,124 @@ describe("startDaemon stop with a cleanup run in flight (#985)", () => {
   });
 });
 
+describe("startDaemon stop with a health recovery in flight (#1000)", () => {
+  const turnOfTheEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const turns = async (count: number) => {
+    for (let turn = 0; turn < count; turn += 1) await turnOfTheEventLoop();
+  };
+  const recovered = ["recover started", "recover finished", "dispose"];
+
+  it.each([
+    { name: "started before the stop", startsDuringStop: false, accepted: [recovered] },
+    // why: a stop may either wait for this recovery or keep it from starting; it may not leave it running.
+    {
+      name: "due while the stop waits for a cleanup run",
+      startsDuringStop: true,
+      accepted: [recovered, ["dispose"]],
+    },
+  ])(
+    "leaves no recovery reboot $name running once the drivers are disposed",
+    async ({ startsDuringStop, accepted }) => {
+      // why: records the order of the driver's recovery reboot and disposal, and holds the reboot mid-call.
+      class HeldRecoveryDriver extends FakeDriver {
+        readonly order: string[] = [];
+        readonly held: (() => void)[] = [];
+        override async makeReady(
+          device: Parameters<FakeDriver["makeReady"]>[0],
+          options: Parameters<FakeDriver["makeReady"]>[1],
+        ): ReturnType<FakeDriver["makeReady"]> {
+          if (options.purpose !== "recover") return super.makeReady(device, options);
+          this.order.push("recover started");
+          await new Promise<void>((resolve) => this.held.push(resolve));
+          const ready = await super.makeReady(device, options);
+          this.order.push("recover finished");
+          return ready;
+        }
+        async dispose(): Promise<void> {
+          this.order.push("dispose");
+        }
+      }
+      // why: holds a cleanup run on its disk read once asked to, so the stop waits on it.
+      class HeldDiskFree extends MemoryFilesystem {
+        holding = false;
+        readonly held: (() => void)[] = [];
+        override async diskFree(path: string): Promise<number> {
+          if (this.holding) await new Promise<void>((resolve) => this.held.push(resolve));
+          return super.diskFree(path);
+        }
+      }
+      const clock = new FakeClock(1_000);
+      const driver = new HeldRecoveryDriver({
+        availableOsVersions: ["26.5"],
+        clock,
+        platform: "ios",
+      });
+      const filesystem = new HeldDiskFree();
+      const { daemon } = await start({ clock, drivers: [driver], filesystem });
+      const agent = {
+        manageEventSubscription: () => undefined,
+        via: "socket",
+        principal: "agent",
+        role: "agent",
+      } as const;
+      await daemon.dispatch(
+        "lease.request",
+        { model: "iPhone 16", osVersion: "26.5", platform: "ios", requesterId: "agent-1" },
+        agent,
+      );
+      // why: the leased simulator dies outside simlock; the monitor recovers it on its second stopped reading, one 30 s tick apart.
+      const { devices } = await driver.listManaged();
+      expect(devices).toHaveLength(1);
+      driver.setManagedReality({
+        devices: devices.map((device) => ({ ...device, runState: "stopped" as const })),
+        processes: [],
+      });
+      clock.advance(30_000);
+      await turns(20);
+
+      if (startsDuringStop) {
+        filesystem.holding = true;
+        void daemon
+          .dispatch(
+            "cleanup.run",
+            { dryRun: true },
+            {
+              manageEventSubscription: () => undefined,
+              via: "socket",
+              principal: "admin",
+              role: "admin",
+            },
+          )
+          .catch(() => undefined);
+        await vi.waitFor(() => expect(filesystem.held).toHaveLength(1));
+      } else {
+        clock.advance(30_000);
+        await vi.waitFor(() => expect(driver.order).toEqual(["recover started"]));
+      }
+
+      const stopped = daemon.stop("test-stop");
+      let stopEnded = false;
+      void stopped.then(() => {
+        stopEnded = true;
+      });
+      if (startsDuringStop) {
+        await turns(20);
+        expect(stopEnded).toBe(false);
+        clock.advance(30_000);
+        await turns(50);
+        for (const release of filesystem.held.splice(0)) release();
+      }
+      for (let turn = 0; turn < 200 && !stopEnded; turn += 1) await turnOfTheEventLoop();
+      for (const release of driver.held.splice(0)) release();
+      await stopped;
+      // why: a reboot that outlived the stop records its end a few turns after it is released.
+      await turns(50);
+
+      expect(accepted).toContainEqual(driver.order);
+    },
+  );
+});
+
 describe("startDaemon stop with a warm target", () => {
   it("creates no further device for a target once a stop is asked for, though the creation in flight ends while the gateway stops", async () => {
     const directory = await mkdtemp(join(tmpdir(), "simlock-main-stop-target-"));
