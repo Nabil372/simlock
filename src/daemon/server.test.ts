@@ -1495,6 +1495,62 @@ describe("DaemonServer startup readiness", () => {
     expect(emitted).toEqual(["daemon.stopping"]);
   });
 
+  it("refuses a cleanup.run parked on startup with DAEMON_STOPPING once a stop lands mid-converge, and shuts down no device", async () => {
+    const converge = deferred<void>();
+    const harness = await createHarness({ converge: () => converge.promise, start: false });
+    const spec = {
+      physical: false,
+      model: "iPhone 16",
+      osVersion: "26.5",
+      platform: "ios",
+    } as const;
+    const provisioned = await harness.driver.provision(spec);
+    const device = await harness.registry.registerDevice({
+      driverData: provisioned.driverData,
+      driverDeviceId: provisioned.deviceId,
+      provisionDuration: 0,
+      spec,
+    });
+    await harness.registry.transitionDevice(device.id, "ready", {
+      event: "device.ready",
+      payload: { bootDuration: 0, deviceId: device.id },
+    });
+    const lease = await harness.registry.createLease({
+      deviceId: device.id,
+      requesterId: "agent-1",
+      ownerId: "agent-1",
+      ttlMs: 60_000,
+      ttlDeadline: 61_000,
+    });
+    await harness.registry.beginRelease(lease.id);
+    await harness.registry.transitionDevice(device.id, "ready", {
+      event: "device.reclaimed",
+      payload: { deviceId: device.id, duration: 0, strategy: "erase" },
+    });
+    harness.clock.advance(harness.config.idle.shutdownAfterMs + 1);
+    const startPromise = harness.daemon.start();
+
+    const parked = harness.daemon.dispatch(
+      "cleanup.run",
+      { rule: "idle-shutdown" },
+      {
+        principal: "operator",
+        role: "admin",
+        via: "token",
+        manageEventSubscription: () => undefined,
+      },
+    );
+    await harness.daemon.stop("requested");
+    converge.resolve();
+    await startPromise;
+
+    await expect(parked).rejects.toMatchObject({ code: "DAEMON_STOPPING" });
+    expect(harness.driver.calls.filter((call) => call.operation === "shutdown")).toEqual([]);
+    expect(harness.registry.snapshot.devices.find((entry) => entry.id === device.id)?.state).toBe(
+      "ready",
+    );
+  });
+
   it("has lease-lost subscriptions wired before a lease.request parked on convergence proceeds", async () => {
     // Guards the invariant documented in `start()`: subscriptions are set up only
     // after convergence resolves, and a parked request must never observe a window
