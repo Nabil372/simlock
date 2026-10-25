@@ -1523,6 +1523,124 @@ describe("startDaemon HTTP gateway startup readiness", () => {
   });
 });
 
+describe("startDaemon stop with a cleanup run in flight (#985)", () => {
+  const turnOfTheEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  it.each([
+    { name: "the run daemon.started began", request: undefined },
+    { name: "a dry run a client asked for", request: { dryRun: true } },
+    { name: "a rule-scoped run a client asked for", request: { rule: "idle-destroy" } },
+  ])(
+    "logs no warning or error once a stop lands while $name is still in flight",
+    async ({ request }) => {
+      // why: holds a cleanup run on its disk read, so the stop lands while the run is in flight,
+      // as an `http-start-failed` stop right after a start does.
+      class HeldDiskFree extends MemoryFilesystem {
+        readonly held: (() => void)[] = [];
+        override async diskFree(path: string): Promise<number> {
+          await new Promise<void>((resolve) => this.held.push(resolve));
+          return super.diskFree(path);
+        }
+      }
+      const filesystem = new HeldDiskFree();
+      const { daemon, sink } = await start({ filesystem });
+      await vi.waitFor(() => expect(filesystem.held).toHaveLength(1));
+      if (request !== undefined) {
+        // why: the run daemon.started began ends first, so the client's request is the only one held.
+        for (const release of filesystem.held.splice(0)) release();
+        for (let turn = 0; turn < 50; turn += 1) await turnOfTheEventLoop();
+        void daemon
+          .dispatch("cleanup.run", request, {
+            manageEventSubscription: () => undefined,
+            via: "socket",
+            principal: "admin",
+            role: "admin",
+          })
+          .catch(() => undefined);
+        await vi.waitFor(() => expect(filesystem.held).toHaveLength(1));
+      }
+
+      // why: the stop must wait for the held run, so the read is released only once the stop has
+      // either ended (a stop that did not wait has closed the state database by then) or sat
+      // pending through many event-loop turns. Turns, not milliseconds: a loaded machine runs the
+      // same turns, only slower.
+      const stopped = daemon.stop("http-start-failed");
+      let stopEnded = false;
+      void stopped.then(() => {
+        stopEnded = true;
+      });
+      for (let turn = 0; turn < 200 && !stopEnded; turn += 1) await turnOfTheEventLoop();
+      for (const release of filesystem.held.splice(0)) release();
+      await stopped;
+      // why: a run that outlived the stop surfaces its failure a few turns after its read returns.
+      for (let turn = 0; turn < 50; turn += 1) await turnOfTheEventLoop();
+
+      const stopping = sink.records.findIndex((record) => record.message === "Daemon stopping");
+      expect(stopping).toBeGreaterThanOrEqual(0);
+      expect(
+        sink.records
+          .slice(stopping)
+          .filter((record) => record.level === "warn" || record.level === "error")
+          .map(({ message, module, fields }) => ({ message, module, fields })),
+      ).toEqual([]);
+    },
+  );
+
+  it("ends the device deletion a cleanup run has in flight before the driver is disposed", async () => {
+    // why: records the order of the driver's calls, and holds the deletion the cleanup run proposes mid-call.
+    class HeldDestroyDriver extends FakeDriver {
+      readonly order: string[] = [];
+      readonly held: (() => void)[] = [];
+      override async destroy(device: Parameters<FakeDriver["destroy"]>[0]): Promise<void> {
+        this.order.push("destroy started");
+        await new Promise<void>((resolve) => this.held.push(resolve));
+        await super.destroy(device);
+        this.order.push("destroy finished");
+      }
+      async dispose(): Promise<void> {
+        this.order.push("dispose");
+      }
+    }
+    const clock = new FakeClock(1_000);
+    const driver = new HeldDestroyDriver({ availableOsVersions: ["26.5"], clock, platform: "ios" });
+    const { daemon } = await start({ clock, drivers: [driver] });
+    const agent = {
+      manageEventSubscription: () => undefined,
+      via: "socket",
+      principal: "agent",
+      role: "agent",
+    } as const;
+    const request = {
+      model: "iPhone 16",
+      osVersion: "26.5",
+      platform: "ios",
+      requesterId: "agent-1",
+    };
+    const grant = (await daemon.dispatch("lease.request", request, agent)) as {
+      readonly lease: { readonly id: string };
+    };
+    await daemon.dispatch("lease.release", { leaseId: grant.lease.id }, agent);
+    // why: the idle rules shut a released device down after 10 minutes and delete it after 60; each tick is the reaper's 60 s timer.
+    for (let minute = 0; minute < 70 && driver.held.length === 0; minute += 1) {
+      clock.advance(60_000);
+      for (let turn = 0; turn < 20; turn += 1) await turnOfTheEventLoop();
+    }
+    expect(driver.held).toHaveLength(1);
+
+    const stopped = daemon.stop("test-stop");
+    let stopEnded = false;
+    void stopped.then(() => {
+      stopEnded = true;
+    });
+    for (let turn = 0; turn < 200 && !stopEnded; turn += 1) await turnOfTheEventLoop();
+    expect(driver.order).toEqual(["destroy started"]);
+    for (const release of driver.held.splice(0)) release();
+    await stopped;
+
+    expect(driver.order).toEqual(["destroy started", "destroy finished", "dispose"]);
+  });
+});
+
 describe("startDaemon stop with a warm target", () => {
   it("creates no further device for a target once a stop is asked for, though the creation in flight ends while the gateway stops", async () => {
     const directory = await mkdtemp(join(tmpdir(), "simlock-main-stop-target-"));
