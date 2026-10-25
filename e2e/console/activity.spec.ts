@@ -375,6 +375,19 @@ test.describe("the Activity page", () => {
   }) => {
     const host = await startDaemon("worker", { driverScript: { ios: IOS } });
     try {
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // why: the real daemon answers the page before the oldest held only once the test has noted
+      // the row in view, as on a loaded runner (#1006); its end row then shrinks the box.
+      await page.route(
+        (url) => url.pathname === "/v1/events" && url.searchParams.has("before"),
+        async (route: Route) => {
+          await gate;
+          await route.continue();
+        },
+      );
       for (let index = 0; index < 6; index += 1) await lease(host, `console-e2e-scroll-${index}`);
       await openEvents(page, host);
       await expect.poll(() => rows(page).count()).toBeGreaterThan(5);
@@ -389,6 +402,8 @@ test.describe("the Activity page", () => {
         )
         .toBeLessThan(2);
       const inView = await firstRowInView(page);
+      release();
+      await expect(page.getByText("Start of the history (", { exact: false })).toBeVisible();
       await lease(host, "console-e2e-scroll-new");
       const more = page.getByRole("button", { name: /^\d+ new events?$/ });
       await expect(more).toBeVisible();
