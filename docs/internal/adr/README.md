@@ -39,7 +39,7 @@ the status is stale.
 
 | ADR | Title | Status |
 |---|---|---|
-| [0001](0001-simlock-owned-device-roots.md) | Simlock-owned device roots | Accepted; ownership proof and the adb server narrowed by 0022 for physical devices; per-home isolation as a user feature superseded by 0034; §1's layout narrowed by 0036 (`state.db`) |
+| [0001](0001-simlock-owned-device-roots.md) | Simlock-owned device roots | Accepted; ownership proof and the adb server narrowed by 0022 for physical devices; per-home isolation as a user feature superseded by 0034; §1's layout narrowed by 0036 (`state.db`); §1, §2, §3, §5, §6 and §7 narrowed by 0048 for iOS under `deviceSet: "default"` |
 | [0002](0002-opt-in-slim-ios-simulators.md) | Opt-in slim iOS simulators | Accepted |
 | [0003](0003-one-typed-daemon-contract-behind-every-frontend.md) | One typed daemon contract behind every frontend | Accepted |
 | [0004](0004-ttl-first-leases-on-every-transport.md) | TTL-first leases on every transport | Accepted — partly implemented: §2 (the CLI exits when its socket drops instead of keeping its lease) |
@@ -86,3 +86,4 @@ the status is stale.
 | [0045](0045-a-devices-screen-streams-to-operators-not-a-leases.md) | A device's screen streams to operators, not a lease's | Accepted — not yet implemented |
 | [0046](0046-a-standalone-worker-serves-agent-device-by-default-with-a-private-profile.md) | A standalone worker serves agent-device by default and hands local agents a private profile | Accepted — not yet implemented; narrows 0023 §1, §3–4, 0030 §2, 0039 and 0043 §4 |
 | [0047](0047-device-exec-fills-in-the-leases-device.md) | `device.exec` fills in the lease's device, and refuses another | Accepted — not yet implemented; extends 0005 §19a; narrows 0003 §11 for one MCP tool |
+| [0048](0048-an-ios-worker-may-keep-its-simulators-in-xcodes-device-set.md) | An iOS worker may keep its simulators in Xcode's device set | Accepted — not yet implemented; narrows 0001 §1, §2, §3, §5, §6 and §7 for iOS under `deviceSet: "default"` |
