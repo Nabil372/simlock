@@ -86,7 +86,7 @@ import type { UpdateCoordinator, UpdateProgress } from "./update-coordinator.js"
 export { DispatchError, type ContractDispatcher, type DispatchSession } from "./dispatch.js";
 
 /**
- * How long a timed-out `device.exec` child gets between SIGTERM and SIGKILL (ADR 0005 §19e).
+ * why: How long a timed-out `device.exec` child gets between SIGTERM and SIGKILL (ADR 0005 §19e).
  * Fixed rather than derived from `exec.timeoutMs`: it is a termination-cleanup budget, not a
  * fraction of the command's own allowance -- the same reasoning, and the same ten seconds, as
  * `NodeProcessRunner`'s `SIGTERM_TO_SIGKILL_GRACE_MS`.
