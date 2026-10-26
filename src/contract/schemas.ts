@@ -148,7 +148,16 @@ export function quarantineCauseMessage(text: string): string | undefined {
   const cleaned = text.replace(CONTROL_CHARACTERS, " ").trim();
   if (cleaned === "") return undefined;
   if (cleaned.length <= QUARANTINE_MESSAGE_MAX) return cleaned;
-  let cut = cleaned.slice(0, QUARANTINE_MESSAGE_MAX - 1);
+  return boundDriverSummary(cleaned, QUARANTINE_MESSAGE_MAX);
+}
+
+/** The longest `detail` a `driver-unavailable` finding carries. */
+export const DRIVER_DETAIL_MAX = 1000;
+
+/** Text cut to `max` characters, ending in `…` inside it and never inside a surrogate pair. */
+export function boundDriverSummary(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max - 1);
   const last = cut.charCodeAt(cut.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
   return `${cut}…`;
@@ -909,6 +918,12 @@ const doctorFindingSchema = z.discriminatedUnion("kind", [
     platform: platformSchema,
     code: z.string(),
     message: z.string(),
+  }),
+  z.object({
+    kind: z.literal("driver-unavailable"),
+    platform: platformSchema,
+    reason: z.string().max(64),
+    detail: z.string().max(DRIVER_DETAIL_MAX),
   }),
   z.object({
     kind: z.literal("service-broken"),
