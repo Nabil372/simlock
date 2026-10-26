@@ -197,7 +197,6 @@ describe("gateway smoke", () => {
     );
     expect(exec.code).toBe(3);
     expect(exec.stderr).toContain("a warning");
-    // machine the CLI never talked to directly.
     expect(JSON.parse(exec.stdout)).toEqual({
       argv: ["/fake/android", "devices", "--fake-exec-stderr=a warning", "--fake-exec-exit=3"],
       platform: "android",
