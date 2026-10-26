@@ -6571,9 +6571,9 @@ describe("CLI: holder renew and release (ADR 0004 §2)", () => {
       output.environmentWith({ clock, connectAdmin: async () => client }),
     );
     await settle();
-    clock.advance(20_000); // first attempt, fails, retries
+    clock.advance(20_000);
     await settle();
-    clock.advance(60_000); // the retry lands past the lease's 60_000 deadline
+    clock.advance(60_000);
 
     expect(await runPromise).toBe(14);
     expect(released, "a lease that expired is not this process's to release").toBe(false);

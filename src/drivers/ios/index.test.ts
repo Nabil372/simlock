@@ -2173,7 +2173,7 @@ describe("IosSimctlDriver", () => {
       );
 
       await waitForCalls(runner, 5);
-      clock.advance(30_000); // COMMAND_TIMEOUT_MS, the `#shutdown` call's own timeout
+      clock.advance(30_000);
 
       const result = await ready;
 
@@ -2245,7 +2245,7 @@ describe("IosSimctlDriver", () => {
       );
 
       await waitForCalls(runner, 7);
-      clock.advance(300_000); // slim.bootTimeoutMs -- the widened deadline applies to this reboot too
+      clock.advance(300_000);
 
       await expect(ready).rejects.toThrow(BootTimeoutError);
       expect(onSlimmed).not.toHaveBeenCalled();
@@ -2678,7 +2678,7 @@ describe("IosSimctlDriver", () => {
       );
 
       await waitForCalls(runner, 7);
-      clock.advance(60_000); // SLIM_CHUNK_TIMEOUT_MS
+      clock.advance(60_000);
 
       const result = await ready;
 
@@ -2800,7 +2800,7 @@ describe("IosSimctlDriver", () => {
         prepareSlim,
       );
       await waitForCalls(runner, 7);
-      clock.advance(60_000); // SLIM_CHUNK_TIMEOUT_MS
+      clock.advance(60_000);
 
       expect((await ready).mode).toBe("full");
       expect(onSlimSkipped).toHaveBeenCalledWith(
