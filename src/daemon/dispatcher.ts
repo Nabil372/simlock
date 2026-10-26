@@ -1056,7 +1056,9 @@ function toWireProgress(progress: ComponentInstallerProgress): ComponentProgress
 function killQuietly(handle: StreamingProcessHandle, signal: NodeJS.Signals): void {
   try {
     handle.kill(signal);
-  } catch {}
+  } catch {
+    // Already gone.
+  }
 }
 
 function describeEnrollmentError(error: unknown): unknown {
