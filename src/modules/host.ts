@@ -12,7 +12,6 @@ import type {
   ModuleLeaseEndParticipant,
   ModuleLocalProfile,
   ModuleMount,
-  ModuleRelayTarget,
   ModuleTokens,
   MountDeps,
   OptionalModuleDefinition,
@@ -97,6 +96,18 @@ const HOOK_DEADLINE_MS = 30_000;
 interface Started {
   readonly name: string;
   readonly worker: WorkerModule;
+}
+
+function targetsByName<T>(
+  started: readonly Started[],
+  pick: (worker: WorkerModule) => T | undefined,
+): Record<string, T> {
+  const targets: Record<string, T> = {};
+  for (const { name, worker } of started) {
+    const target = pick(worker);
+    if (target !== undefined) targets[name] = target;
+  }
+  return targets;
 }
 
 // why: a module's lease route is `/v1/leases/:id/<name>`; these are the sub-routes the HTTP app registers itself, and a module may not take one.
@@ -230,6 +241,13 @@ async function createGatewaySide(
             tenant,
             ...(leaseId === undefined ? {} : { leaseId }),
           }),
+        relayTwoWay: (workerId, request, tenant, leaseId) =>
+          parts.relayTwoWay(workerId, {
+            request,
+            target: name,
+            tenant,
+            ...(leaseId === undefined ? {} : { leaseId }),
+          }),
         requesterPrefix: parts.requesterPrefix,
         serving: () =>
           parts
@@ -311,10 +329,8 @@ async function createWorkerHost(options: ModuleHostOptions): Promise<ModuleHost>
     capabilitySources.push(worker.capability);
   }
 
-  const relayTargets: Record<string, ModuleRelayTarget> = {};
-  for (const { name, worker } of started) {
-    if (worker.relayTarget !== undefined) relayTargets[name] = worker.relayTarget;
-  }
+  const relayTargets = targetsByName(started, (worker) => worker.relayTarget);
+  const relayTwoWayTargets = targetsByName(started, (worker) => worker.relayTwoWay);
 
   const leaseEndParticipants: ModuleLeaseEndParticipant[] = [];
   for (const { worker } of started) {
@@ -391,5 +407,6 @@ async function createWorkerHost(options: ModuleHostOptions): Promise<ModuleHost>
         worker.leaseRoute === undefined ? [] : [{ handle: worker.leaseRoute, name }],
       ),
     relayTargets,
+    relayTwoWayTargets,
   };
 }

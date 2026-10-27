@@ -63,6 +63,26 @@ export type ModuleRelayTarget = (
   leaseId: string | undefined,
 ) => Promise<Response>;
 
+export interface ModuleTwoWayPipe {
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<Uint8Array>;
+  readonly signal: AbortSignal;
+}
+
+export type ModuleRelayTwoWayTarget = (
+  request: Request,
+  tenant: string,
+  leaseId: string | undefined,
+  pipe: ModuleTwoWayPipe,
+) => Promise<Response>;
+
+export interface ModuleTwoWayRelay {
+  readonly status: number;
+  readonly headers: Headers;
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<Uint8Array>;
+}
+
 export interface ModuleDispatchSession {
   readonly principal: string;
   readonly role: Role;
@@ -123,6 +143,7 @@ export interface WorkerHooks {
 export interface WorkerModule {
   readonly capability: ModuleCapabilitySource;
   readonly relayTarget?: ModuleRelayTarget;
+  readonly relayTwoWay?: ModuleRelayTwoWayTarget;
   readonly mount?: (deps: MountDeps) => ModuleHandler;
   readonly leaseRoute?: ModuleLeaseHandler;
   readonly findings?: () => readonly ModuleFinding[];
@@ -222,6 +243,13 @@ export interface GatewayContext<C> {
   grantedDevices(): readonly FleetGrantedDevice[];
   readonly leases: FleetLeases;
   relay(workerId: string, request: Request, tenant: string, leaseId?: string): Promise<Response>;
+  // why: a 2xx head hands back both directions of the channel; a refusal is a `Response`, as `relay` gives it.
+  relayTwoWay(
+    workerId: string,
+    request: Request,
+    tenant: string,
+    leaseId?: string,
+  ): Promise<Response | ModuleTwoWayRelay>;
   cancelPending(requesterId: string): Promise<unknown>;
 }
 
@@ -280,6 +308,7 @@ export interface OptionalModuleDefinition<C> {
 export interface ModuleHost {
   readonly capabilitySources: readonly ModuleCapabilitySource[];
   readonly relayTargets: Readonly<Record<string, ModuleRelayTarget>>;
+  readonly relayTwoWayTargets: Readonly<Record<string, ModuleRelayTwoWayTarget>>;
   readonly leaseEndParticipants: readonly ModuleLeaseEndParticipant[];
   mounts(deps: MountDeps): readonly ModuleMount[];
   leaseRoutes(): readonly ModuleLeaseRoute[];
@@ -313,6 +342,15 @@ export interface GatewayParts {
       readonly leaseId?: string;
     },
   ): Promise<Response>;
+  relayTwoWay(
+    workerId: string,
+    call: {
+      readonly request: Request;
+      readonly target: string;
+      readonly tenant: string;
+      readonly leaseId?: string;
+    },
+  ): Promise<Response | ModuleTwoWayRelay>;
   cancelPending(requesterId: string): Promise<unknown>;
 }
 

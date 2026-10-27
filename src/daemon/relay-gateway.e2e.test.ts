@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { GatewayRelay, type GatewayWorkerClient, type WorkerDirectory } from "../gateway/index.js";
+import {
+  GatewayRelay,
+  type GatewayWorkerClient,
+  type TwoWayRelay,
+  type WorkerDirectory,
+} from "../gateway/index.js";
 import { linkPair, TYPE } from "../link/testing.js";
 import { connectSimlockClient } from "../simlock-client/client.js";
 import type { DispatchSession } from "./dispatch.js";
-import type { RelayTarget } from "./relay.js";
+import type { RelayTarget, TwoWayRelayTarget } from "./relay.js";
 import type { DaemonServer } from "./server.js";
 import {
   aborted,
@@ -111,6 +116,11 @@ describe("a gateway relaying to a worker", { timeout: 15_000 }, () => {
     leaseId: string | undefined;
   }[] = [];
 
+  let twoWayBehavior: TwoWayRelayTarget = () =>
+    Promise.resolve(new Response(null, { status: 200 }));
+  const twoWayTarget: TwoWayRelayTarget = (request, tenant, leaseId, pipe) =>
+    twoWayBehavior(request, tenant, leaseId, pipe);
+
   const target: RelayTarget = (request, tenant, leaseId) => {
     targetCalls.push({
       headers: request.headers,
@@ -124,6 +134,7 @@ describe("a gateway relaying to a worker", { timeout: 15_000 }, () => {
 
   afterEach(async () => {
     behavior = () => Promise.resolve(new Response("ok"));
+    twoWayBehavior = () => Promise.resolve(new Response(null, { status: 200 }));
     targetCalls.length = 0;
     await cleanUp(daemons, directories);
   });
@@ -131,10 +142,12 @@ describe("a gateway relaying to a worker", { timeout: 15_000 }, () => {
   async function startPair(
     options: { readonly deadlineMs?: number; readonly idleMs?: number } = {},
   ) {
-    const fixture: WorkerFixture = await startWorker(directories, daemons, {
-      "agent-device": target,
-      echo: target,
-    });
+    const fixture: WorkerFixture = await startWorker(
+      directories,
+      daemons,
+      { "agent-device": target, echo: target },
+      { relayTwoWayTargets: { echo: twoWayTarget } },
+    );
     const pair = linkPair();
     const gatewayEnd = pair.gatewayEnd;
     fixture.worker.acceptUplink(pair.worker);
@@ -163,7 +176,10 @@ describe("a gateway relaying to a worker", { timeout: 15_000 }, () => {
   }
 
   const startFleet = (execCommand?: FleetExec) =>
-    startFleet_({ daemons, directories, target }, execCommand === undefined ? {} : { execCommand });
+    startFleet_(
+      { daemons, directories, target, twoWayTarget },
+      execCommand === undefined ? {} : { execCommand },
+    );
 
   const agent = (overrides: Partial<DispatchSession> = {}): DispatchSession => ({
     manageEventSubscription: () => undefined,
@@ -211,6 +227,132 @@ describe("a gateway relaying to a worker", { timeout: 15_000 }, () => {
 
     expect(body).toBe("over a channel");
     expect(taps.flatMap((tap) => tap.binaries(TYPE.OPEN)).length).toBeGreaterThanOrEqual(1);
+  }, 30_000);
+
+  it("a gateway module's two-way relay carries bytes both ways at once until either side ends", async () => {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const { relay, workerId } = await startFleet();
+    const open = async () => {
+      const opened = await relay.relayTwoWay(workerId, buildCall({}));
+      expect(opened).not.toBeInstanceOf(Response);
+      const two = opened as TwoWayRelay;
+      const reader = two.readable.getReader();
+      const readText = async (length: number): Promise<string> => {
+        let seen = "";
+        while (seen.length < length) {
+          const step = await reader.read();
+          if (step.done) break;
+          seen += decoder.decode(step.value);
+        }
+        return seen;
+      };
+      return { reader, readText, two, writer: two.writable.getWriter() };
+    };
+
+    twoWayBehavior = (_request, _tenant, _leaseId, pipe) => {
+      void (async () => {
+        const writer = pipe.writable.getWriter();
+        const reader = pipe.readable.getReader();
+        await writer.write(encoder.encode("hello from worker"));
+        for (;;) {
+          const step = await reader.read();
+          if (step.done) return;
+          await writer.write(step.value);
+        }
+      })().catch(() => undefined);
+      return Promise.resolve(new Response(null, { status: 200 }));
+    };
+    const both = await open();
+    const first = await both.readText("hello from worker".length);
+    await both.writer.write(encoder.encode("ping"));
+    const echoed = await both.readText("ping".length);
+
+    const heard = gate();
+    let heardText = "";
+    let endedSignal: AbortSignal | undefined;
+    twoWayBehavior = (_request, _tenant, _leaseId, pipe) => {
+      endedSignal = pipe.signal;
+      void (async () => {
+        const writer = pipe.writable.getWriter();
+        await writer.write(encoder.encode("bye"));
+        await writer.close();
+        const reader = pipe.readable.getReader();
+        for (;;) {
+          const step = await reader.read();
+          if (step.done) break;
+          heardText += decoder.decode(step.value);
+        }
+        heard.open();
+      })().catch(() => undefined);
+      return Promise.resolve(new Response(null, { status: 200 }));
+    };
+    const workerEnds = await open();
+    const bye = await workerEnds.readText(3);
+    const afterBye = await workerEnds.reader.read();
+    await workerEnds.writer.write(encoder.encode("late"));
+    await workerEnds.writer.close();
+    await heard.promise;
+
+    const more = gate();
+    twoWayBehavior = (_request, _tenant, _leaseId, pipe) => {
+      void (async () => {
+        const writer = pipe.writable.getWriter();
+        await writer.write(encoder.encode("one"));
+        await more.promise;
+        await writer.write(encoder.encode("two"));
+        await writer.close();
+      })().catch(() => undefined);
+      return Promise.resolve(new Response(null, { status: 200 }));
+    };
+    const gatewayEnds = await open();
+    const one = await gatewayEnds.readText(3);
+    await gatewayEnds.writer.close();
+    more.open();
+    const two = await settleWithin(gatewayEnds.readText(3));
+    const afterTwo = await settleWithin(gatewayEnds.reader.read());
+
+    const signals: AbortSignal[] = [];
+    twoWayBehavior = (_request, _tenant, _leaseId, pipe) => {
+      signals.push(pipe.signal);
+      return Promise.resolve(new Response(null, { status: 200 }));
+    };
+    const cancelled = await open();
+    const abortedWrites = await open();
+    await cancelled.reader.cancel();
+    await abortedWrites.writer.abort(new Error("gone"));
+    await poll(() => signals.map((signal) => signal.aborted)).toEqual([true, true]);
+    await both.reader.cancel();
+
+    expect(both.two.status).toBe(200);
+    expect(first).toBe("hello from worker");
+    expect(echoed).toBe("ping");
+    expect(bye).toBe("bye");
+    expect(afterBye.done).toBe(true);
+    expect(heardText).toBe("late");
+    expect(endedSignal?.aborted).toBe(false);
+    expect(one).toBe("one");
+    expect(two).toEqual({ state: "fulfilled", value: "two" });
+    expect(afterTwo).toMatchObject({ state: "fulfilled", value: { done: true } });
+    expect(signals).toHaveLength(2);
+  }, 30_000);
+
+  it("a gateway module opening a two-way relay gets the worker's refusal or an error", async () => {
+    twoWayBehavior = () =>
+      Promise.resolve(new Response("not for you", { headers: { "x-why": "no" }, status: 403 }));
+    const { relay, workerId } = await startFleet();
+
+    const refused = await relay.relayTwoWay(workerId, buildCall({}));
+    const missing = await settleWithin(
+      relay.relayTwoWay(workerId, buildCall({ target: "agent-device" })),
+    );
+
+    expect(refused).toBeInstanceOf(Response);
+    const refusal = refused as Response;
+    expect(refusal.status).toBe(403);
+    expect(refusal.headers.get("x-why")).toBe("no");
+    expect(await refusal.text()).toBe("not for you");
+    expect(missing).toMatchObject({ code: "RELAY_TARGET_MISSING", state: "rejected" });
   }, 30_000);
 
   it("a 20 MiB PUT body arrives at the target byte for byte, and a 20 MiB response body comes back byte for byte", async () => {
@@ -627,6 +769,35 @@ describe("a gateway relaying to a worker", { timeout: 15_000 }, () => {
     expect(noHeadOutcome).toMatchObject({ code: "WORKER_UNREACHABLE", state: "rejected" });
     expect(bodyOutcome).toMatchObject({ code: "WORKER_UNREACHABLE", state: "rejected" });
     await poll(() => signal?.aborted).toBe(true);
+  }, 30_000);
+
+  it("closing the uplink ends every two-way relay: the gateway side gets WORKER_UNREACHABLE and the target's signal aborts", async () => {
+    const signals: AbortSignal[] = [];
+    twoWayBehavior = (_request, _tenant, _leaseId, pipe) => {
+      signals.push(pipe.signal);
+      return Promise.resolve(new Response(null, { status: 200 }));
+    };
+    const { gatewayEnd, relay } = await startPair();
+    const open = async () => {
+      const opened = (await relay.relayTwoWay(WORKER_ID, buildCall({}))) as TwoWayRelay;
+      return { reader: opened.readable.getReader(), writer: opened.writable.getWriter() };
+    };
+    const first = await open();
+    const second = await open();
+    await poll(() => signals.map((signal) => signal.aborted)).toEqual([false, false]);
+
+    await gatewayEnd.close();
+    const outcomes = await Promise.all([
+      settleWithin(first.reader.read()),
+      settleWithin(first.writer.write(new Uint8Array(1))),
+      settleWithin(second.reader.read()),
+      settleWithin(second.writer.write(new Uint8Array(1))),
+    ]);
+
+    for (const settled of outcomes) {
+      expect(settled).toMatchObject({ code: "WORKER_UNREACHABLE", state: "rejected" });
+    }
+    await poll(() => signals.map((signal) => signal.aborted)).toEqual([true, true]);
   }, 30_000);
 
   it("a relay to a worker with no uplink fails with WORKER_UNREACHABLE and the target sees nothing", async () => {

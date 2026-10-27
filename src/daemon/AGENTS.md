@@ -59,7 +59,7 @@ Its stdout lines move the state; a failed line, a non-zero exit or a failed laun
 2. **Hello** — first frame must be `hello`, else `HANDSHAKE_REQUIRED` and close.
    Role: the uplink connection is `admin` by acceptance; otherwise the resolver. Principal: `hello.principal`, else `SIMLOCK_AGENT_ID`, else the daemon's pid. Both are fixed for the connection's life.
 3. **Version** — ranges overlap → highest common version. `PROTOCOL_VERSION_RANGE`
-   is `{ min: 63, max: 63 }` (`src/contract/protocol.ts`). No overlap → the
+   is `{ min: 64, max: 64 }` (`src/contract/protocol.ts`). No overlap → the
    connection stays open, and every request but `daemon.stop` gets
    `PROTOCOL_VERSION_UNSUPPORTED`.
 4. **Request** — one frame → one `dispatch()` call. While stopping: `DAEMON_STOPPING`.
@@ -122,6 +122,7 @@ Security model: cooperative identity, not a hostile-process boundary.
 - `GatewayUplink` dials `gateway.url` with `gateway.token`, after the first host load reading. Backoff from 1 s, ×2, cap 30 s, jittered; retries forever.
 - `DaemonServer.acceptUplink` serves it as one more connection, role `admin`.
 - `relay.request` runs only on that connection; targets come from `relayTargets` (today `agent-device` and `stream`). See [gateway](../gateway/AGENTS.md).
+- A `relay.request` with `twoWay` takes its target from `relayTwoWayTargets` (a module's `relayTwoWay`, by module name; none → `RELAY_TARGET_MISSING`) and runs no body cut-off: the target gets `pipe = {readable, writable, signal}` on the channel's two directions. It answers a refusal before touching the pipe, or a 2xx with no body and then uses the pipe; the call answers once both directions have ended. `relay.cancel`, `abortAll` and a closed uplink abort `pipe.signal`; a target that fails after its head aborts `pipe.writable`. The 15 s silence bound is the gateway's.
 
 ## Logging and event records
 

@@ -28,6 +28,13 @@ export interface GatewayRelayCall {
   readonly leaseId?: string;
 }
 
+export interface TwoWayRelay {
+  readonly status: number;
+  readonly headers: Headers;
+  readonly readable: ReadableStream<Uint8Array>;
+  readonly writable: WritableStream<Uint8Array>;
+}
+
 // why: agent-device's proxy allows 300 s per exchange; the rest is a margin.
 const DEFAULT_DEADLINE_MS = 330_000;
 // why: agent-device's proxy ends an exchange 300 s after it starts, and its RPC body may sit silent between progress
@@ -35,13 +42,34 @@ const DEFAULT_DEADLINE_MS = 330_000;
 // worker side already ends a capture silent for 30 s, so for a stream this only backs up a worker that hangs.
 const DEFAULT_IDLE_MS = 330_000;
 type RelayMethod = Parameters<GatewayWorkerClient["relayRequest"]>[0]["method"];
+// why: a worker's direction of a two-way relay is a live channel its module may leave quiet for long; 15 s of silence from the worker means it is gone (ADR 0049).
+const TWO_WAY_SILENCE_MS = 15_000;
+// why: the relay reads the worker's direction itself, so a module that reads slowly does not make a live worker look silent; the link holds what is beyond this.
+const TWO_WAY_READ_AHEAD_BYTES = 64 * 1024;
 const NO_BODY_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
+
+function isStopped(error: unknown): boolean {
+  return error instanceof LinkChannelError && error.reason === "stopped";
+}
 
 export class GatewayRelay {
   constructor(private readonly options: GatewayRelayOptions) {}
 
+  // why: a two-way relay's head hands back both directions of the channel; a refusal is a `Response`, as `relay` gives it.
+  relayTwoWay(workerId: string, call: GatewayRelayCall): Promise<Response | TwoWayRelay> {
+    return this.#exchange(workerId, call, true);
+  }
+
   relay(workerId: string, call: GatewayRelayCall): Promise<Response> {
-    return new Promise<Response>((resolve, reject) => {
+    return this.#exchange(workerId, call, false) as Promise<Response>;
+  }
+
+  #exchange(
+    workerId: string,
+    call: GatewayRelayCall,
+    twoWay: boolean,
+  ): Promise<Response | TwoWayRelay> {
+    return new Promise<Response | TwoWayRelay>((resolve, reject) => {
       const exchange = new Exchange({
         call,
         client: () => liveClient(this.options.directory.target(workerId)),
@@ -50,6 +78,7 @@ export class GatewayRelay {
         idleMs: this.options.idleMs ?? DEFAULT_IDLE_MS,
         reject,
         resolve,
+        twoWay,
         workerId,
       });
       exchange.start();
@@ -63,9 +92,25 @@ interface ExchangeInit {
   readonly deadlineMs: number;
   readonly idleMs: number;
   readonly clock: Clock;
-  readonly resolve: (response: Response) => void;
+  readonly resolve: (response: Response | TwoWayRelay) => void;
   readonly reject: (error: unknown) => void;
+  readonly twoWay: boolean;
   readonly workerId: string;
+}
+
+function callerHeaders(headers: readonly (readonly [string, string])[]): Headers | undefined {
+  const result = new Headers();
+  try {
+    for (const [name, value] of headers) {
+      // why: the gateway frames its own response, so a worker's framing headers must not reach the caller.
+      if (isRelayFramingHeader(name)) continue;
+      result.append(name, value);
+    }
+  } catch {
+    // why: `Headers` refuses a value above U+00FF that the push schema lets through.
+    return undefined;
+  }
+  return result;
 }
 
 class Exchange {
@@ -85,6 +130,10 @@ class Exchange {
   #answered = false;
   #peerAborted = false;
   #bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  #writableController: WritableStreamDefaultController | undefined;
+  #piped = false;
+  #readEnded = false;
+  #writeEnded = false;
   readonly #abortListener = () => this.#fail(this.init.call.request.signal.reason);
 
   constructor(private readonly init: ExchangeInit) {}
@@ -138,6 +187,7 @@ class Exchange {
         {
           channel: channel.id,
           hasBody: body !== null,
+          ...(this.init.twoWay ? { twoWay: true as const } : {}),
           headers: relayHeaderPairs(request.headers, { dropCredentials: true }),
           method: request.method as RelayMethod,
           relayId: this.#relayId,
@@ -155,7 +205,7 @@ class Exchange {
         (answer) => this.#onAnswer(answer),
         (error: unknown) => this.#onCallError(error),
       );
-    await this.#upload(channel, body);
+    if (!this.init.twoWay) await this.#upload(channel, body);
   }
 
   async #upload(channel: LinkChannel, body: ReadableStream<Uint8Array> | null): Promise<void> {
@@ -207,21 +257,15 @@ class Exchange {
       this.#invalid();
       return;
     }
-    const responseHeaders = new Headers();
-    try {
-      for (const [name, value] of headers) {
-        // why: the gateway frames its own response, so a worker's framing headers must not reach the caller.
-        if (isRelayFramingHeader(name)) continue;
-        responseHeaders.append(name, value);
-      }
-    } catch {
-      // why: `Headers` refuses a value above U+00FF that the push schema lets through.
+    const responseHeaders = callerHeaders(headers);
+    if (responseHeaders === undefined) {
       this.#invalid();
       return;
     }
     this.#headed = true;
     // why: once the head is in, the body is bounded by silence, not by the deadline, so a live stream is not cut.
     if (this.#timer !== undefined) this.init.clock.cancel(this.#timer);
+    if (this.init.twoWay && this.#openOrRefuse(status, responseHeaders)) return;
     this.#armIdle();
     const method = this.init.call.request.method;
     if (method === "HEAD" || NO_BODY_STATUSES.has(status)) {
@@ -240,6 +284,106 @@ class Exchange {
       { highWaterMark: 0 },
     );
     this.init.resolve(new Response(stream, { headers: responseHeaders, status }));
+  }
+
+  // why: a 2xx head opens the two directions; a refusal has no writer, so the gateway's direction ends here and the refusal is answered as a one-way body.
+  #openOrRefuse(status: number, headers: Headers): boolean {
+    if (status >= 200 && status < 300) {
+      this.#openTwoWay(status, headers);
+      return true;
+    }
+    void this.#channel?.writable
+      .getWriter()
+      .close()
+      .catch(() => undefined);
+    return false;
+  }
+
+  #openTwoWay(status: number, headers: Headers): void {
+    this.#piped = true;
+    const writer = (this.#channel as LinkChannel).writable.getWriter();
+    const readable = new ReadableStream<Uint8Array>(
+      {
+        cancel: () => this.#abandon(),
+        pull: (controller) => this.#pump(controller),
+        start: (controller) => {
+          this.#bodyController = controller;
+        },
+      },
+      new ByteLengthQueuingStrategy({ highWaterMark: TWO_WAY_READ_AHEAD_BYTES }),
+    );
+    const writable = new WritableStream<Uint8Array>({
+      abort: (reason) => {
+        this.#abandon();
+        this.#bodyController?.error(reason);
+      },
+      close: async () => {
+        try {
+          await writer.close();
+        } catch (error: unknown) {
+          // why: closing a writable the peer already errored rejects with a TypeError, so the stored reason on `closed` says whether it was a STOP or which failure it was.
+          const stored: unknown = await writer.closed.then(
+            () => undefined,
+            (reason: unknown) => reason,
+          );
+          const reason = stored instanceof LinkChannelError ? stored : error;
+          if (!isStopped(reason)) {
+            this.#onChannelError(reason);
+            throw reason;
+          }
+        }
+        this.#writeEnded = true;
+        this.#maybeComplete();
+      },
+      start: (controller) => {
+        this.#writableController = controller;
+      },
+      write: async (chunk) => {
+        try {
+          await writer.write(chunk);
+        } catch (error: unknown) {
+          // why: a worker that stopped reading ended the gateway's direction only; the worker's direction goes on, and the module's writable errors alone.
+          if (isStopped(error)) {
+            this.#writeEnded = true;
+            this.#maybeComplete();
+          } else this.#onChannelError(error);
+          throw error;
+        }
+      },
+    });
+    this.#armIdle();
+    this.init.resolve({ headers, readable, status, writable });
+  }
+
+  // why: the pump reads the worker's direction only while the module's queue has room, so the silence bound runs only while the relay is waiting on the worker.
+  async #pump(controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> {
+    this.#armIdle();
+    let step: ReadableStreamReadResult<Uint8Array>;
+    try {
+      step = await this.#look();
+    } catch {
+      return;
+    }
+    this.#ahead = undefined;
+    if (this.#done) return;
+    if (step.done) {
+      this.#disarmIdle();
+      controller.close();
+      this.#readEnded = true;
+      this.#maybeComplete();
+      return;
+    }
+    controller.enqueue(step.value);
+    if ((controller.desiredSize ?? 0) <= 0) this.#disarmIdle();
+  }
+
+  #maybeComplete(): void {
+    if (this.#readEnded && this.#writeEnded) this.#finish();
+  }
+
+  #disarmIdle(): void {
+    if (this.#idleTimer !== undefined) this.init.clock.cancel(this.#idleTimer);
+    this.#idleTimer = undefined;
   }
 
   async #pull(controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> {
@@ -279,7 +423,8 @@ class Exchange {
   #armIdle(): void {
     if (!this.#headed || this.#done) return;
     if (this.#idleTimer !== undefined) this.init.clock.cancel(this.#idleTimer);
-    const { clock, idleMs, workerId } = this.init;
+    const { clock, workerId } = this.init;
+    const idleMs = this.#piped ? TWO_WAY_SILENCE_MS : this.init.idleMs;
     this.#idleTimer = clock.setTimer(idleMs, () => {
       this.#fail(
         new DispatchError(
@@ -400,8 +545,10 @@ class Exchange {
     this.#sendCancel();
     this.#opening.abort(error);
     this.#channel?.abort();
-    if (this.#headed) this.#bodyController?.error(error);
-    else this.init.reject(error);
+    if (this.#headed) {
+      this.#bodyController?.error(error);
+      this.#writableController?.error(error);
+    } else this.init.reject(error);
     this.#finish();
   }
 

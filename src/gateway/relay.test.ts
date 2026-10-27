@@ -2,11 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { LinkChannelError } from "../link/index.js";
 import type { LinkChannel, LinkChannelErrorReason, LinkConnection } from "../link/index.js";
+import { FakeClock, type Clock } from "../ports/index.js";
 import { connectSimlockClient } from "../simlock-client/client.js";
 import { completeHello, ScriptedConnection } from "../simlock-client/test-support.js";
 import type { SentFrame } from "../simlock-client/test-support.js";
 import type { WorkerDirectory } from "./fleet-ports.js";
-import { GatewayRelay } from "./relay.js";
+import { GatewayRelay, type TwoWayRelay } from "./index.js";
 import type { GatewayWorkerClient } from "./worker-client.js";
 
 const WORKER_ID = "wrk_a";
@@ -81,6 +82,11 @@ class FakeChannel implements LinkChannel {
     }
   }
 
+  // why: the real channel errors its writable at once on a peer's STOP (src/link/channel.ts onStop → #failOutgoing).
+  stopWriting(): void {
+    this.#writeController.error(new LinkChannelError("stopped"));
+  }
+
   failWritable(reason: LinkChannelErrorReason): void {
     this.#writeController.error(new LinkChannelError(reason));
   }
@@ -113,6 +119,7 @@ async function setup(
     readonly deadlineMs?: number;
     readonly holdOpen?: boolean;
     readonly idleMs?: number;
+    readonly clock?: Clock;
   } = {},
 ) {
   const connection = new FakeLink();
@@ -133,6 +140,7 @@ async function setup(
       directory,
       ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
       ...(options.idleMs === undefined ? {} : { idleMs: options.idleMs }),
+      ...(options.clock === undefined ? {} : { clock: options.clock }),
     }),
   };
 }
@@ -199,6 +207,23 @@ async function readAll(response: Response) {
 async function openedChannel(connection: FakeLink): Promise<FakeChannel> {
   await vi.waitFor(() => expect(connection.channels).toHaveLength(1));
   return connection.channels[0] as FakeChannel;
+}
+
+async function openTwoWay(signal?: AbortSignal) {
+  const clock = new FakeClock();
+  const { connection, relay } = await setup({ clock });
+  const pending = relay.relayTwoWay(WORKER_ID, call(undefined, signal));
+  const request = await sentFrame(connection, "relay.request");
+  const channel = await openedChannel(connection);
+  connection.push("relay-head", { headers: [], requestId: request.id, status: 200 });
+  const opened = (await pending) as TwoWayRelay;
+  return {
+    channel,
+    clock,
+    connection,
+    reader: opened.readable.getReader(),
+    writer: opened.writable.getWriter(),
+  };
 }
 
 describe("GatewayRelay on a byte channel", () => {
@@ -464,6 +489,89 @@ describe("GatewayRelay on a byte channel", () => {
   });
 });
 
+describe("GatewayRelay finishing a two-way relay", () => {
+  it("sends relay.cancel for a caller abort while a direction is open and none once both directions have ended", async () => {
+    const openController = new AbortController();
+    const open = await openTwoWay(openController.signal);
+    open.channel.end();
+    await open.reader.read();
+    openController.abort(new Error("caller left"));
+    await vi.waitFor(() => expect(open.connection.lastSentOf("relay.cancel")).toBeDefined());
+
+    const doneController = new AbortController();
+    const done = await openTwoWay(doneController.signal);
+    done.channel.end();
+    await done.reader.read();
+    await done.writer.close();
+    doneController.abort(new Error("caller left late"));
+    await sleep(10);
+
+    expect(done.connection.lastSentOf("relay.cancel")).toBeUndefined();
+  });
+});
+
+describe("GatewayRelay when the worker stops reading a two-way relay", () => {
+  it.each([
+    {
+      how: "a write",
+      end: (writer: WritableStreamDefaultWriter<Uint8Array>) => writer.write(new Uint8Array(1)),
+      settles: "rejected",
+    },
+    {
+      how: "a close",
+      end: (writer: WritableStreamDefaultWriter<Uint8Array>) => writer.close(),
+      settles: "fulfilled",
+    },
+  ])(
+    "ends only the gateway's direction on $how after the stop: the worker's bytes still arrive and its end finishes the relay",
+    async ({ end, settles }) => {
+      const caller = new AbortController();
+      const open = await openTwoWay(caller.signal);
+      open.channel.stopWriting();
+
+      const ended = await outcome(end(open.writer));
+      open.channel.feed(new Uint8Array(2));
+      const first = await open.reader.read();
+      open.channel.end();
+      const last = await open.reader.read();
+      caller.abort(new Error("caller left late"));
+      await sleep(10);
+
+      expect(ended.state).toBe(settles);
+      expect(first.value?.length).toBe(2);
+      expect(last.done).toBe(true);
+      expect(open.channel.aborted).toBe(false);
+      expect(open.connection.lastSentOf("relay.cancel")).toBeUndefined();
+    },
+  );
+});
+
+describe("GatewayRelay when the worker resets a two-way relay's channel", () => {
+  it.each([
+    {
+      how: "a write",
+      end: (w: WritableStreamDefaultWriter<Uint8Array>) => w.write(new Uint8Array(1)),
+    },
+    { how: "a close", end: (w: WritableStreamDefaultWriter<Uint8Array>) => w.close() },
+  ])(
+    "rejects $how after the reset with the channel's own reason, not the stream's TypeError, and sends no relay.cancel",
+    async ({ end }) => {
+      const open = await openTwoWay(new AbortController().signal);
+      open.channel.fail("aborted");
+
+      const error = await end(open.writer).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      await sleep(10);
+
+      expect(error).toBeInstanceOf(LinkChannelError);
+      expect((error as LinkChannelError).reason).toBe("aborted");
+      expect(open.connection.lastSentOf("relay.cancel")).toBeUndefined();
+    },
+  );
+});
+
 describe("GatewayRelay bounding the head and the body", () => {
   it.each([
     { bound: "the deadline", deadlineMs: 100, idleMs: 10_000 },
@@ -530,6 +638,63 @@ describe("GatewayRelay bounding the head and the body", () => {
       state: "rejected",
     });
     expect(channel.aborted).toBe(true);
+  });
+
+  it("ends a two-way relay with WORKER_UNREACHABLE after 15 s with no byte from the worker, however much the gateway writes, and keeps it open while bytes come or the worker's direction is ended", async () => {
+    const silent = await openTwoWay();
+    await silent.writer.write(new Uint8Array(8));
+    silent.clock.advance(10_000);
+    await silent.writer.write(new Uint8Array(8));
+    silent.clock.advance(4_999);
+    const openAt14 = silent.channel.aborted;
+    silent.clock.advance(1);
+    const abortedAt15 = silent.channel.aborted;
+    const silentRead = outcome(silent.reader.read());
+    const writeFailure = outcome(silent.writer.write(new Uint8Array(1)));
+
+    const chatty = await openTwoWay();
+    const steps: number[] = [];
+    for (let at = 0; at < 12; at += 1) {
+      chatty.clock.advance(5_000);
+      chatty.channel.feed(new Uint8Array(1));
+      steps.push((await chatty.reader.read()).value?.length ?? 0);
+    }
+    const chattyAborted = chatty.channel.aborted;
+
+    const ended = await openTwoWay();
+    ended.channel.end();
+    const endStep = await ended.reader.read();
+    ended.clock.advance(60_000);
+    await ended.writer.write(new Uint8Array(3));
+
+    const slowReader = await openTwoWay();
+    slowReader.channel.feed(new Uint8Array(70 * KIB));
+    await vi.waitFor(() => expect(slowReader.clock.pendingTimerCount).toBe(0));
+    slowReader.clock.advance(60_000);
+    const slowAborted = slowReader.channel.aborted;
+    const slowStep = await slowReader.reader.read();
+    slowReader.clock.advance(15_000);
+    const slowFailure = await outcome(slowReader.reader.read());
+
+    const message = `worker ${WORKER_ID} sent nothing on the relayed response for 15000 ms`;
+    expect(openAt14).toBe(false);
+    expect(abortedAt15).toBe(true);
+    expect(await silentRead).toMatchObject({
+      code: "WORKER_UNREACHABLE",
+      message,
+      state: "rejected",
+    });
+    expect(await writeFailure).toMatchObject({ code: "WORKER_UNREACHABLE", state: "rejected" });
+    expect(silent.channel.aborted).toBe(true);
+    expect(silent.connection.lastSentOf("relay.cancel")).toBeDefined();
+    expect(steps).toEqual(Array.from({ length: 12 }, () => 1));
+    expect(chattyAborted).toBe(false);
+    expect(endStep.done).toBe(true);
+    expect(ended.channel.aborted).toBe(false);
+    expect(ended.channel.written.map((chunk) => chunk.length)).toEqual([3]);
+    expect(slowAborted).toBe(false);
+    expect(slowStep.value?.length).toBe(70 * KIB);
+    expect(slowFailure).toMatchObject({ code: "WORKER_UNREACHABLE", state: "rejected" });
   });
 });
 
