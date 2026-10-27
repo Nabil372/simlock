@@ -785,6 +785,7 @@ async function composeDaemon(
       idGenerator,
       leaseRequests: leasing.requests,
       logger: httpLogger,
+      leaseRoutes: [...moduleHost.leaseRoutes()],
       mounts: [...moduleHost.mounts({ dispatch })],
       ownerRoutedFacts: daemon.ownerRoutedFacts,
       registry,
@@ -1090,6 +1091,7 @@ async function startGatewayDaemon(options: GatewayDaemonOptions): Promise<Daemon
       idGenerator,
       leaseRequests: fleetCoordinator.requests,
       logger: httpLogger,
+      leaseRoutes: [...moduleHost.leaseRoutes()],
       mounts: [...moduleHost.mounts({ dispatch })],
       ownerRoutedFacts: daemon.ownerRoutedFacts,
       registry: {
