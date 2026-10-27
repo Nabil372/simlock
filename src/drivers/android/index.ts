@@ -40,6 +40,7 @@ import {
   type PassthroughContext,
   type ReclaimResult,
   removeListedComponent,
+  type DeviceInputFactory,
   type ScreenCapture,
   ScreenUnavailableError,
   RuntimeMissingError,
@@ -51,6 +52,7 @@ import {
   type Clock,
   type Filesystem,
   type IdGenerator,
+  type Logger,
   type ProcessHandle,
   type ProcessResult,
   type ProcessRunner,
@@ -76,6 +78,7 @@ import {
 } from "./device-profile-source.js";
 import { fits, isPlayStoreImage, misfitReason } from "./image-fit.js";
 import { LibraryDeviceProfileSource } from "./profiles/index.js";
+import { createAndroidDeviceInput } from "./input/index.js";
 import { createAndroidScreenCapture, type ScreenTarget } from "./screen/index.js";
 import { type AndroidSdkPaths, locateSdk } from "./sdk-paths.js";
 
@@ -189,6 +192,8 @@ export interface AndroidDriverOptions {
   readonly hostAbi: string;
   readonly idGenerator?: IdGenerator;
   readonly instanceId: string;
+  // why: the input logs a device whose screen size it cannot read; nothing else in the driver logs through it.
+  readonly logger?: Logger | undefined;
   readonly onDiagnostic?: (diagnostic: AndroidDriverDiagnostic) => void;
   readonly processRunner: ProcessRunner;
   readonly processSupervisor: ProcessSupervisor;
@@ -491,6 +496,10 @@ function containsSequence(args: readonly string[], sequence: readonly string[]):
   return args.some((_, index) => sequence.every((token, offset) => args[index + offset] === token));
 }
 
+type AndroidTargetFor = (
+  device: VirtualDriverDevice | PhysicalDriverDevice,
+) => Promise<ScreenTarget>;
+
 export class AndroidDriver implements Driver {
   readonly platform = "android" as const;
   readonly defaultModels = ANDROID_DEFAULT_MODELS;
@@ -522,6 +531,7 @@ export class AndroidDriver implements Driver {
   readonly #tcpProbe: TcpProbe;
   readonly componentFootprint: { readonly path: string; readonly bytes: number };
   readonly screenCapture: ScreenCapture | undefined;
+  readonly input: DeviceInputFactory | undefined;
 
   private constructor(
     options: AndroidDriverOptions,
@@ -558,7 +568,9 @@ export class AndroidDriver implements Driver {
     this.#sdk = sdk;
     this.#tcpProbe = options.tcpProbe;
     this.componentFootprint = { bytes: ANDROID_SYSTEM_IMAGE_MIN_FREE_BYTES, path: sdk.root };
-    this.screenCapture = this.#screenCaptureFor(options, sdk.adb, adbServerPort);
+    const targetFor = this.#screenTargetFor(options, sdk.adb, adbServerPort);
+    this.screenCapture = this.#screenCaptureFor(options, targetFor);
+    this.input = this.#inputFor(options, targetFor);
     // why: Where an AVD Simlock made before it owned a root still sits: the AVD home the user
     // had configured then, or the SDK's own default. Used only by `findLegacy` /
     // `destroyLegacy` -- the fallback CP3 deleted from the driver proper, kept exactly here
@@ -578,33 +590,53 @@ export class AndroidDriver implements Driver {
     );
   }
 
-  #screenCaptureFor(
+  #screenTargetFor(
     options: AndroidDriverOptions,
     adb: string,
     adbServerPort: number,
-  ): ScreenCapture | undefined {
+  ): AndroidTargetFor | undefined {
     const tcp = options.tcpStreamConnector;
-    if (options.scrcpyServerPath === undefined || tcp === undefined) {
-      return undefined;
-    }
+    if (options.scrcpyServerPath === undefined || tcp === undefined) return undefined;
     const runner = options.processRunner;
-    const serverPort = adbServerPort;
+    return async (device) =>
+      isPhysicalDriverDevice(device)
+        ? this.#physical.screenTargetFor(device, tcp)
+        : emulatorScreenTarget(
+            runner,
+            adb,
+            tcp,
+            adbServerPort,
+            () => this.#env(),
+            this.#dataFor(device).serial,
+            device,
+          );
+  }
+
+  #screenCaptureFor(
+    options: AndroidDriverOptions,
+    targetFor: AndroidTargetFor | undefined,
+  ): ScreenCapture | undefined {
+    if (options.scrcpyServerPath === undefined || targetFor === undefined) return undefined;
     return createAndroidScreenCapture({
       clock: options.clock,
       filesystem: options.filesystem,
       serverPath: options.scrcpyServerPath,
-      targetFor: async (device) =>
-        isPhysicalDriverDevice(device)
-          ? this.#physical.screenTargetFor(device, tcp)
-          : emulatorScreenTarget(
-              runner,
-              adb,
-              tcp,
-              serverPort,
-              () => this.#env(),
-              this.#dataFor(device).serial,
-              device,
-            ),
+      targetFor,
+    });
+  }
+
+  // why: the input uses the same jar and the same targets as the stream, so it is offered exactly
+  // when the stream is.
+  #inputFor(
+    options: AndroidDriverOptions,
+    targetFor: AndroidTargetFor | undefined,
+  ): DeviceInputFactory | undefined {
+    if (options.scrcpyServerPath === undefined || targetFor === undefined) return undefined;
+    return createAndroidDeviceInput({
+      clock: options.clock,
+      ...(options.logger === undefined ? {} : { logger: options.logger }),
+      serverPath: options.scrcpyServerPath,
+      targetFor,
     });
   }
 

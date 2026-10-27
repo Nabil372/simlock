@@ -19,6 +19,7 @@ import {
   freeLoopbackPort,
   makeAgent,
   makeProfileAgent,
+  openInputSocket,
   newAgentToken,
   waitForAgentDevice,
   waitFor,
@@ -54,6 +55,43 @@ const androidAvailable = succeeds("sh", ["-c", "command -v emulator && command -
 function refused(result: AgentDeviceResult): void {
   expect(result.code, "the command was accepted").not.toBe(0);
   expect(failureText(result)).toContain("refused:");
+}
+
+interface Box {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+// why: agent-device's snapshot JSON is read for the node whose identifier is `id` and for the largest
+// box in it, which is the screen; both are read from the one snapshot so the tap's fraction is
+// measured against the size the same snapshot placed the node in.
+function boxOf(node: unknown): Box | undefined {
+  const rect = (node as { rect?: Box } | null)?.rect;
+  return rect !== undefined && typeof rect.width === "number" ? rect : undefined;
+}
+
+function* nodesOf(node: unknown): Generator<Record<string, unknown>> {
+  if (typeof node !== "object" || node === null) return;
+  if (!Array.isArray(node)) yield node as Record<string, unknown>;
+  for (const child of Object.values(node)) yield* nodesOf(child);
+}
+
+function findBoxes(json: unknown, id: string): { target?: Box; screen?: Box } {
+  const boxed = [...nodesOf(json)].flatMap((node) => {
+    const box = boxOf(node);
+    return box === undefined
+      ? []
+      : [{ box, named: node["identifier"] === id || node["id"] === id }];
+  });
+  const area = (box: Box) => box.width * box.height;
+  const screen = boxed.map((entry) => entry.box).sort((left, right) => area(right) - area(left))[0];
+  const target = boxed.find((entry) => entry.named)?.box;
+  return {
+    ...(screen === undefined ? {} : { screen }),
+    ...(target === undefined ? {} : { target }),
+  };
 }
 
 function listField(result: AgentDeviceResult, key: string): unknown[] {
@@ -140,7 +178,10 @@ function defineSuite(target: Target): void {
       driver: "real",
       configOverrides: {
         http: { enabled: true, host: "127.0.0.1", port: await freeLoopbackPort() },
-        capabilities: { "agent-device": { enabled: true, command: pinned } },
+        capabilities: {
+          "agent-device": { enabled: true, command: pinned },
+          input: { enabled: true },
+        },
         capacity: {
           config: { limits: { [platform]: { maxDevices: 1, maxRunning: 1 } } },
         },
@@ -190,6 +231,54 @@ function defineSuite(target: Target): void {
       const png = join(dir, "shot.png");
       ok(await a.run(["screenshot", png]));
       expect((await readFile(png)).subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+      ok(await a.run(["close"]));
+      await waitForFree(env);
+    },
+  );
+
+  // why: the input socket's iOS device input arrives with #1019, so the case waits for it there.
+  it.skipIf(platform === "ios")(
+    "an agent taps the centre of tab-status through the lease's input socket, as agent-device's snapshot places it, and the next snapshot shows the Status tab's screen",
+    { timeout: 600_000 },
+    async () => {
+      const a = await agent("a");
+      ok(await open(a));
+      ok(await a.run(["install", "Appduct", target.app]));
+      ok(await a.run(["open", target.bundleId]));
+      const before = await a.run(["snapshot", "--json"], FIRST_SNAPSHOT);
+      ok(before);
+      // why: the fixture's Status screen alone carries `connection-state` and its Tools screen `call-count` (Appduct at the pin in e2e/fixtures/appduct/README.md:8: playground-native/ios/AppductPlayground/ContentView.swift:61 and :82, playground-native/android/app/src/main/java/com/callstack/appduct/playground/MainActivity.kt:102 and :109).
+      expect(before.stdout).toContain("call-count");
+      expect(before.stdout).not.toContain("connection-state");
+      const { target: tab, screen } = findBoxes(before.json, "tab-status");
+      expect(tab, "tab-status in the snapshot").toBeDefined();
+      expect(screen, "the screen in the snapshot").toBeDefined();
+      const lease = (await listLeases(env))[0];
+      const socket = await openInputSocket(env.httpPort, lease?.id ?? "", a.token);
+      try {
+        await socket.waitForTag(0x83);
+        const config = (await socket.waitForTag(0x82)) as { width: number; height: number };
+        expect(config.width).toBeGreaterThan(1);
+        const x =
+          ((tab as Box).x + (tab as Box).width / 2 - (screen as Box).x) / (screen as Box).width;
+        const y =
+          ((tab as Box).y + (tab as Box).height / 2 - (screen as Box).y) / (screen as Box).height;
+        socket.send(0x03, { type: "begin", x, y });
+        socket.send(0x03, { type: "end", x, y });
+        await waitFor(
+          async () => {
+            const after = await a.run(["snapshot"]);
+            return after.code === 0 && after.stdout.includes("connection-state");
+          },
+          {
+            interval: 2_000,
+            label: "a snapshot of the Status screen after the tap",
+            timeout: 60_000,
+          },
+        );
+      } finally {
+        socket.close();
+      }
       ok(await a.run(["close"]));
       await waitForFree(env);
     },
