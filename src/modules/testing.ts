@@ -17,6 +17,7 @@ import type {
   ModuleFinding,
   ModuleTokenRecord,
   ModuleTokens,
+  ModuleTwoWayRelay,
   OptionalModuleDefinition,
   WorkerContext,
   WorkerHooks,
@@ -189,6 +190,7 @@ export async function fakeWorkerContext<C>(name: string, config: C): Promise<Fak
       processRunner,
       processSupervisor,
       registry: { snapshot: { devices: [], leases: [] } },
+      inputs: { openInput: () => Promise.resolve({ unavailable: "no input in a fake context" }) },
       screens: {
         openScreen: () => Promise.reject(new Error("no screen in a fake context")),
         screenAvailability: () => Promise.resolve([]),
@@ -204,6 +206,8 @@ export interface FakeGatewayContext<C> {
   readonly clock: FakeClock;
   readonly ctx: GatewayContext<C>;
   readonly relayed: { readonly workerId: string; readonly url: string; readonly tenant: string }[];
+  // why: plays the gateway's index dropping a lease, as a relayed `lease.released` does.
+  removeLease(entry: FleetLease): void;
 }
 
 export async function fakeGatewayContext<C>(
@@ -212,6 +216,10 @@ export async function fakeGatewayContext<C>(
   facts: {
     readonly serving?: readonly WorkerView[];
     readonly relay?: (request: Request) => Response;
+    readonly relayTwoWay?: (
+      request: Request,
+      workerId: string,
+    ) => Promise<Response | ModuleTwoWayRelay>;
   } = {},
 ): Promise<FakeGatewayContext<C>> {
   const clock = new FakeClock(1_000);
@@ -220,9 +228,12 @@ export async function fakeGatewayContext<C>(
     systemStats: new FakeSystemStats({ cpuCount: 4, totalRamBytes: 16 * 1024 ** 3 }),
   });
   const serving = facts.serving ?? [];
+  const removedListeners: ((entry: FleetLease) => void)[] = [];
   const leases: FleetLeases = {
     all: (): readonly FleetLease[] => [],
-    onRemoved: () => undefined,
+    onRemoved: (listener) => {
+      removedListeners.push(listener);
+    },
     resolve: () => undefined,
   };
   const relayed: FakeGatewayContext<C>["relayed"][number][] = [];
@@ -242,7 +253,9 @@ export async function fakeGatewayContext<C>(
         relayed.push({ tenant, url: request.url, workerId });
         return Promise.resolve(facts.relay?.(request) ?? new Response("{}"));
       },
-      relayTwoWay: () => Promise.resolve(new Response(null, { status: 501 })),
+      relayTwoWay: (workerId, request) =>
+        facts.relayTwoWay?.(request, workerId) ??
+        Promise.resolve(new Response(null, { status: 501 })),
       requesterPrefix: "gw:gw-test:",
       serving: () => serving,
       startedAt: clock.now(),
@@ -250,5 +263,8 @@ export async function fakeGatewayContext<C>(
       workers: () => serving,
     },
     relayed,
+    removeLease: (entry) => {
+      for (const listener of removedListeners) listener(entry);
+    },
   };
 }

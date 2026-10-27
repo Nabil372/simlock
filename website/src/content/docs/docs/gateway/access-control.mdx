@@ -13,7 +13,7 @@ This page uses the gateway in its examples. Tokens work the same way on a worker
 
 | Role | Made for | May |
 | --- | --- | --- |
-| `agent` | A coding agent that leases devices over HTTP. | Read the catalog and status (only its own leases and waiting requests), list installed runtimes, request, renew and release its own leases, cancel its own waiting requests, run commands on the devices it leases, and watch the screen of its own leases (see [Watching the screen](/simlock/docs/using-devices/watching-the-screen#stream-from-your-own-tool)). |
+| `agent` | A coding agent that leases devices over HTTP. | Read the catalog and status (only its own leases and waiting requests), list installed runtimes, request, renew and release its own leases, cancel its own waiting requests, run commands on the devices it leases, watch the screen of its own leases (see [Watching the screen](/simlock/docs/using-devices/watching-the-screen#stream-from-your-own-tool)), and open the input socket of its own leases (see [Watching the screen](/simlock/docs/using-devices/watching-the-screen#send-input-to-your-own-lease)). |
 | `operator` | A person, or a script that manages the fleet. | Everything an agent may, for every requester's leases, plus the console, events, usage figures, tokens, worker commands and component installs. |
 | `worker` | A worker machine joining a gateway. | Open one worker's connection to the gateway, and nothing else. The first worker that joins with it is paired with it; another worker with the same token, and any other request with it, is refused with `403`. |
 
@@ -118,7 +118,7 @@ Your proxy must also:
 - **Let the worker connections through without a sign-in.** Workers connect to `/v1/uplink` with their join token, and carry no proxy JWT.
 - **Let `/v1/healthz` through**, if anything checks the gateway's health.
 - **Let agents through**, by whatever means your proxy offers, such as a bypass rule or service credentials. Agents send their Simlock token, which Simlock checks as usual. When a request carries both a Simlock token and a JWT, the token wins.
-- **Serve the console over HTTPS.** A browser marks its requests as coming from the console only over `https://` or on the local machine. Without that mark, Simlock refuses every request that changes something and is signed in through the proxy.
+- **Serve the console over HTTPS.** A browser marks its requests as coming from the console only over `https://` or on the local machine. Without that mark, Simlock refuses every request that changes something, and every screen-input socket, signed in through the proxy.
 
 An operator token pasted into the console still works behind the proxy.
 
