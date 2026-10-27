@@ -17,6 +17,9 @@ export interface BytePipeProcess {
   // why: never rejects -- a program the OS refused to start resolves with `error` set, so a caller
   // has one place to learn how it ended.
   readonly exited: Promise<BytePipeExit>;
+  // why: a capture program in input mode reads its commands on stdin; rejects when the write fails,
+  // so a caller learns the program is gone.
+  writeStdin(bytes: Uint8Array): Promise<void>;
   closeStdin(): void;
   kill(signal: "SIGTERM" | "SIGKILL"): void;
 }
@@ -52,6 +55,15 @@ export class NodeBytePipeLauncher implements BytePipeLauncher {
         child.stdin.end();
       },
       exited,
+      // why: unlike the stop, a write that fails is the caller's to learn about, so the error
+      // reaches the promise (the listener above only keeps it from being thrown).
+      writeStdin: (bytes) =>
+        new Promise<void>((resolve, reject) => {
+          child.stdin.write(bytes, (error) => {
+            if (error === null || error === undefined) resolve();
+            else reject(error);
+          });
+        }),
       kill: (signal) => {
         if (child.exitCode === null && child.signalCode === null) child.kill(signal);
       },
@@ -72,8 +84,11 @@ export class FakeBytePipeProcess implements BytePipeProcess {
   readonly exited: Promise<BytePipeExit>;
   stdinClosed = false;
   stdinCloses = 0;
+  readonly stdinWrites: Uint8Array[] = [];
   readonly kills: string[] = [];
   exitOnStdinClose = true;
+  // why: a test sets this to make every later write fail, as a pipe whose reader has gone does.
+  writeError: Error | undefined;
   readonly #onStderrLine: ((line: string) => void) | undefined;
   #controller!: ReadableStreamDefaultController<Uint8Array>;
   #resolveExit!: (exit: BytePipeExit) => void;
@@ -108,6 +123,12 @@ export class FakeBytePipeProcess implements BytePipeProcess {
       // why: a reader that already cancelled the stream has closed it; the exit still settles.
     }
     this.#resolveExit(exit);
+  }
+
+  writeStdin(bytes: Uint8Array): Promise<void> {
+    if (this.writeError !== undefined) return Promise.reject(this.writeError);
+    this.stdinWrites.push(bytes);
+    return Promise.resolve();
   }
 
   closeStdin(): void {

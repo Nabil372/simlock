@@ -6,6 +6,7 @@ import {
   type ComponentInstallResult,
   type ComponentReceipt,
   type ComponentRemoval,
+  type DeviceInputFactory,
   COMPONENT_REMOVAL_TIMEOUT_MS,
   type ExactDeviceRequest,
   type Driver,
@@ -50,6 +51,7 @@ import type {
   Clock,
   Filesystem,
   IdGenerator,
+  Logger,
   ProcessResult,
   ProcessRunner,
 } from "../../ports/index.js";
@@ -58,6 +60,8 @@ import { refuseOwnSetLeftovers, refuseXcodeSetLeftovers } from "./device-set-lef
 import { devicectlExecCommand } from "./devicectl-exec.js";
 import { fillSimctlDevice } from "./simctl-device.js";
 import { IosPhysicalHandler } from "./physical.js";
+import { createIosDeviceInput } from "./input/index.js";
+import { iosRuntimeVersionFromId } from "./runtime-version.js";
 import { createIosScreenCapture } from "./screen-capture.js";
 import { labelsFor, resolveSlimCategories, slimSignature } from "./slim-labels.js";
 
@@ -216,6 +220,8 @@ export interface IosSimctlDriverOptions {
     readonly bootTimeoutMs: number;
   };
   readonly slimByDefault?: boolean;
+  // why: the device input logs a Home press that did nothing; nothing else in the driver logs through it.
+  readonly logger?: Logger;
   // why: absent when this host has no way to run the capture program; the driver then offers no
   // screen at all rather than one that fails on every open.
   readonly screenCapture?: {
@@ -349,9 +355,11 @@ export class IosSimctlDriver implements Driver {
               ? {}
               : { onLog: options.screenCapture.onLog }),
           });
+    this.input = createInputFor(options, deviceRoot, rootOptions !== undefined);
   }
 
   readonly screenCapture: ScreenCapture | undefined;
+  readonly input: DeviceInputFactory | undefined;
 
   /**
    * why: Establishes the device set this driver owns before it can be asked to do anything,
@@ -1778,6 +1786,24 @@ class IosRuntimeUnavailableForDownloadError extends RuntimeMissingError {
   }
 }
 
+// why: the input is offered exactly when the screen capture is, because both are the one program.
+function createInputFor(
+  options: IosSimctlDriverOptions,
+  deviceRoot: string,
+  ownedRoot: boolean,
+): DeviceInputFactory | undefined {
+  if (options.screenCapture === undefined) return undefined;
+  return createIosDeviceInput({
+    baseEnvironment: options.screenCapture.baseEnvironment,
+    clock: options.clock,
+    command: configuredScreenCaptureCommand(options) ?? options.screenCapture.command,
+    ...(ownedRoot ? { deviceSet: deviceRoot } : {}),
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
+    launcher: options.screenCapture.launcher,
+    processRunner: options.processRunner,
+  });
+}
+
 function configuredScreenCaptureCommand(options: IosSimctlDriverOptions): string | undefined {
   const configured = options.driverConfig["screenCaptureCommand"];
   return typeof configured === "string" && configured !== "" ? configured : undefined;
@@ -2257,18 +2283,7 @@ function iosDriverData(device: DriverDevice): IosDriverData {
   };
 }
 
-export function iosRuntimeVersionFromId(runtimeId: string): readonly [number, number] | undefined {
-  const match = /iOS-(\d+)(?:-(\d+))?(?:-(\d+))?$/.exec(runtimeId);
-  if (match === null) {
-    return undefined;
-  }
-  const major = Number.parseInt(match[1] ?? "", 10);
-  const minor = match[2] === undefined ? 0 : Number.parseInt(match[2], 10);
-  if (Number.isNaN(major) || Number.isNaN(minor)) {
-    return undefined;
-  }
-  return [major, minor];
-}
+export { iosRuntimeVersionFromId };
 
 export function supportsPersistentSlim(version: readonly [number, number] | undefined): boolean {
   if (version === undefined) {
