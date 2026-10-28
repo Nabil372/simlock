@@ -153,7 +153,7 @@ const ERASABLE_MARK_PATH = "/data/local/tmp/simlock-mark.json";
 
 /**
  * why: How this machine's emulators are launched (`android.emulator` in config). Operator-only: it
- * reaches the driver at construction and never from a lease request. Only these four settings
+ * reaches the driver at construction and never from a lease request. Only these five settings
  * exist, each mapped to fixed emulator flags by `emulatorLaunchFlags` and `grpcFlags`, so config
  * cannot add `-port`, a different AVD home, or any other argument that would break containment.
  */
@@ -2708,8 +2708,8 @@ function systemImageTags(properties: string | undefined, folder: string): readon
 /**
  * why: The emulator serves gRPC only when a port is named, and writes the discovery file
  * (`avd/running/pid_<pid>.ini`, with `grpc.port` and `grpc.token`) that tools such as Android
- * Studio's device manager read to drive it. The port follows the console port, which Simlock
- * already reserved free and unique (even, 5586-5682), so two emulators never share one.
+ * Studio's device manager read to drive it. The port follows the console port (even, 5586-5682),
+ * so it is as unique as the console port is; nothing probes it before the boot.
  */
 const GRPC_PORT_OFFSET = 3000;
 
@@ -2731,9 +2731,9 @@ function emulatorLaunchFlags(
 /**
  * why: The launch settings a baseline snapshot depends on: the window and the GPU mode change the
  * emulator's graphics state, so a baseline taken under one does not load cleanly under the
- * other. Audio and the boot animation do not, and stay out. Nothing is added while both are at
- * their defaults, so a baseline captured before these settings existed keeps its hash and is
- * not rebuilt (with a data wipe) on the first boot after an upgrade.
+ * other. Audio, the boot animation and gRPC do not, and stay out. Nothing is added while both
+ * are at their defaults, so a baseline captured before these settings existed keeps its hash and
+ * is not rebuilt (with a data wipe) on the first boot after an upgrade.
  */
 function baselineLaunchInputs(
   launch: AndroidEmulatorLaunchOptions = DEFAULT_EMULATOR_LAUNCH,

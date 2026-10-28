@@ -1095,6 +1095,7 @@ describe("AndroidDriver", () => {
     it.each([
       ["audio", { ...defaults, audio: false }, ["-no-audio"]],
       ["bootAnimation", { ...defaults, bootAnimation: false }, ["-no-boot-anim"]],
+      ["grpc", { ...defaults, grpc: true }, ["-grpc", "8586", "-grpc-use-token"]],
     ] as const)(
       "keeps the clean baseline and boots from it after %s changes",
       async (_key, emulator, flags) => {

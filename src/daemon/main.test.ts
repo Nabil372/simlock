@@ -2435,8 +2435,8 @@ describe("discoverDrivers on a host with an Android SDK", () => {
         audio: true,
         bootAnimation: true,
         gpu: "host",
-        headless: true,
         grpc: false,
+        headless: true,
       },
       processRunner,
     });
@@ -3005,7 +3005,13 @@ describe("discoverDrivers with SIMLOCK_DRIVERS_MODULE", () => {
          return [];
        }`,
     );
-    const emulator = { audio: false, bootAnimation: false, gpu: "host", headless: true };
+    const emulator = {
+      audio: false,
+      bootAnimation: false,
+      gpu: "host",
+      grpc: true,
+      headless: true,
+    };
 
     try {
       await start({ configOverrides: { android: { emulator } }, drivers: undefined });
