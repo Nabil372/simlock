@@ -898,6 +898,7 @@ describe("AndroidDriver", () => {
       audio: true,
       bootAnimation: true,
       gpu: "auto",
+      grpc: false,
       headless: false,
     };
     const emulatorLaunches = (runner: ScriptedProcessRunner) =>
@@ -946,6 +947,31 @@ describe("AndroidDriver", () => {
           "-no-snapshot-save",
           ...flags,
         ]);
+      }
+    });
+
+    it("serves gRPC with a token on the console port plus 3000 for grpc: true, and not by default", async () => {
+      const harness = await provisionedHarness({
+        emulator: { ...defaults, grpc: true },
+        emulatorFlags: ["-grpc", "8586", "-grpc-use-token"],
+      });
+      await harness.driver.makeReady(harness.device);
+      expect(emulatorLaunches(harness.runner)[0]).toEqual([
+        "-avd",
+        "simlock_one",
+        "-port",
+        "5586",
+        "-no-snapshot-save",
+        "-grpc",
+        "8586",
+        "-grpc-use-token",
+        "-no-snapshot-load",
+      ]);
+
+      const off = await provisionedHarness({ emulator: defaults });
+      await off.driver.makeReady(off.device);
+      for (const args of emulatorLaunches(off.runner)) {
+        expect(args).not.toContain("-grpc");
       }
     });
 

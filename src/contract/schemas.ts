@@ -1021,6 +1021,7 @@ export const configSchema = z.object({
       gpu: z.string().min(1),
       audio: z.boolean(),
       bootAnimation: z.boolean(),
+      grpc: z.boolean(),
     }),
   }),
   gateway: z.object({

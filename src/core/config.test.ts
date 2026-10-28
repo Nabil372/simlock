@@ -1206,7 +1206,7 @@ describe("loadConfig", () => {
     ).rejects.toThrow("ios.slim.categories");
   });
 
-  it("defaults android.emulator to a windowed launch with the emulator's GPU, audio, and boot animation", async () => {
+  it("defaults android.emulator to a windowed launch with the emulator's GPU, audio, and boot animation, and no gRPC", async () => {
     const config = await loadConfig({
       configPath,
       filesystem: new MemoryFilesystem(),
@@ -1217,6 +1217,7 @@ describe("loadConfig", () => {
       audio: true,
       bootAnimation: true,
       gpu: "auto",
+      grpc: false,
       headless: false,
     });
   });
@@ -1232,6 +1233,7 @@ describe("loadConfig", () => {
             audio: false,
             bootAnimation: false,
             gpu: "swiftshader_indirect",
+            grpc: true,
             headless: true,
           },
         },
@@ -1243,6 +1245,7 @@ describe("loadConfig", () => {
       audio: false,
       bootAnimation: false,
       gpu: "swiftshader_indirect",
+      grpc: true,
       headless: true,
     });
   });
@@ -1257,6 +1260,7 @@ describe("loadConfig", () => {
       { android: { defaultModels: {}, emulator: { bootAnimation: "false" } } },
       "android.emulator.bootAnimation",
     ],
+    [{ android: { defaultModels: {}, emulator: { grpc: "on" } } }, "android.emulator.grpc"],
     [{ android: { defaultModels: {}, emulator: { gpu: "" } } }, "android.emulator.gpu"],
     [{ android: { defaultModels: {}, emulator: { gpu: true } } }, "android.emulator.gpu"],
   ])("rejects a malformed android.emulator key at load, naming it", async (contents, path) => {
@@ -1286,6 +1290,7 @@ describe("loadConfig", () => {
       "audio",
       "bootAnimation",
       "gpu",
+      "grpc",
       "headless",
     ]);
   });

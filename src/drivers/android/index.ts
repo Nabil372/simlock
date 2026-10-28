@@ -154,19 +154,21 @@ const ERASABLE_MARK_PATH = "/data/local/tmp/simlock-mark.json";
 /**
  * why: How this machine's emulators are launched (`android.emulator` in config). Operator-only: it
  * reaches the driver at construction and never from a lease request. Only these four settings
- * exist, each mapped to one fixed emulator flag by `emulatorLaunchFlags`, so config cannot add
- * `-port`, a different AVD home, or any other argument that would break containment.
+ * exist, each mapped to fixed emulator flags by `emulatorLaunchFlags` and `grpcFlags`, so config
+ * cannot add `-port`, a different AVD home, or any other argument that would break containment.
  */
 export interface AndroidEmulatorLaunchOptions {
   readonly headless: boolean;
   readonly gpu: string;
   readonly audio: boolean;
   readonly bootAnimation: boolean;
+  readonly grpc: boolean;
 }
 
 const DEFAULT_EMULATOR_LAUNCH: AndroidEmulatorLaunchOptions = {
   audio: true,
   bootAnimation: true,
+  grpc: false,
   gpu: "auto",
   headless: false,
 };
@@ -517,6 +519,7 @@ export class AndroidDriver implements Driver {
   readonly #idGenerator: IdGenerator;
   readonly #legacyAvdHome: string;
   readonly #emulatorFlags: readonly string[];
+  readonly #grpc: boolean;
   readonly #baselineLaunchInputs: readonly string[];
   readonly #locks = new Map<string, Promise<void>>();
   readonly #onDiagnostic: ((diagnostic: AndroidDriverDiagnostic) => void) | undefined;
@@ -548,6 +551,7 @@ export class AndroidDriver implements Driver {
     this.#clock = options.clock;
     this.#deviceRoot = deviceRoot;
     this.#emulatorFlags = emulatorLaunchFlags(options.emulator);
+    this.#grpc = (options.emulator ?? DEFAULT_EMULATOR_LAUNCH).grpc;
     this.#baselineLaunchInputs = baselineLaunchInputs(options.emulator);
     this.#filesystem = options.filesystem;
     this.#hostAbi = options.hostAbi;
@@ -2114,6 +2118,7 @@ export class AndroidDriver implements Driver {
         String(data.port),
         "-no-snapshot-save",
         ...this.#emulatorFlags,
+        ...(this.#grpc ? grpcFlags(data.port) : []),
         ...launchArgs,
       ],
       { env: this.#env(), stdio: "ignore" },
@@ -2698,6 +2703,18 @@ function systemImageTags(properties: string | undefined, folder: string): readon
     .map((tag) => tag.trim())
     .filter((tag) => tag !== "");
   return tags.length > 0 ? tags : [folder];
+}
+
+/**
+ * why: The emulator serves gRPC only when a port is named, and writes the discovery file
+ * (`avd/running/pid_<pid>.ini`, with `grpc.port` and `grpc.token`) that tools such as Android
+ * Studio's device manager read to drive it. The port follows the console port, which Simlock
+ * already reserved free and unique (even, 5586-5682), so two emulators never share one.
+ */
+const GRPC_PORT_OFFSET = 3000;
+
+function grpcFlags(consolePort: number): string[] {
+  return ["-grpc", String(consolePort + GRPC_PORT_OFFSET), "-grpc-use-token"];
 }
 
 function emulatorLaunchFlags(

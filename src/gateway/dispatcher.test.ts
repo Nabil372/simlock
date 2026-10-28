@@ -77,7 +77,7 @@ const gatewayConfig = {
   ios: { defaultMode: "full" as const, defaultModels: {}, slim: { bootTimeoutMs: 1 } },
   android: {
     defaultModels: {},
-    emulator: { headless: false, gpu: "auto", audio: true, bootAnimation: true },
+    emulator: { headless: false, gpu: "auto", audio: true, bootAnimation: true, grpc: false },
   },
   lease: {
     defaultTtlMs: 900_000,

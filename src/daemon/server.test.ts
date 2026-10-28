@@ -4217,7 +4217,7 @@ function testConfig(
     ios: { defaultMode: "full", defaultModels: {}, slim: { bootTimeoutMs: 600_000 } },
     android: {
       defaultModels: {},
-      emulator: { headless: false, gpu: "auto", audio: true, bootAnimation: true },
+      emulator: { headless: false, gpu: "auto", audio: true, bootAnimation: true, grpc: false },
     },
     idle: { deleteAfterMs: 60_000, shutdownAfterMs: 10_000 },
     update: { check: true },

@@ -394,6 +394,8 @@ export interface Config {
       readonly gpu: string;
       readonly audio: boolean;
       readonly bootAnimation: boolean;
+      /** why: tools that drive an emulator through its gRPC endpoint find it only when it is on. */
+      readonly grpc: boolean;
     };
   };
   /**
@@ -999,6 +1001,7 @@ function defaultConfig(
         gpu: "auto",
         audio: true,
         bootAnimation: true,
+        grpc: false,
       },
     },
     gateway: {
@@ -1164,6 +1167,7 @@ export function configValidators(
         gpu: nonEmptyString,
         audio: booleanValue,
         bootAnimation: booleanValue,
+        grpc: booleanValue,
       }),
     }),
     stalledTransition: objectValidator({
