@@ -60,7 +60,7 @@ Provision — `provision`:
 Boot — `makeReady` (per-device lock):
 
 1. Baseline: stored hash matches → `-snapshot simlock_clean_baseline`; differs → delete
-   the snapshots, `-wipe-data`; none → cold boot. Always `-no-snapshot-save`, `-grpc <port+3000> -grpc-use-token` (#639, not hashed).
+   the snapshots, `-wipe-data`; none → cold boot. Always `-no-snapshot-save`, `-grpc <port+3000> -grpc-use-token` (not hashed).
 2. Console port reserved at the first `prepare` boot in this process: even 5586–5682, not in
    `adb devices`, not reserved, port, port+1 and port+3000 not listening.
 3. Ready = `sys.boot_completed` 1, `init.svc.bootanim` stopped or unset, and `adb emu avd path`
