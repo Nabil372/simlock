@@ -55,15 +55,30 @@ function grpcPortOf(serial: string): number {
 }
 
 // why: lsof lists every socket listening on the port, on any address family, so a bind beyond
-// loopback shows up as a listener; an empty list means nothing listens at all.
+// loopback shows up as a listener. It exits 1 with no output when nothing listens, so only that
+// is an empty list; any other failure is thrown rather than read as a closed port.
 async function listenersOn(port: number): Promise<string[]> {
-  const { stdout } = await execFileAsync("lsof", [
+  const stdout = await execFileAsync("lsof", [
     "-nP",
     "-a",
     `-iTCP:${port}`,
     "-sTCP:LISTEN",
     "-Fn",
-  ]).catch(() => ({ stdout: "" }));
+  ]).then(
+    (result) => result.stdout,
+    (error: unknown) => {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === 1 &&
+        "stderr" in error &&
+        error.stderr === ""
+      ) {
+        return "";
+      }
+      throw error;
+    },
+  );
   return stdout
     .split("\n")
     .filter((line) => line.startsWith("n"))
@@ -76,8 +91,9 @@ function beyondLoopback(listeners: readonly string[], port: number): string[] {
   );
 }
 
-// why: The kernel draws its boot id once per boot, and a snapshot load restores the memory that
-// holds it, so an unchanged id across two boots means the second came from the snapshot.
+// why: The kernel draws its boot id once per boot, and a snapshot holds the memory it is in, so
+// once the emulator has stopped, the same id on the next boot means that boot restored the
+// snapshot instead of booting cold.
 async function bootId(env: TestEnv, serial: string): Promise<string> {
   const read = await env.cli([
     "adb",
@@ -320,6 +336,11 @@ describe.skipIf(!hasAndroidSdk)(
             },
             { timeout: 60_000, interval: 500, label: "device demoted to shutdown" },
           );
+          await waitFor(async () => (await listenersOn(port)).length === 0, {
+            timeout: 60_000,
+            interval: 500,
+            label: `the stopped emulator's port ${port} closed`,
+          });
 
           const second = await leasePixel9(env);
           expect(second.avdName).toBe(first.avdName);
@@ -328,7 +349,7 @@ describe.skipIf(!hasAndroidSdk)(
             await bootId(env, secondSerial),
             "the boot after the shutdown was not the snapshot",
           ).toBe(capturedBoot);
-          expect(grpcPortOf(secondSerial)).toBe(port);
+          expect(secondSerial).toBe(serial);
           const relisteners = await listenersOn(port);
           expect(relisteners.length, `nothing listens on port ${port}`).toBeGreaterThan(0);
           expect(beyondLoopback(relisteners, port)).toEqual([]);
