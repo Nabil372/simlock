@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { createConnection } from "node:net";
+import { homedir, networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
-import { withDaemon } from "./helpers/index.js";
+import { withDaemon, type TestEnv } from "./helpers/index.js";
 import { DEVICE_READY_MS, waitFor } from "./helpers/wait.js";
 
 const execFileAsync = promisify(execFile);
@@ -37,6 +38,77 @@ async function avdManagerList(): Promise<string[]> {
     : join(ANDROID_HOME, "tools", "bin", "avdmanager");
   const { stdout } = await execFileAsync(binary, ["list", "avd"]).catch(() => ({ stdout: "" }));
   return [...stdout.matchAll(/Name:\s*(\S+)/g)].map((match) => match[1] as string);
+}
+
+// why: Simlock's adb server may list other emulators on this machine, so the leased one is the
+// serial whose `emu avd name` is the grant's AVD; its console port is in that serial.
+async function leasedSerial(env: TestEnv, avdName: string): Promise<string> {
+  const devices = await env.cli(["adb", "devices"]);
+  for (const [, serial] of devices.stdout.matchAll(/^(emulator-\d+)\s+device$/gm)) {
+    const name = await env.cli(["adb", "-s", serial as string, "emu", "avd", "name"]);
+    if (name.stdout.split(/\r?\n/)[0]?.trim() === avdName) return serial as string;
+  }
+  throw new Error(`no emulator named ${avdName} in simlock adb devices: ${devices.stdout}`);
+}
+
+function grpcPortOf(serial: string): number {
+  return Number(serial.slice("emulator-".length)) + 3000;
+}
+
+async function accepts(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host, port, timeout: 5_000 });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once("error", () => resolve(false));
+  });
+}
+
+function nonLoopbackAddresses(): string[] {
+  return Object.values(networkInterfaces())
+    .flatMap((addresses) => addresses ?? [])
+    .filter((address) => address.family === "IPv4" && !address.internal)
+    .map((address) => address.address);
+}
+
+// why: The kernel draws its boot id once per boot, and a snapshot load restores the memory that
+// holds it, so an unchanged id across two boots means the second came from the snapshot.
+async function bootId(env: TestEnv, serial: string): Promise<string> {
+  const read = await env.cli([
+    "adb",
+    "-s",
+    serial,
+    "shell",
+    "cat",
+    "/proc/sys/kernel/random/boot_id",
+  ]);
+  expect(read.code, `reading the boot id failed: ${read.stderr}`).toBe(0);
+  return read.stdout.trim();
+}
+
+async function leasePixel9(env: TestEnv): Promise<{ avdName: string; leaseId: string }> {
+  const lease = await env.cli(
+    [
+      "lease",
+      "--platform",
+      "android",
+      "--device",
+      "Pixel 9",
+      "--agent-id",
+      "android-grpc",
+      "--detach",
+    ],
+    { timeout: DEVICE_READY_MS },
+  );
+  expect(lease.code, `lease failed: ${lease.stderr}`).toBe(0);
+  const grant = lease.json as { device: { driverDeviceId: string }; lease: { id: string } };
+  return { avdName: grant.device.driverDeviceId, leaseId: grant.lease.id };
 }
 
 interface AndroidCatalogOutput {
@@ -208,6 +280,66 @@ describe.skipIf(!hasAndroidSdk)(
 
           const list = await env.cli(["list", "--devices"]);
           expect(list.code).toBe(0);
+        } finally {
+          await env
+            .cli(["nuke", "--delete-devices", "--yes"], { timeout: 120_000 })
+            .catch(() => undefined);
+        }
+      },
+    );
+
+    it(
+      "a leased emulator serves gRPC at its console port plus 3000 on loopback only, and with the pool off the next lease after its release boots it from its clean baseline snapshot with gRPC on",
+      { timeout: 900_000 },
+      async () => {
+        // why: With the pool off the released emulator is the only device the next lease can boot.
+        const env = await withDaemon({
+          driver: "real",
+          configOverrides: { idle: { shutdownAfterMs: 300 }, warmPool: { enabled: false } },
+        });
+        try {
+          const first = await leasePixel9(env);
+          const serial = await leasedSerial(env, first.avdName);
+          const port = grpcPortOf(serial);
+          expect(await accepts("127.0.0.1", port), `nothing listens on 127.0.0.1:${port}`).toBe(
+            true,
+          );
+          const outside = nonLoopbackAddresses();
+          expect(outside.length, "no non-loopback address on this host to probe").toBeGreaterThan(
+            0,
+          );
+          for (const address of outside) {
+            expect(await accepts(address, port), `gRPC answered on ${address}:${port}`).toBe(false);
+          }
+          const capturedBoot = await bootId(env, serial);
+
+          const release = await env.cli(["release", first.leaseId]);
+          expect(release.code, `release failed: ${release.stderr}`).toBe(0);
+          await waitFor(
+            async () => {
+              await env.cli(["cleanup"]);
+              const rows = (await env.cli(["list", "--devices"])).json as {
+                driverDeviceId: string;
+                state: string;
+              }[];
+              return rows.some(
+                (row) => row.driverDeviceId === first.avdName && row.state === "shutdown",
+              );
+            },
+            { timeout: 60_000, interval: 500, label: "device demoted to shutdown" },
+          );
+
+          const second = await leasePixel9(env);
+          expect(second.avdName).toBe(first.avdName);
+          const secondSerial = await leasedSerial(env, second.avdName);
+          expect(
+            await bootId(env, secondSerial),
+            "the boot after the shutdown was not the snapshot",
+          ).toBe(capturedBoot);
+          expect(grpcPortOf(secondSerial)).toBe(port);
+          expect(await accepts("127.0.0.1", port), `nothing listens on 127.0.0.1:${port}`).toBe(
+            true,
+          );
         } finally {
           await env
             .cli(["nuke", "--delete-devices", "--yes"], { timeout: 120_000 })
