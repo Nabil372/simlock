@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { createConnection } from "node:net";
-import { homedir, networkInterfaces } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -55,26 +54,26 @@ function grpcPortOf(serial: string): number {
   return Number(serial.slice("emulator-".length)) + 3000;
 }
 
-async function accepts(host: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection({ host, port, timeout: 5_000 });
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("timeout", () => {
-      socket.destroy();
-      resolve(false);
-    });
-    socket.once("error", () => resolve(false));
-  });
+// why: lsof lists every socket listening on the port, on any address family, so a bind beyond
+// loopback shows up as a listener; an empty list means nothing listens at all.
+async function listenersOn(port: number): Promise<string[]> {
+  const { stdout } = await execFileAsync("lsof", [
+    "-nP",
+    "-a",
+    `-iTCP:${port}`,
+    "-sTCP:LISTEN",
+    "-Fn",
+  ]).catch(() => ({ stdout: "" }));
+  return stdout
+    .split("\n")
+    .filter((line) => line.startsWith("n"))
+    .map((line) => line.slice(1));
 }
 
-function nonLoopbackAddresses(): string[] {
-  return Object.values(networkInterfaces())
-    .flatMap((addresses) => addresses ?? [])
-    .filter((address) => address.family === "IPv4" && !address.internal)
-    .map((address) => address.address);
+function beyondLoopback(listeners: readonly string[], port: number): string[] {
+  return listeners.filter(
+    (listener) => listener !== `127.0.0.1:${port}` && listener !== `[::1]:${port}`,
+  );
 }
 
 // why: The kernel draws its boot id once per boot, and a snapshot load restores the memory that
@@ -289,7 +288,7 @@ describe.skipIf(!hasAndroidSdk)(
     );
 
     it(
-      "a leased emulator serves gRPC at its console port plus 3000 on loopback only, and with the pool off the next lease after its release boots it from its clean baseline snapshot with gRPC on",
+      "a leased emulator's gRPC port, its console port plus 3000, listens on loopback only, and with the pool off the next lease after its release boots it from its clean baseline snapshot with that port listening again",
       { timeout: 900_000 },
       async () => {
         // why: With the pool off the released emulator is the only device the next lease can boot.
@@ -301,16 +300,9 @@ describe.skipIf(!hasAndroidSdk)(
           const first = await leasePixel9(env);
           const serial = await leasedSerial(env, first.avdName);
           const port = grpcPortOf(serial);
-          expect(await accepts("127.0.0.1", port), `nothing listens on 127.0.0.1:${port}`).toBe(
-            true,
-          );
-          const outside = nonLoopbackAddresses();
-          expect(outside.length, "no non-loopback address on this host to probe").toBeGreaterThan(
-            0,
-          );
-          for (const address of outside) {
-            expect(await accepts(address, port), `gRPC answered on ${address}:${port}`).toBe(false);
-          }
+          const listeners = await listenersOn(port);
+          expect(listeners.length, `nothing listens on port ${port}`).toBeGreaterThan(0);
+          expect(beyondLoopback(listeners, port)).toEqual([]);
           const capturedBoot = await bootId(env, serial);
 
           const release = await env.cli(["release", first.leaseId]);
@@ -337,9 +329,9 @@ describe.skipIf(!hasAndroidSdk)(
             "the boot after the shutdown was not the snapshot",
           ).toBe(capturedBoot);
           expect(grpcPortOf(secondSerial)).toBe(port);
-          expect(await accepts("127.0.0.1", port), `nothing listens on 127.0.0.1:${port}`).toBe(
-            true,
-          );
+          const relisteners = await listenersOn(port);
+          expect(relisteners.length, `nothing listens on port ${port}`).toBeGreaterThan(0);
+          expect(beyondLoopback(relisteners, port)).toEqual([]);
         } finally {
           await env
             .cli(["nuke", "--delete-devices", "--yes"], { timeout: 120_000 })
