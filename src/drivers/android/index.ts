@@ -2375,10 +2375,11 @@ class PortAllocator {
    * `adb devices` answers only for emulators announced to this instance's own server, so a
    * port it leaves free is then probed: an emulator another Simlock instance started is in
    * neither this process's reservations nor this server's list, but it holds its console
-   * port, the adb port above it and its gRPC port on the machine, and an emulator told to
-   * take any of them exits at once. Each probe is one loopback connect, refused at once on a
-   * free port and bounded by the probe's own timeout otherwise; the walk stops at the first
-   * free port, so the wait is at most one set of three probes per console port in the range.
+   * port, the adb port above it and its gRPC port on the machine. An emulator told to take
+   * either of the first two exits at once, and one given a taken gRPC port cannot serve gRPC
+   * there. Each probe is one loopback connect, refused at once on a free port and bounded by
+   * the probe's own timeout otherwise; the walk stops at the first free port, so the wait is at
+   * most one set of three probes per console port in the range.
    *
    * The probe sees only an emulator that is running now. A port handed out but not booted on
    * -- by another instance, or by this one before a restart emptied `#reserved` -- still
