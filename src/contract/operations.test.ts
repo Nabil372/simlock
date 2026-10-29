@@ -1243,7 +1243,7 @@ describe("operation input/output round trips", () => {
       ios: { defaultMode: "full", defaultModels: {}, slim: { bootTimeoutMs: 1 } },
       android: {
         defaultModels: {},
-        emulator: { headless: true, gpu: "host", audio: false, bootAnimation: false, grpc: true },
+        emulator: { headless: true, gpu: "host", audio: false, bootAnimation: false },
       },
       stalledTransition: { thresholdMultiplier: 1, minimumThresholdMs: 1 },
     };
@@ -1309,7 +1309,7 @@ describe("operation input/output round trips", () => {
       ios: { defaultMode: "full", defaultModels: {}, slim: { bootTimeoutMs: 1 } },
       android: {
         defaultModels: {},
-        emulator: { headless: true, gpu: "host", audio: false, bootAnimation: false, grpc: true },
+        emulator: { headless: true, gpu: "host", audio: false, bootAnimation: false },
       },
       stalledTransition: { thresholdMultiplier: 1, minimumThresholdMs: 1 },
     };

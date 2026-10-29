@@ -2443,13 +2443,7 @@ describe("discoverDrivers on a host with an Android SDK", () => {
     ]);
 
     const { drivers } = await discoverAndroid(filesystem, new FakeTcpProbe([5038]), [4242], {
-      androidEmulator: {
-        audio: true,
-        bootAnimation: true,
-        gpu: "host",
-        grpc: false,
-        headless: true,
-      },
+      androidEmulator: { audio: true, bootAnimation: true, gpu: "host", headless: true },
       processRunner,
     });
     const android = drivers.find((driver) => driver.platform === "android");
@@ -3017,13 +3011,7 @@ describe("discoverDrivers with SIMLOCK_DRIVERS_MODULE", () => {
          return [];
        }`,
     );
-    const emulator = {
-      audio: false,
-      bootAnimation: false,
-      gpu: "host",
-      grpc: true,
-      headless: true,
-    };
+    const emulator = { audio: false, bootAnimation: false, gpu: "host", headless: true };
 
     try {
       await start({ configOverrides: { android: { emulator } }, drivers: undefined });

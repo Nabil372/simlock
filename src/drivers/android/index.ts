@@ -153,22 +153,20 @@ const ERASABLE_MARK_PATH = "/data/local/tmp/simlock-mark.json";
 
 /**
  * why: How this machine's emulators are launched (`android.emulator` in config). Operator-only: it
- * reaches the driver at construction and never from a lease request. Only these five settings
- * exist, each mapped to fixed emulator flags by `emulatorLaunchFlags` and `grpcFlags`, so config
- * cannot add `-port`, a different AVD home, or any other argument that would break containment.
+ * reaches the driver at construction and never from a lease request. Only these four settings
+ * exist, each mapped to one fixed emulator flag by `emulatorLaunchFlags`, so config cannot add
+ * `-port`, a different AVD home, or any other argument that would break containment.
  */
 export interface AndroidEmulatorLaunchOptions {
   readonly headless: boolean;
   readonly gpu: string;
   readonly audio: boolean;
   readonly bootAnimation: boolean;
-  readonly grpc: boolean;
 }
 
 const DEFAULT_EMULATOR_LAUNCH: AndroidEmulatorLaunchOptions = {
   audio: true,
   bootAnimation: true,
-  grpc: false,
   gpu: "auto",
   headless: false,
 };
@@ -519,7 +517,6 @@ export class AndroidDriver implements Driver {
   readonly #idGenerator: IdGenerator;
   readonly #legacyAvdHome: string;
   readonly #emulatorFlags: readonly string[];
-  readonly #grpc: boolean;
   readonly #baselineLaunchInputs: readonly string[];
   readonly #locks = new Map<string, Promise<void>>();
   readonly #onDiagnostic: ((diagnostic: AndroidDriverDiagnostic) => void) | undefined;
@@ -551,7 +548,6 @@ export class AndroidDriver implements Driver {
     this.#clock = options.clock;
     this.#deviceRoot = deviceRoot;
     this.#emulatorFlags = emulatorLaunchFlags(options.emulator);
-    this.#grpc = (options.emulator ?? DEFAULT_EMULATOR_LAUNCH).grpc;
     this.#baselineLaunchInputs = baselineLaunchInputs(options.emulator);
     this.#filesystem = options.filesystem;
     this.#hostAbi = options.hostAbi;
@@ -2117,8 +2113,8 @@ export class AndroidDriver implements Driver {
         "-port",
         String(data.port),
         "-no-snapshot-save",
+        ...grpcFlags(data.port),
         ...this.#emulatorFlags,
-        ...(this.#grpc ? grpcFlags(data.port) : []),
         ...launchArgs,
       ],
       { env: this.#env(), stdio: "ignore" },
@@ -2379,10 +2375,10 @@ class PortAllocator {
    * `adb devices` answers only for emulators announced to this instance's own server, so a
    * port it leaves free is then probed: an emulator another Simlock instance started is in
    * neither this process's reservations nor this server's list, but it holds its console
-   * port and the adb port above it on the machine, and an emulator told to take either
-   * exits at once. Each probe is one loopback connect, refused at once on a free port and
-   * bounded by the probe's own timeout otherwise; the walk stops at the first free port, so
-   * the wait is at most one probe pair per console port in the range.
+   * port, the adb port above it and its gRPC port on the machine, and an emulator told to
+   * take any of them exits at once. Each probe is one loopback connect, refused at once on a
+   * free port and bounded by the probe's own timeout otherwise; the walk stops at the first
+   * free port, so the wait is at most one set of three probes per console port in the range.
    *
    * The probe sees only an emulator that is running now. A port handed out but not booted on
    * -- by another instance, or by this one before a restart emptied `#reserved` -- still
@@ -2423,6 +2419,7 @@ async function consolePortsInUse(tcpProbe: TcpProbe, consolePort: number): Promi
   const listening = await Promise.all([
     tcpProbe.isListening(consolePort),
     tcpProbe.isListening(consolePort + 1),
+    tcpProbe.isListening(consolePort + GRPC_PORT_OFFSET),
   ]);
   return listening.includes(true);
 }
@@ -2705,18 +2702,6 @@ function systemImageTags(properties: string | undefined, folder: string): readon
   return tags.length > 0 ? tags : [folder];
 }
 
-/**
- * why: The emulator serves gRPC only when a port is named, and writes the discovery file
- * (`avd/running/pid_<pid>.ini`, with `grpc.port` and `grpc.token`) that tools such as Android
- * Studio's device manager read to drive it. The port follows the console port (even, 5586-5682),
- * so it is as unique as the console port is; nothing probes it before the boot.
- */
-const GRPC_PORT_OFFSET = 3000;
-
-function grpcFlags(consolePort: number): string[] {
-  return ["-grpc", String(consolePort + GRPC_PORT_OFFSET), "-grpc-use-token"];
-}
-
 function emulatorLaunchFlags(
   launch: AndroidEmulatorLaunchOptions = DEFAULT_EMULATOR_LAUNCH,
 ): string[] {
@@ -2729,11 +2714,24 @@ function emulatorLaunchFlags(
 }
 
 /**
+ * why: The emulator serves gRPC, and writes the discovery file (`avd/running/pid_<pid>.ini`, with
+ * `grpc.port` and `grpc.token`) that tools driving it over gRPC read, only when `-port` comes
+ * with `-grpc` (#639). The offset is the emulator's own default, so the port is as unique as the
+ * console port, and 8586-8682 stays clear of the 8554-8584 the user's own emulators take. It is
+ * not a baseline launch input: a snapshot saved without it loads with it.
+ */
+const GRPC_PORT_OFFSET = 3000;
+
+function grpcFlags(consolePort: number): string[] {
+  return ["-grpc", String(consolePort + GRPC_PORT_OFFSET), "-grpc-use-token"];
+}
+
+/**
  * why: The launch settings a baseline snapshot depends on: the window and the GPU mode change the
  * emulator's graphics state, so a baseline taken under one does not load cleanly under the
- * other. Audio, the boot animation and gRPC do not, and stay out. Nothing is added while both
- * are at their defaults, so a baseline captured before these settings existed keeps its hash and
- * is not rebuilt (with a data wipe) on the first boot after an upgrade.
+ * other. Audio and the boot animation do not, and stay out. Nothing is added while both are at
+ * their defaults, so a baseline captured before these settings existed keeps its hash and is
+ * not rebuilt (with a data wipe) on the first boot after an upgrade.
  */
 function baselineLaunchInputs(
   launch: AndroidEmulatorLaunchOptions = DEFAULT_EMULATOR_LAUNCH,

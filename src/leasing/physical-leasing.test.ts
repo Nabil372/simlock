@@ -50,7 +50,7 @@ function config(leaseOverrides: object = {}): Config {
     ios: { defaultMode: "full", defaultModels: {}, slim: { bootTimeoutMs: 600_000 } },
     android: {
       defaultModels: {},
-      emulator: { headless: false, gpu: "auto", audio: true, bootAnimation: true, grpc: false },
+      emulator: { headless: false, gpu: "auto", audio: true, bootAnimation: true },
     },
     health: {
       enabled: true,

@@ -60,9 +60,9 @@ Provision — `provision`:
 Boot — `makeReady` (per-device lock):
 
 1. Baseline: stored hash matches → `-snapshot simlock_clean_baseline`; differs → delete
-   the snapshots, `-wipe-data`; none → cold boot. Always `-no-snapshot-save`.
+   the snapshots, `-wipe-data`; none → cold boot. Always `-no-snapshot-save`, `-grpc <port+3000> -grpc-use-token` (#639, not hashed).
 2. Console port reserved at the first `prepare` boot in this process: even 5586–5682, not in
-   `adb devices`, not reserved, port and port+1 not listening.
+   `adb devices`, not reserved, port, port+1 and port+3000 not listening.
 3. Ready = `sys.boot_completed` 1, `init.svc.bootanim` stopped or unset, and `adb emu avd path`
    names `<root>/<avd>.avd` (or the same `realpath`), else `DriverCrashError`. Silent serial past 5 s → re-announce.
 4. No baseline → `emu avd snapshot save`, check `snapshot list`, write `simlock-clean-baseline.json`, reboot from it.
@@ -119,17 +119,16 @@ and library provision (seed); nothing is cached. The sdkmanager catalog is never
 
 ## State and timers
 
-| What                            | Default                                          | Key                                                                      |
-| ------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------ |
-| Device root                     | `$SIMLOCK_HOME/devices/android`                  | `drivers.android.deviceRoot`                                             |
-| adb server port                 | 5038 (never 5037)                                | `drivers.android.adbServerPort`                                          |
-| Emulator flags                  | window, auto GPU, audio, boot animation, no gRPC | `android.emulator.headless`, `.gpu`, `.audio`, `.bootAnimation`, `.grpc` |
-| gRPC port (`.grpc`)             | console port + 3000, with a token                | none                                                                     |
-| Readiness timeout               | 180 s, poll 2 s                                  | none                                                                     |
-| adb server start / stop         | 10 s / SIGTERM, 5 s, SIGKILL                     | none                                                                     |
-| `adb devices` in `listManaged`  | 30 s                                             | none                                                                     |
-| AVD path query (listing / boot) | 5 s                                              | none                                                                     |
-| Physical read / uninstall       | 30 s / 60 s                                      | none                                                                     |
+| What                            | Default                                 | Key                                                             |
+| ------------------------------- | --------------------------------------- | --------------------------------------------------------------- |
+| Device root                     | `$SIMLOCK_HOME/devices/android`         | `drivers.android.deviceRoot`                                    |
+| adb server port                 | 5038 (never 5037)                       | `drivers.android.adbServerPort`                                 |
+| Emulator flags                  | window, auto GPU, audio, boot animation | `android.emulator.headless`, `.gpu`, `.audio`, `.bootAnimation` |
+| Readiness timeout               | 180 s, poll 2 s                         | none                                                            |
+| adb server start / stop         | 10 s / SIGTERM, 5 s, SIGKILL            | none                                                            |
+| `adb devices` in `listManaged`  | 30 s                                    | none                                                            |
+| AVD path query (listing / boot) | 5 s                                     | none                                                            |
+| Physical read / uninstall       | 30 s / 60 s                             | none                                                            |
 
 Writes: `<root>/<avd>.avd/` (config, boot properties, snapshots, baseline marker); `$SIMLOCK_HOME/adb-server.json` (`pid`, `port`, `startedAt`).
 Reads only: the user's AVD home, devices.xml, the SDK.
