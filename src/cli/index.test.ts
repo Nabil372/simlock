@@ -4817,6 +4817,97 @@ describe("CLI: alerts test (ADR 0035 §1)", () => {
   });
 });
 
+describe("CLI: warm forget", () => {
+  const USAGE =
+    "Usage: simlock warm forget <ios|android> <model> [<os>] [--mode <slim|full>] [--image-tag <tag>] [--json]\n";
+  const pixel = { model: "Pixel", mode: "full", osVersion: "36", platform: "android" } as const;
+
+  async function runWarm(argv: string[], forgotten: (typeof pixel)[] = [pixel]) {
+    const output = outputCapture();
+    const inputs: unknown[] = [];
+    let connected = false;
+    const code = await runCli(
+      argv,
+      output.environmentWith({
+        connectAdmin: async () => {
+          connected = true;
+          return fakeClient({
+            forgetWarmKind: (input) => {
+              inputs.push(input);
+              return Promise.resolve({ forgotten });
+            },
+          });
+        },
+      }),
+    );
+    return { code, connected, inputs, stderr: output.stderr, stdout: output.stdout };
+  }
+
+  it("simlock warm forget sends the platform, model, OS, mode and image tag it was given and prints each kind forgotten, or that none was learned", async () => {
+    const forgot = await runWarm(["warm", "forget", "android", "Pixel"]);
+    expect([forgot.code, forgot.stdout, forgot.inputs]).toEqual([
+      0,
+      "Forgot android Pixel 36 (full).\nIts idle devices are no longer kept warm: the idle rules shut them down and delete them, unless a configured warmPool.targets entry keeps them.\n",
+      [{ model: "Pixel", platform: "android" }],
+    ]);
+
+    const narrowed = await runWarm(
+      ["warm", "forget", "android", "Pixel", "36", "--mode", "full", "--image-tag", "google_apis"],
+      [],
+    );
+    expect(narrowed.stdout).toBe(
+      "The warm pool has learned no kind matching android Pixel 36 (full, google_apis).\n",
+    );
+    expect(narrowed.inputs).toEqual([
+      {
+        imageTag: "google_apis",
+        mode: "full",
+        model: "Pixel",
+        osVersion: "36",
+        platform: "android",
+      },
+    ]);
+
+    const none = await runWarm(["warm", "forget", "ios", "iPhone 16"], []);
+    expect([none.code, none.stdout]).toEqual([
+      0,
+      "The warm pool has learned no kind matching ios iPhone 16.\n",
+    ]);
+
+    const json = await runWarm(["warm", "forget", "android", "Pixel", "--json"]);
+    expect([json.code, JSON.parse(json.stdout)]).toEqual([0, { forgotten: [pixel] }]);
+  });
+
+  it("simlock warm and --help print the usage without connecting; a bad platform, a missing model, extra words, a bad --mode and an unknown subcommand are usage errors", async () => {
+    for (const argv of [["warm"], ["warm", "--help"], ["warm", "forget", "--help"]]) {
+      const usage = await runWarm(argv);
+      expect([usage.code, usage.stdout, usage.stderr, usage.connected]).toEqual([
+        0,
+        USAGE,
+        "",
+        false,
+      ]);
+    }
+
+    for (const [argv, message] of [
+      [["warm", "forget", "tvos", "Pixel"], "warm forget needs a platform first: ios or android"],
+      [["warm", "forget", "android"], "warm forget takes <platform> <model> and an optional <os>"],
+      [
+        ["warm", "forget", "android", "Pixel", "36", "extra"],
+        "warm forget takes <platform> <model> and an optional <os>",
+      ],
+      [["warm", "forget", "android", "Pixel", "--mode", "tiny"], "--mode is slim or full"],
+      [["warm", "boot"], "Unknown warm command: boot"],
+    ] as const) {
+      const refused = await runWarm([...argv]);
+      expect([refused.code, refused.connected]).toEqual([2, false]);
+      expect(JSON.parse(refused.stderr)).toEqual({
+        error: { code: "USAGE", message: `${message} (run \`simlock --help\` for usage)` },
+      });
+    }
+  });
+});
+
 describe("CLI: status renders the fleet a gateway reports (ADR 0005 §20)", () => {
   it("names the mode, each worker, and which worker a device and a lease live on", async () => {
     const output = outputCapture();
@@ -8050,6 +8141,7 @@ function fakeClient(overrides: Partial<SimlockAdminClient> = {}): SimlockAdminCl
     list: () => Promise.resolve(emptyListGet),
     runCleanup: () => Promise.resolve([]),
     runNuke: () => Promise.resolve({ deletedDevices: [], releasedLeaseIds: [] }),
+    forgetWarmKind: () => Promise.resolve({ forgotten: [] }),
     getConfig: () => Promise.resolve({} as SimlockConfig),
     stopDaemon: () => Promise.resolve({ stopping: true }),
     updateDaemon: () =>

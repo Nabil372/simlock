@@ -1598,19 +1598,26 @@ describe("GatewayDispatcher", () => {
   });
 
   describe("UNSUPPORTED_IN_GATEWAY_MODE", () => {
-    it.each(["nuke.run", "cleanup.run", "doctor.run", "driver.passthrough"] as const)(
-      "%s stays per-worker, permanently",
-      async (operation) => {
-        const { dispatcher } = harness();
-        const input =
-          operation === "driver.passthrough" ? { args: ["devices"], tool: "adb" } : { fix: true };
+    it.each([
+      "nuke.run",
+      "cleanup.run",
+      "doctor.run",
+      "driver.passthrough",
+      "warm.forget",
+    ] as const)("%s stays per-worker, permanently", async (operation) => {
+      const { dispatcher } = harness();
+      const input =
+        operation === "driver.passthrough"
+          ? { args: ["devices"], tool: "adb" }
+          : operation === "warm.forget"
+            ? { model: "Pixel", platform: "android" }
+            : { fix: true };
 
-        await expect(dispatcher.dispatch(operation, input, session())).rejects.toMatchObject({
-          code: "UNSUPPORTED_IN_GATEWAY_MODE",
-          details: { operation },
-        });
-      },
-    );
+      await expect(dispatcher.dispatch(operation, input, session())).rejects.toMatchObject({
+        code: "UNSUPPORTED_IN_GATEWAY_MODE",
+        details: { operation },
+      });
+    });
 
     it("component.install answers UNSUPPORTED_IN_GATEWAY_MODE, telling the operator to name workers (ADR 0010 §7)", async () => {
       const { dispatcher } = harness();

@@ -191,6 +191,16 @@ Other settings:
 | `warmPool.reserveRunning.ios`, `.android` | Running slots that idle warm devices may not fill, so a lease for another kind never has to wait for a shutdown. Lease requests can still use them. | `0` |
 | `warmPool.maxConcurrentBoots` | Boots and creations in progress at once. | a quarter of the CPU cores, at least 1 |
 
+### Forget a learned kind
+
+A lease of the wrong model, such as `--device Pixel` instead of `Pixel 9`, teaches the pool that kind too. Its device then stays booted and holds a running slot and its RAM until a lease of another model needs the slot. To forget it now:
+
+```sh
+simlock warm forget android Pixel
+```
+
+The pool stops keeping the kind's devices. The [cleanup rules](/simlock/docs/worker/cleanup) then shut the idle device down after `idle.shutdownAfterMs` and delete it after `idle.deleteAfterMs`, both counted from its last lease. A device that never served a lease is shut down `idle.shutdownAfterMs` after it became ready and deleted `idle.deleteAfterMs` after its shutdown. Add the OS version, `--mode` or `--image-tag` to forget only one kind of the model. See [`simlock warm forget`](/simlock/docs/reference/cli#simlock-warm-forget).
+
 ### Read the warm pool in `simlock status`
 
 Each target and each learned kind gets a line under `warm pool`. The word after the name says where the line came from: `configured` for a `warmPool.targets` entry, `learned` for a kind the worker leased. A kind that is both is one `configured` line, wanted the larger of the two counts. An Android kind with an image tag shows the tag after the mode. A learned kind the pool forgets leaves the list on the next pass. With the warm pool off, nothing is learned and only the targets are listed; with `warmPool.learn: false`, only the targets are listed.

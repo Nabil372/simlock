@@ -30,6 +30,7 @@ This page lists what each command accepts. For what a command is for and when to
 | [`simlock doctor`](#simlock-doctor) | Check prerequisites and repair drift | [Troubleshooting](/simlock/docs/worker/troubleshooting) |
 | [`simlock cleanup`](#simlock-cleanup) | Run the cleanup rules now | [Cleanup](/simlock/docs/worker/cleanup) |
 | [`simlock nuke`](#simlock-nuke) | Emergency reset of every lease and device | [Troubleshooting](/simlock/docs/worker/troubleshooting) |
+| [`simlock warm`](#simlock-warm) | Forget a kind the warm pool learned from a lease | [Capacity and the warm pool](/simlock/docs/worker/capacity#forget-a-learned-kind) |
 | [`simlock component`](#simlock-component) | Install, list and remove runtimes and system images | [Runtimes and images](/simlock/docs/worker/runtimes-and-images) |
 | [`simlock device`](#simlock-device) | Enrol or forget a physical device | [Enrolling physical devices](/simlock/docs/worker/enrolling-physical-devices) |
 | [`simlock token`](#simlock-token) | Create, list and revoke access tokens | [Access control](/simlock/docs/gateway/access-control) |
@@ -469,6 +470,33 @@ simlock nuke [--delete-devices] [--yes]
 
 A gateway refuses `nuke` with `UNSUPPORTED_IN_GATEWAY_MODE` (exit 2).
 
+## simlock warm
+
+### simlock warm forget
+
+Forget the kinds the warm pool learned for one model, so it stops keeping their devices booted. Use it after a lease of the wrong model. Needs the admin role. See [Capacity and the warm pool](/simlock/docs/worker/capacity#forget-a-learned-kind).
+
+```text
+simlock warm forget <ios|android> <model> [<os>] [--mode <slim|full>] [--image-tag <tag>] [--json]
+```
+
+| Argument or flag | Meaning | Default |
+| --- | --- | --- |
+| `<ios\|android>` | The platform of the kind. | Required |
+| `<model>` | The exact model name, as `simlock status` lists it under `warm pool`. | Required |
+| `<os>` | Forget only the kind of this OS version. | Every OS version |
+| `--mode <slim\|full>` | Forget only the kind of this mode. | Both modes |
+| `--image-tag <tag>` | Forget only the Android kind with this image tag. | Every tag |
+| `--json` | Print the answer, `{ "forgotten": [...] }`, as one JSON line. | Off |
+
+```text
+$ simlock warm forget android Pixel
+Forgot android Pixel 36 (full).
+Its idle devices are no longer kept warm: the idle rules shut them down and delete them, unless a configured warmPool.targets entry keeps them.
+```
+
+When the pool has learned no kind that matches, it prints the kind it was asked for, such as `The warm pool has learned no kind matching android Pixel 35 (slim).`, and exits 0. A configured `warmPool.targets` entry is not changed; remove it from the config instead. The next lease of the model teaches the pool its kind again. A gateway refuses `warm` with `UNSUPPORTED_IN_GATEWAY_MODE` (exit 2).
+
 ## simlock component
 
 Install, list and remove iOS simulator runtimes and Android system images. See [Runtimes and images](/simlock/docs/worker/runtimes-and-images).
@@ -606,7 +634,7 @@ Simlock is built for agents, so most output is JSON lines.
 
 | Stream | What goes there |
 | --- | --- |
-| stdout | The command's result. JSON by default, one line, for `lease`, `lease renew`, `release`, `list`, `events`, `cleanup`, `doctor`, `nuke`, `config`, `config get`, `token`, `component`, and `worker drain`, `undrain` and `remove`. A text view by default, with `--json` for one JSON line, for `status`, `catalog`, `stats`, `whoami`, `daemon`, `worker list`, `alerts test` and `device`. `list --requests`, `config set` and `lease --export-env` print text only. |
+| stdout | The command's result. JSON by default, one line, for `lease`, `lease renew`, `release`, `list`, `events`, `cleanup`, `doctor`, `nuke`, `config`, `config get`, `token`, `component`, and `worker drain`, `undrain` and `remove`. A text view by default, with `--json` for one JSON line, for `status`, `catalog`, `stats`, `whoami`, `daemon`, `worker list`, `alerts test`, `device` and `warm forget`. `list --requests`, `config set` and `lease --export-env` print text only. |
 | stderr | Progress and notices as JSON lines, and the error line when a command fails. `doctor` also writes the findings you must act on here as text. |
 
 A lease in progress writes lines like these to stderr:
